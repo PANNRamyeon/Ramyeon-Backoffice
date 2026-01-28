@@ -1,5 +1,5 @@
 from datetime import datetime
-from bson import ObjectId
+
 from ...database import db_manager
 
 class PromoConnection:
@@ -21,16 +21,11 @@ class PromoConnection:
         if isinstance(document, dict):
             converted = {}
             for key, value in document.items():
-                if isinstance(value, ObjectId):
-                    converted[key] = str(value)
-                elif isinstance(value, (dict, list)):
+                if isinstance(value, (dict, list)):
                     converted[key] = self.convert_object_id(value)
                 else:
                     converted[key] = value
             return converted
-        
-        if isinstance(document, ObjectId):
-            return str(document)
         
         return document
 
@@ -43,7 +38,7 @@ class PromoConnection:
         warnings = []
         
         for item in checkout_data:
-            product = self.products_collection.find_one({'_id': ObjectId(item['product_id'])})
+            product = self.products_collection.find_one({'_id': item['product_id']})
             
             if product:
                 current_stock = product.get('stock', 0)
@@ -190,7 +185,7 @@ class PromoConnection:
     def validate_stock_availability(self, checkout_data):
         """Ensure all items have sufficient stock before processing sale"""
         for item in checkout_data:
-            product = self.products_collection.find_one({'_id': ObjectId(item['product_id'])})
+            product = self.products_collection.find_one({'_id': item['product_id']})
             
             if not product:
                 return {
@@ -238,7 +233,7 @@ class PromoConnection:
                 
                 # Update inventory - use 'stock' field
                 result = self.products_collection.update_one(
-                    {'_id': ObjectId(product_id)},
+                    {'_id': product_id},
                     {'$inc': {'stock': -quantity_sold}}
                 )
                 
@@ -269,7 +264,7 @@ class PromoConnection:
                     }
                 
             sales_record ={
-                'sale_id': str(ObjectId()),  # Generate unique sale ID
+                'sale_id': str(sales_data.get("product_id")),  # Generate unique sale ID
                 'items': sales_data['items'],  # List of purchased items
                 'total_amount': sales_data['total_amount'],
                 'total_discount': sales_data.get('total_discount', 0),
@@ -428,7 +423,7 @@ class PromoConnection:
                         
                 # Check if this product is in any affected subcategory
                 product = self.products_collection.find_one({
-                    '_id': ObjectId(product_id),
+                    '_id': product_id,
                     'isDeleted': {'$ne': True}
                 })
                         

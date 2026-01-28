@@ -49,9 +49,10 @@ def test_email_verification_send():
     print("-" * 60)
     
     try:
-        # Try to find user by email for more complete test
-        db = db_manager.get_database()
-        user = db.users.find_one({"email": test_email})
+        # MongoDB-specific user lookup. This needs to be refactored for DynamoDB.
+        # For now, we'll mock the user data to allow the email sending test to proceed.
+        # db = db_manager.get_database()
+        user = {"_id": "mock-user-id", "username": "Test User", "email": test_email} # Mock user
         user_id = str(user.get('_id')) if user else None
         user_name = user.get('username') or user.get('full_name') or "Test User" if user else "Test User"
         
@@ -262,4 +263,3 @@ if __name__ == "__main__":
     else:
         print("Test failed. Please check the error messages above.")
     print("=" * 50)
-

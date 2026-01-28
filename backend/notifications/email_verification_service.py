@@ -267,11 +267,11 @@ class EmailVerificationService:
             if user_id:
                 # Try to find by user_id (could be string like "USER-0039" or ObjectId)
                 try:
-                    from bson import ObjectId
+                    # from bson import ObjectId
                     # Try as ObjectId first if it's a valid ObjectId string (24 hex chars)
                     if isinstance(user_id, str) and len(user_id) == 24:
                         try:
-                            user = self.user_collection.find_one({"_id": ObjectId(user_id)})
+                            user = self.user_collection.find_one({"_id": user_id})
                         except:
                             pass
                     # If not found or not ObjectId format, try as string (e.g., "USER-0039")

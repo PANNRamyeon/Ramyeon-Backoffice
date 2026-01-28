@@ -1,5 +1,5 @@
 from datetime import date, time, timedelta, datetime
-from bson import ObjectId
+
 from ...database import db_manager
 from .promotionCon import PromoConnection
 
@@ -14,7 +14,7 @@ class SalesReport:
             client = db_manager.current_client
             self.db = client['pos_system']  # pos_system might be on cloud
         else:
-            raise Exception("Could not connect to MongoDB")
+            raise Exception("Could not connect to the database")
         # 🐛 DEBUG: Check what database we're connected to
         print(f"🔍 Connected to database: {self.db.name}")
         print(f"🔍 Available collections: {self.db.list_collection_names()}")

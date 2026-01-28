@@ -17,41 +17,14 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_ALL_ORIGINS = True
 
 # Database configuration for development
-USE_MONGODB = config('USE_MONGODB', default=False, cast=bool)
-
-if USE_MONGODB:
-    # MongoDB for development (if you want to test with MongoDB locally)
-    MONGODB_URI = config('MONGODB_URI', default='mongodb://localhost:27017')
-    MONGODB_DATABASE = config('MONGODB_DATABASE', default='pos_system')
-    
-    DATABASES = {
-        'default': {
-            'ENGINE': 'djongo',
-            'NAME': MONGODB_DATABASE,
-            'CLIENT': {
-                'host': MONGODB_URI,
-            }
-        }
+# The default Django database is set to SQLite for auth, sessions, etc.
+# Application data models use PynamoDB, which connects to DynamoDB
+# using credentials from the .env file (see dynamo_base.py).
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
-    
-    # MongoDB connection settings for your custom operations
-    MONGODB_SETTINGS = {
-        'host': MONGODB_URI,
-        'database': MONGODB_DATABASE
-    }
-else:
-    # SQLite for development (faster, easier to reset)
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
-
-# Backup MongoDB settings (for your existing MongoDB integration)
-MONGODB_LOCAL_SETTINGS = {
-    'host': config('MONGODB_LOCAL_URI', default='mongodb://localhost:27017'),
-    'database': config('MONGODB_LOCAL_DATABASE', default='pos_system')
 }
 
 # Development-specific middleware (add any debug middleware here)
@@ -64,42 +37,16 @@ if DEBUG:
 # Email backend for development (console output)
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-# Development logging
-LOGGING['root']['level'] = 'DEBUG'
-LOGGING['loggers']['django']['level'] = 'DEBUG'
+# Development logging - Inherits from base.py and overrides levels
+# Set root and Django loggers to DEBUG for more verbose output.
+LOGGING['root']['level'] = 'INFO'
+LOGGING['loggers']['django']['level'] = 'INFO'
+
+# Silence the overly verbose AWS SDK (boto3/botocore) logs
+LOGGING['loggers']['boto3'] = {'level': 'WARNING'}
+LOGGING['loggers']['botocore'] = {'level': 'WARNING'}
 
 # Disable some security features in development
 SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
-
-# Override LOGGING to silence MongoDB noise
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {message}',
-            'style': '{',
-        },
-        'simple': {
-            'format': '{levelname} {message}',
-            'style': '{',
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'simple',
-        },
-    },
-    'loggers': {
-        'pymongo': {'level': 'WARNING'},
-        'logger': {'level': 'WARNING'},  # This silences MongoDB logs
-        'django': {'level': 'INFO'},
-    },
-    'root': {
-        'handlers': ['console'],
-        'level': 'INFO',
-    },
-}

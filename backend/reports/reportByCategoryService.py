@@ -1,5 +1,4 @@
 from datetime import datetime
-from bson import ObjectId
 from django.contrib.auth.models import User
 from app.database import db_manager
 import uuid
@@ -15,7 +14,4 @@ class ReportByCategoryService:
         if document and '_id' in document:
             document['_id'] = str(document['_id'])
         return document
-        
-    def get_top_categories(self, category_id):
-        
         

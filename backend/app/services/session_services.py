@@ -1193,7 +1193,7 @@ class SessionDisplayService:
     def get_session_logs(self, limit=100, status_filter=None, user_filter=None):
         """Get formatted session logs - handle mixed ObjectId/string data"""
         try:
-            from bson import ObjectId
+            
             from datetime import datetime
             
             query = {}
@@ -1215,9 +1215,7 @@ class SessionDisplayService:
                     # Convert ALL values to JSON-safe types immediately
                     safe_log = {}
                     for key, value in log.items():
-                        if isinstance(value, ObjectId):
-                            safe_log[key] = str(value)
-                        elif isinstance(value, datetime):
+                        if isinstance(value, datetime):
                             safe_log[key] = value.isoformat()
                         elif value is None:
                             safe_log[key] = None
@@ -1372,7 +1370,7 @@ class SessionDisplayService:
     def export_session_logs(self, export_format="csv", date_filter=None, status_filter=None):
         """Export session logs in specified format"""
         try:
-            from bson import ObjectId
+            
             from datetime import datetime
             
             query = {}
@@ -1391,9 +1389,7 @@ class SessionDisplayService:
                 # Clean the session data
                 clean_session = {}
                 for key, value in session.items():
-                    if isinstance(value, ObjectId):
-                        clean_session[key] = str(value)
-                    elif isinstance(value, datetime):
+                    if isinstance(value, datetime):
                         clean_session[key] = value.isoformat()
                     else:
                         clean_session[key] = value

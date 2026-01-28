@@ -1,4 +1,4 @@
-from bson import ObjectId
+
 from datetime import datetime, timedelta, timezone 
 from ..database import db_manager 
 from ..models import Promotions

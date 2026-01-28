@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import HttpResponse
 from ..services.saleslog_service import SalesLogService
-from bson import ObjectId
+
 from datetime import datetime
 import logging
 import csv
@@ -25,8 +25,8 @@ class SalesLogBulkImportView(APIView):
         # Configuration constants
         self.BATCH_SIZE = 50
         self.MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-        self.DEFAULT_CUSTOMER_ID = ObjectId("6841a20f37eca0bad1552dd5")
-        self.DEFAULT_USER_ID = ObjectId("6841a20f37eca0bad1552dd5")
+        self.DEFAULT_CUSTOMER_ID = "6841a20f37eca0bad1552dd5"
+        self.DEFAULT_USER_ID = "6841a20f37eca0bad1552dd5"
         
         # Item code validation
         self.CODE_MIN_LENGTH = 2

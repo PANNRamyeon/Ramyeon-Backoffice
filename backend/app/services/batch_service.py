@@ -632,9 +632,9 @@ class BatchService:
                         # Try with ObjectId conversion if it's a string that looks like ObjectId
                         else:
                             try:
-                                from bson import ObjectId
+                                # from bson import ObjectId
                                 if isinstance(product_id, str) and len(product_id) == 24:
-                                    obj_id = ObjectId(product_id)
+                                    obj_id = product_id
                                     if obj_id in products:
                                         product = products[obj_id]
                             except:

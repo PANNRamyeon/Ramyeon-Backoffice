@@ -193,7 +193,7 @@ class APIDocumentationView(APIView):
                 "Session logging and tracking",
                 "Password hashing with bcrypt",
                 "Input validation with serializers",
-                "MongoDB integration",
+                "DynamoDB integration",
                 "Real-time session statistics",
                 "Token blacklisting on logout",
                 "Comprehensive error handling",

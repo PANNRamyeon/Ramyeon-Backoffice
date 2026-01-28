@@ -1,7 +1,7 @@
 # management/commands/migrate_users_to_string_ids.py
 
 from django.core.management.base import BaseCommand
-from bson import ObjectId
+
 from datetime import datetime
 import json
 import logging
@@ -82,15 +82,15 @@ class Command(BaseCommand):
         # Step 3: Fetch all users sorted by date_created
         self.stdout.write('\n📥 Fetching users...')
         users = list(users_collection.find(
-            {'_id': {'$type': 'objectId'}},  # Only ObjectId users
+            {'_id': {'$not': {'$type': 'string'}}},  # Only non-string users
             sort=[('date_created', 1)]  # Oldest first
         ))
         
         if not users:
-            self.stdout.write(self.style.SUCCESS('✅ No ObjectId users found. All already migrated.'))
+            self.stdout.write(self.style.SUCCESS('✅ No non-string ID users found. All already migrated.'))
             return
 
-        self.stdout.write(self.style.SUCCESS(f'   Fetched {len(users)} users with ObjectId\n'))
+        self.stdout.write(self.style.SUCCESS(f'   Fetched {len(users)} users with non-string ID\n'))
 
         # Step 4: Create backup
         if create_backup and not dry_run:
@@ -244,17 +244,17 @@ class Command(BaseCommand):
             self.stdout.write('\n🔍 Verifying migration...')
             
             new_count = users_collection.count_documents({'_id': {'$type': 'string'}})
-            old_count = users_collection.count_documents({'_id': {'$type': 'objectId'}})
+            old_count = users_collection.count_documents({'_id': {'$not': {'$type': 'string'}}})
             
             self.stdout.write(f'   String IDs: {new_count}')
-            self.stdout.write(f'   ObjectIds remaining: {old_count}')
+            self.stdout.write(f'   Non-string IDs remaining: {old_count}')
             
             if old_count == 0:
                 self.stdout.write(self.style.SUCCESS('\n✅ Migration completed successfully!'))
                 self.stdout.write(self.style.SUCCESS('   All users now have USER-#### format IDs'))
             else:
                 self.stdout.write(self.style.WARNING(
-                    f'\n⚠️  Warning: {old_count} ObjectId users still remain'
+                    f'\n⚠️  Warning: {old_count} non-string ID users still remain'
                 ))
 
         self.stdout.write('\n' + '=' * 70)

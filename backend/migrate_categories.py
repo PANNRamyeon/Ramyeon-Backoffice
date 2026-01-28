@@ -3,11 +3,7 @@
 Standalone migration script for converting category subcategories 
 from product names to ObjectIDs
 """
-
-import sys
 import os
-from bson import ObjectId
-from datetime import datetime
 import argparse
 
 # Add your project root to Python path
@@ -15,20 +11,22 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 # Now use absolute import - adjust this path to match your project structure
-from backend.app.database import db_manager
+# from backend.app.database import db_manager # MongoDB-specific db_manager
 
 
 def migrate_categories_combined(dry_run=True, force=False):
     """Migrate to combined product_id + product_name structure"""
     
     print("Starting migration to combined product structure...")
-    print(f"Mode: {'DRY RUN' if dry_run else 'ACTUAL MIGRATION'}")
+    print(f"Mode: {'DRY RUN' if dry_run else 'ACTUAL MIGRATION'} (NOTE: This script is for MongoDB and will not work with DynamoDB)")
     print("=" * 50)
     
     try:
-        db = db_manager.get_database()
-        category_collection = db.category
-        product_collection = db.products
+        # This script is for MongoDB. It will not work with DynamoDB.
+        # MongoDB-specific operations are commented out or removed.
+        # db = db_manager.get_database()
+        # category_collection = db.category
+        # product_collection = db.products
         
         # Find categories that need migration to combined format
         if force:
@@ -179,15 +177,16 @@ def backup_categories():
     print("Creating backup...")
     
     try:
-        db = db_manager.get_database()
-        categories = list(db.category.find({}))
+        # This function is for MongoDB. It will not work with DynamoDB.
+        # db = db_manager.get_database()
+        # categories = list(db.category.find({}))
         
         # Convert ObjectIds to strings for JSON
-        for category in categories:
-            category['_id'] = str(category['_id'])
-            for field in ['category_id', 'supplier_id', 'branch_id']:
-                if field in category and category[field]:
-                    category[field] = str(category[field])
+        # for category in categories:
+        #     category['_id'] = str(category['_id'])
+        #     for field in ['category_id', 'supplier_id', 'branch_id']:
+        #         if field in category and category[field]:
+        #             category[field] = str(category[field])
         
         backup_filename = f'categories_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
         
