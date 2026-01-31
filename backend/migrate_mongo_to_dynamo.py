@@ -119,7 +119,10 @@ def run_migration(dry_run=False, collection_name=None):
             return
         collections = [collection_name]
     else:
-        collections = mongo_db.list_collection_names()
+        # Define specific collections to migrate to avoid system collections
+        target_collections = ['products', 'category', 'categories', 'users', 'customers', 'batches', 'notifications', 'online_transactions', 'audit_logs', 'session_logs', 'shifts', 'suppliers', 'sales', 'promotions']
+        existing_cols = mongo_db.list_collection_names()
+        collections = [c for c in target_collections if c in existing_cols]
     
     print(f"Collections to migrate: {collections}")
 
@@ -149,6 +152,17 @@ def run_migration(dry_run=False, collection_name=None):
             except Exception as e:
                 print(f"  Warning: Error loading categories: {e}")
 
+        # Pre-fetch products for batch denormalization
+        product_map = {}
+        if col_name == 'batches':
+            print("  Loading product map for denormalization...")
+            try:
+                for prod in mongo_db['products'].find({}, {'_id': 1, 'product_name': 1}):
+                    product_map[str(prod['_id'])] = prod.get('product_name')
+                print(f"  Loaded {len(product_map)} products.")
+            except Exception as e:
+                print(f"  Warning: Error loading products: {e}")
+
         def process_doc(doc):
             # 1. Clean data types
             clean_doc = clean_item(doc)
@@ -168,12 +182,21 @@ def run_migration(dry_run=False, collection_name=None):
             for field in ['image_url', 'image_filename', 'image_size', 'image_type', 'image_uploaded_at']:
                 clean_doc.pop(field, None)
 
+            # TODO: Future Refactor - Customers collection may hit 400KB limit due to 'order_history' and 'loyalty_history'.
+            # We will need to split these into separate items (Item Collection pattern) in a later update.
+
             # Products: Denormalize category_name
             if col_name == 'products':
                 # Denormalize category_name
                 cat_id = clean_doc.get('category_id')
                 if cat_id and str(cat_id) in category_map:
                     clean_doc['category_name'] = category_map[str(cat_id)]
+
+            # Batches: Denormalize product_name
+            if col_name == 'batches':
+                prod_id = clean_doc.get('product_id')
+                if prod_id and str(prod_id) in product_map:
+                    clean_doc['product_name'] = product_map[str(prod_id)]
 
             # 2. Map Schema: PK = Collection Name, SK = _id
             dynamo_item = {
