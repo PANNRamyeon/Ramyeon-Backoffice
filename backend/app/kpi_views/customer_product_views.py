@@ -5,7 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from ..services.product_service import ProductService
 from ..services.category_service import CategoryService
-from bson import ObjectId
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -94,20 +94,12 @@ class CustomerProductService:
     def get_product_by_id(self, product_id):
         """Get single product by ID"""
         try:
-            # Try to find by ObjectId first, then by string
-            try:
-                product = self.product_collection.find_one({
-                    '_id': ObjectId(product_id),
-                    'status': 'active',
-                    'isDeleted': {'$ne': True}
-                })
-            except:
-                # Fallback to string search
-                product = self.product_collection.find_one({
-                    '_id': product_id,
-                    'status': 'active',
-                    'isDeleted': {'$ne': True}
-                })
+            # Try to find by string
+            product = self.product_collection.find_one({
+                '_id': product_id,
+                'status': 'active',
+                'isDeleted': {'$ne': True}
+            })
             
             if not product:
                 return {

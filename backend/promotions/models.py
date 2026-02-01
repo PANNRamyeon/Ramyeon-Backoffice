@@ -1,12 +1,13 @@
 from django.db import models
 from datetime import datetime
 from typing import Optional, List
-from bson import ObjectId
+import uuid # Import uuid for generating unique IDs
 
 class Promotions:
     def __init__(self, **kwargs):
-        self._id = kwargs.get('_id', ObjectId())
-        self.promotion_id = kwargs.get('promotion_id', ObjectId())  
+        # Replace ObjectId with UUID for unique ID generation
+        self._id = kwargs.get('_id', str(uuid.uuid4()))
+        self.promotion_id = kwargs.get('promotion_id', str(uuid.uuid4()))
         self.promotion_name = kwargs.get('promotion_name', '')  
         self.discount_type = kwargs.get('discount_type', '')  
         self.discount_value = kwargs.get('discount_value', 0)

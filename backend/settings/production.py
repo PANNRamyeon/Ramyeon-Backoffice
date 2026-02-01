@@ -47,24 +47,8 @@ DATABASES = {
     }
 }
 
-# MongoDB Configuration for Custom API Operations
-USE_MONGODB = config('USE_MONGODB', default=False, cast=bool)
-
-if USE_MONGODB:
-    # MongoDB connection settings for your custom API operations
-    MONGODB_URI = config('MONGODB_URI')
-    MONGODB_DATABASE = config('MONGODB_DATABASE', default='pos_system')
-    
-    MONGODB_SETTINGS = {
-        'host': MONGODB_URI,
-        'database': MONGODB_DATABASE
-    }
-else:
-    # Fallback MongoDB settings (won't be used)
-    MONGODB_SETTINGS = {
-        'host': 'mongodb://localhost:27017',
-        'database': 'pos_system_local'
-    }
+# The application's custom services will use the DynamoDB connection 
+# from app/database.py, which is configured via environment variables.
 
 # Security settings for production
 SECURE_BROWSER_XSS_FILTER = True

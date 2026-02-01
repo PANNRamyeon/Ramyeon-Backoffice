@@ -1,23 +1,34 @@
 from datetime import datetime, timedelta
-from ..database import db_manager
+import uuid
+from decimal import Decimal
+from ..services.database_service import DatabaseService
 
+# Helper to convert floats to Decimals for DynamoDB to avoid precision loss.
+def floats_to_decimals(obj):
+    if isinstance(obj, list):
+        return [floats_to_decimals(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: floats_to_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, float):
+        # Using string representation is safer for precision.
+        return Decimal(str(obj))
+    return obj
 
 class OnlineTransactionService:
-    """Minimal online transaction service for creating customer web orders.
-
-    This mirrors the essential behavior from PANN_POS_SYSTEM to support
-    Ramyeonsite checkout. It focuses on order creation and totals computation.
+    """
+    Service for creating customer web orders, adapted for DynamoDB.
     """
 
     def __init__(self):
-        self.db = db_manager.get_database()
-        self.customers = self.db.customers
-        self.online_transactions = self.db.online_transactions
+        db_service = DatabaseService()
+        # These names should match your DynamoDB tables.
+        self.customers_table = db_service.get_table('customers')
+        self.online_transactions_table = db_service.get_table('online_transactions')
 
     # ------------------------- Helpers -------------------------
     def _generate_order_id(self) -> str:
-        count = self.online_transactions.count_documents({}) + 1
-        return f"ONLINE-{count:06d}"
+        """Generates a unique, non-sequential order ID."""
+        return f"ONLINE-{uuid.uuid4()}"
 
     def _compute_items(self, items):
         computed = []
@@ -44,13 +55,12 @@ class OnlineTransactionService:
     def _compute_points_discount(self, points_to_redeem: int, subtotal: float):
         try:
             pts = int(points_to_redeem or 0)
-        except Exception:
+        except (ValueError, TypeError):
             pts = 0
         discount = round(pts / 4.0, 2)  # 4 points = ₱1
         return float(min(discount, subtotal)), pts
 
     def _compute_points_earned(self, subtotal_after_discount: float) -> int:
-        # Earn rate: 20% of order value (matches existing UI assumptions)
         return int(round(subtotal_after_discount * 0.20))
 
     # ------------------------- Public API -------------------------
@@ -65,38 +75,40 @@ class OnlineTransactionService:
         points_to_redeem = int(order_data.get('points_to_redeem', 0) or 0)
         notes = order_data.get('notes') or order_data.get('special_instructions') or ''
 
-        # Lookup customer (allow guest orders if no matching customer)
+        # Lookup customer in DynamoDB
         customer = None
-        if customer_id:
+        if customer_id and customer_id != 'GUEST':
             try:
-                customer = self.customers.find_one({'_id': customer_id})
-            except Exception:
+                # Assumes 'customer_id' is the primary key of the customers table.
+                response = self.customers_table.get_item(Key={'customer_id': customer_id})
+                customer = response.get('Item')
+            except Exception as e:
+                # It's good practice to log this error.
+                print(f"Could not fetch customer {customer_id}: {e}")
                 customer = None
-
-        # Build items and totals
+        
+        # Computation logic remains the same
         items, subtotal = self._compute_items(items_in)
         points_discount, pts_used = self._compute_points_discount(points_to_redeem, subtotal)
         subtotal_after_discount = round(subtotal - points_discount, 2)
         delivery_fee, service_fee = self._compute_fees(delivery_type)
         total_amount = round(subtotal_after_discount + delivery_fee + service_fee, 2)
 
-        # Generate order id
         order_id = self._generate_order_id()
 
-        # Prepare order record
-        # Timestamps: store naive UTC datetimes (pymongo requirement) and local (Asia/Manila, +08:00)
-        now_utc = datetime.utcnow()  # naive UTC
-        now_local = now_utc + timedelta(hours=8)  # Asia/Manila approximation
+        # Prepare order record for DynamoDB.
+        now_utc = datetime.utcnow()
+        now_utc_iso = now_utc.isoformat() + "Z"  # ISO 8601 format (UTC)
+        now_local_iso = (now_utc + timedelta(hours=8)).isoformat()
+
         order_record = {
-            '_id': order_id,
+            'order_id': order_id,  # Use 'order_id' as the primary key.
             'customer_id': customer_id or 'GUEST',
-            'customer_name': (customer.get('full_name') if customer else 'Guest') or (customer.get('username') if customer else 'Guest') or (customer.get('email') if customer else 'guest'),
+            'customer_name': (customer.get('full_name') if customer else 'Guest'),
             'customer_email': customer.get('email') if customer else None,
             'customer_phone': customer.get('phone') if customer else None,
-            'transaction_date': now_utc,
-            'transaction_date_local': now_local,
-            'timezone': 'Asia/Manila',
-            'utc_offset_minutes': 480,
+            'transaction_date': now_utc_iso,
+            'transaction_date_local': now_local_iso,
             'delivery_address': delivery_address,
             'delivery_type': delivery_type,
             'items': items,
@@ -106,31 +118,27 @@ class OnlineTransactionService:
             'subtotal_after_discount': subtotal_after_discount,
             'delivery_fee': delivery_fee,
             'service_fee': service_fee,
-            'service_fee_breakdown': {'platform': service_fee},
             'total_amount': total_amount,
             'payment_method': payment_method,
             'payment_status': 'pending',
-            'payment_reference': None,
             'order_status': 'pending',
-            'status': 'pending',
             'notes': notes,
-            'status_history': [
-                {'status': 'pending', 'timestamp': now_utc}
-            ],
+            'status_history': [{'status': 'pending', 'timestamp': now_utc_iso}],
             'loyalty_points_earned': self._compute_points_earned(subtotal_after_discount),
-            'created_at': now_utc,
-            'updated_at': now_utc,
+            'created_at': now_utc_iso,
+            'updated_at': now_utc_iso,
         }
 
-        self.online_transactions.insert_one(order_record)
-        doc = order_record
+        # Convert floats to Decimals and remove empty strings for DynamoDB compatibility.
+        order_record_ddb = floats_to_decimals(order_record)
+        order_record_ddb = {k: v for k, v in order_record_ddb.items() if v not in [None, '']}
+        
+        self.online_transactions_table.put_item(Item=order_record_ddb)
 
         return {
             'success': True,
             'data': {
                 'order_id': order_id,
-                'order': order_record,
+                'order': order_record,  # Return the original record with floats
             }
         }
-
-

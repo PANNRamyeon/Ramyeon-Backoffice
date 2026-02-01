@@ -1,6 +1,4 @@
-import sys
 import os
-from datetime import datetime
 
 # Add your project root to Python path (same as migrate_categories script)
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -8,14 +6,14 @@ sys.path.insert(0, project_root)
 
 # Use the same database connection as your working migration script
 from backend.app.database import db_manager
-
+ 
 def remove_migration_fields():
     print("Removing migration fields using db_manager...")
     
     try:
-        # Use the same database connection method that works
-        db = db_manager.get_database()
-        category_collection = db.category
+        # This script is for MongoDB. It will not work with DynamoDB.
+        # db = db_manager.get_database() # MongoDB-specific db_manager
+        # category_collection = db.category # MongoDB-specific collection access
         
         # Check what we have
         count = category_collection.count_documents({})

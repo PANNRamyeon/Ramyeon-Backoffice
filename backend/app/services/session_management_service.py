@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from bson import ObjectId
+
 from ..database import db_manager  # ✅ Updated import
 
 ##THIS IS FOR LEGACY USE AND FOR TESTING
@@ -36,8 +36,6 @@ class SessionManagementService:
     def get_user_sessions(self, user_id):
         """Get all sessions for a specific user"""
         try:
-            if isinstance(user_id, str):
-                user_id = ObjectId(user_id)
             
             sessions = list(self.session_collection.find(
                 {"user_id": user_id}
@@ -61,8 +59,6 @@ class SessionManagementService:
     def force_logout_user(self, user_id):
         """Force logout all sessions for a specific user"""
         try:
-            if isinstance(user_id, str):
-                user_id = ObjectId(user_id)
             
             logout_time = datetime.utcnow()
             

@@ -2,7 +2,6 @@ import logging
 from django.core.management.base import BaseCommand
 from app.services.user_service import UserService
 from app.services.auth_services import AuthService
-from bson import ObjectId
 
 logger = logging.getLogger(__name__)
 

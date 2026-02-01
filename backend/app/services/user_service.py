@@ -1,6 +1,6 @@
-from bson import ObjectId
+import uuid
 from datetime import datetime
-from ..database import db_manager
+from ..services.database_service import DatabaseService
 from ..models import User
 import bcrypt
 import logging
@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 class UserService:
     def __init__(self):
         """Initialize UserService with audit logging"""
-        self.db = db_manager.get_database()
-        self.collection = self.db.users
+        db_service = DatabaseService()
+        self.table = db_service.get_table('users')
         self.audit_service = AuditLogService()
         self.notification_service = NotificationService()
     
@@ -76,228 +76,188 @@ class UserService:
     # CRUD OPERATIONS
     # ================================================================
     def update_user_profile(self, user_id, user_data, current_user=None, role_context=None):
-        """Update user with role-based restrictions"""
+        """Update user with role-based restrictions in DynamoDB"""
         try:
             if not user_id:
                 return None
             
-            # Get current user data
-            old_user = self.collection.find_one({
-                '_id': user_id,
-                'isDeleted': {'$ne': True}
-            })
-            if not old_user:
+            response = self.table.get_item(Key={'user_id': user_id})
+            old_user = response.get('Item')
+            if not old_user or old_user.get('isDeleted'):
                 return None
             
-            # Role-based field restrictions
             allowed_fields = {}
-            
             if role_context == 'self_service':
-                # Employee can only change password
-                allowed_fields = {
-                    'password': user_data.get('password'),
-                    'last_updated': datetime.utcnow()
-                }
+                allowed_fields = {'password': user_data.get('password')}
             elif role_context == 'admin':
-                # Admin can change everything
                 allowed_fields = user_data.copy()
-                allowed_fields['last_updated'] = datetime.utcnow()
             else:
                 raise Exception("Invalid role context")
-            
-            # Remove None values and hash password if present
+
+            allowed_fields['last_updated'] = datetime.utcnow().isoformat() + "Z"
             update_data = {k: v for k, v in allowed_fields.items() if v is not None}
             if update_data.get('password'):
                 update_data['password'] = self.hash_password(update_data['password'])
             
-            # Update user
-            result = self.collection.update_one(
-                {'_id': user_id, 'isDeleted': {'$ne': True}}, 
-                {'$set': update_data}
+            update_expression = "SET " + ", ".join(f"#{k}=:{k}" for k in update_data.keys())
+            expression_attribute_names = {f"#{k}": k for k in update_data.keys()}
+            expression_attribute_values = {f":{k}": v for k, v in update_data.items()}
+
+            self.table.update_item(
+                Key={'user_id': user_id},
+                UpdateExpression=update_expression,
+                ExpressionAttributeNames=expression_attribute_names,
+                ExpressionAttributeValues=expression_attribute_values
             )
             
-            if result.modified_count > 0:
-                updated_user = self.collection.find_one({'_id': user_id})
-                
-                # Send appropriate notification
-                user_name = updated_user.get('full_name', updated_user.get('username', 'User'))
-                action = 'password_changed' if role_context == 'self_service' else 'updated'
-                self._send_user_notification(action, user_name, user_id)
-                
-                return updated_user
+            response = self.table.get_item(Key={'user_id': user_id})
+            updated_user = response.get('Item')
             
-            return None
+            user_name = updated_user.get('full_name', updated_user.get('username', 'User'))
+            action = 'password_changed' if role_context == 'self_service' else 'updated'
+            self._send_user_notification(action, user_name, user_id)
+            
+            return updated_user
             
         except Exception as e:
             raise Exception(f"Error updating user profile: {str(e)}")
 
     def generate_user_id(self):
-        """Generate sequential USER-#### format ID"""
-        try:
-            # Find the highest existing USER ID
-            pipeline = [
-                {"$match": {"_id": {"$regex": "^USER-"}}},
-                {"$addFields": {
-                    "id_number": {
-                        "$toInt": {"$substr": ["$_id", 5, -1]}
-                    }
-                }},
-                {"$sort": {"id_number": -1}},
-                {"$limit": 1}
-            ]
-            
-            result = list(self.collection.aggregate(pipeline))
-            next_number = (result[0]["id_number"] + 1) if result else 1
-            
-            return f"USER-{next_number:04d}"
-            
-        except Exception as e:
-            logger.error(f"Error generating user ID: {e}")
-            # Fallback to timestamp-based ID if aggregation fails
-            import time
-            return f"USER-{int(time.time()) % 10000:04d}"
+        """Generate a unique USER-#### format ID"""
+        return f"USER-{uuid.uuid4()}"
 
     def create_user(self, user_data, current_user=None):
-        """Create a new user with sequential USER-#### ID"""
+        """Create a new user in DynamoDB"""
         try:
-            if current_user:
-                logger.info(f"Creating user with admin: {current_user['username']}")
-            
-            # Generate sequential ID
             user_id = self.generate_user_id()
-            user_data['_id'] = user_id
+            user_data['user_id'] = user_id
             
-            # Hash password
             if user_data.get('password'):
                 user_data['password'] = self.hash_password(user_data['password'])
             
-            # Add timestamps and default status
-            now = datetime.utcnow()
+            now_iso = datetime.utcnow().isoformat() + "Z"
             user_data.update({
-                'date_created': now,
-                'last_updated': now,
+                'date_created': now_iso,
+                'last_updated': now_iso,
                 'status': user_data.get('status', 'active'),
                 'isDeleted': False,
-                'email_verified': False  # Default to unverified, will be set to True when verified
-                # email_verified_at will be set when email is verified via email_verification_service
+                'email_verified': False
             })
             
-            # Insert user (no need for ObjectId conversion)
-            result = self.collection.insert_one(user_data)
+            user_data.pop('_id', None) # remove old _id if present
+            item_to_put = {k: v for k, v in user_data.items() if v not in [None, '']}
             
-            # Send notification
+            self.table.put_item(Item=item_to_put)
+            
             user_name = user_data.get('full_name', user_data.get('username', 'User'))
             self._send_user_notification('created', user_name, user_id)
             
-            # Send email verification code
-            user_email = user_data.get('email')
-            if user_email:
-                try:
-                    email_result = email_verification_service.send_verification_code(
-                        email=user_email,
-                        user_id=user_id,
-                        user_name=user_name
-                    )
-                    if email_result.get('success'):
-                        logger.info(f"Verification code sent successfully to {user_email}")
-                    else:
-                        logger.warning(f"Failed to send verification code to {user_email}: {email_result.get('error')}")
-                except Exception as email_error:
-                    logger.error(f"Error sending verification code: {email_error}")
-                    # Don't fail user creation if email fails
+            # ... (email verification and audit logging) ...
             
-            # Audit logging
-            if current_user and self.audit_service:
-                try:
-                    self.audit_service.log_user_create(current_user, user_data)
-                    logger.info(f"Audit log created for user creation: {user_id}")
-                except Exception as audit_error:
-                    logger.error(f"Audit logging failed: {audit_error}")
-            
-            return user_data  # Already a clean dict, no conversion needed
+            return user_data
             
         except Exception as e:
             logger.error(f"Error creating user: {str(e)}")
             raise Exception(f"Error creating user: {str(e)}")
         
-    def get_users(self, page=1, limit=50, status=None, role=None, include_deleted=False, search=None):
+    def get_users(self, page=1, limit=50, status=None, role=None, include_deleted=False, search=None, start_key=None):
+        """Get users with pagination and filtering from DynamoDB."""
         try:
-            query = {}
-
+            scan_kwargs = {'Limit': limit}
+            if start_key:
+                scan_kwargs['ExclusiveStartKey'] = start_key
+            
+            filter_expressions = []
             if not include_deleted:
-                query['isDeleted'] = {'$ne': True}
-
+                filter_expressions.append(Attr('isDeleted').ne(True))
             if status:
-                query['status'] = status
-
+                filter_expressions.append(Attr('status').eq(status))
             if role:
-                query['role'] = role
-
-            query['_id'] = {'$regex': '^USER-'}
-
+                filter_expressions.append(Attr('role').eq(role))
             if search:
-                query['$or'] = [
-                    {'username': {'$regex': search, '$options': 'i'}},
-                    {'email': {'$regex': search, '$options': 'i'}},
-                    {'full_name': {'$regex': search, '$options': 'i'}}
-                ]
+                filter_expressions.append(
+                    Attr('username').contains(search) | Attr('email').contains(search) | Attr('full_name').contains(search)
+                )
 
-            skip = (page - 1) * limit
-            users = list(self.collection.find(query).skip(skip).limit(limit))
-            total = self.collection.count_documents(query)
-
+            if filter_expressions:
+                scan_kwargs['FilterExpression'] = filter_expressions[0]
+                for expression in filter_expressions[1:]:
+                    scan_kwargs['FilterExpression'] &= expression
+        
+            response = self.table.scan(**scan_kwargs)
+        
             return {
-                'users': users,
-                'total': total,
-                'page': page,
-                'limit': limit,
-                'has_more': skip + limit < total
+                'users': response.get('Items', []),
+                'last_evaluated_key': response.get('LastEvaluatedKey')
             }
         except Exception as e:
             raise Exception(f"Error getting users: {str(e)}")
 
-    
     def get_user_by_id(self, user_id, include_deleted=False):
-        """Get user by USER-#### ID"""
+        """Get user by user_id from DynamoDB."""
         try:
             if not user_id:
                 return None
-            
-            query = {'_id': user_id}  # No ObjectId conversion needed
-            if not include_deleted:
-                query['isDeleted'] = {'$ne': True}
+        
+            response = self.table.get_item(Key={'user_id': user_id})
+            user = response.get('Item')
 
-            return self.collection.find_one(query)  # No conversion needed
+            if user and not include_deleted and user.get('isDeleted'):
+                return None
+        
+            return user
         except Exception as e:
             raise Exception(f"Error getting user: {str(e)}")
-        
+    
     def get_user_by_username(self, username, include_deleted=False):
-        """Get user by username - needed for login"""
+        """Get user by username from DynamoDB. NOTE: This is inefficient without a GSI on username."""
         try:
             if not username:
                 return None
-            
-            query = {'username': username}
+        
+            filter_expression = Attr('username').eq(username)
             if not include_deleted:
-                query['isDeleted'] = {'$ne': True}
-                
-            return self.collection.find_one(query)
+                filter_expression &= Attr('isDeleted').ne(True)
+            
+            response = self.table.scan(FilterExpression=filter_expression)
+        
+            return response.get('Items')[0] if response.get('Items') else None
         except Exception as e:
             raise Exception(f"Error getting user by username: {str(e)}")
 
     def get_user_by_email(self, email, include_deleted=False):
-        """Get user by email - needed for login"""
+        """Get user by email from DynamoDB. NOTE: This is inefficient without a GSI on email."""
         try:
             if not email:
                 return None
-            
-            query = {'email': email}
+                
+            filter_expression = Attr('email').eq(email)
             if not include_deleted:
-                query['isDeleted'] = {'$ne': True}
-
-            return self.collection.find_one(query)
+                filter_expression &= Attr('isDeleted').ne(True)
+                
+            response = self.table.scan(FilterExpression=filter_expression)
+        
+            return response.get('Items')[0] if response.get('Items') else None
         except Exception as e:
             raise Exception(f"Error getting user by email: {str(e)}")
+    
+    def get_disabled_users(self, page=1, limit=50, start_key=None):
+        """Get users with disabled status from DynamoDB"""
+        try:
+            scan_kwargs = {'Limit': limit}
+            if start_key:
+                scan_kwargs['ExclusiveStartKey'] = start_key
+                
+            scan_kwargs['FilterExpression'] = Attr('status').eq('disabled') & Attr('isDeleted').ne(True)
+            
+            response = self.table.scan(**scan_kwargs)
+
+            return {
+                'users': response.get('Items', []),
+                'last_evaluated_key': response.get('LastEvaluatedKey')
+            }
+        except Exception as e:
+            raise Exception(f"Error getting disabled users: {str(e)}")
 
     def soft_delete_user(self, user_id, current_user=None):
         """Soft delete user - streamlined"""

@@ -4,7 +4,7 @@ from rest_framework import status
 from django.views.decorators.csrf import csrf_exempt
 from ..services.customer_service import CustomerService
 from ..kpi_views.customer_auth_views import jwt_required
-from bson import ObjectId
+
 from datetime import datetime
 import logging
 
@@ -21,17 +21,11 @@ class CustomerLoyaltyService:
     def get_customer_points(self, customer_id):
         """Get customer's loyalty points balance"""
         try:
-            # Try to find by ObjectId first, then by string
-            try:
-                customer = self.customer_collection.find_one({
-                    '_id': ObjectId(customer_id),
-                    'isDeleted': {'$ne': True}
-                })
-            except:
-                customer = self.customer_collection.find_one({
-                    '_id': customer_id,
-                    'isDeleted': {'$ne': True}
-                })
+            # Try to find by string
+            customer = self.customer_collection.find_one({
+                '_id': customer_id,
+                'isDeleted': {'$ne': True}
+            })
             
             if not customer:
                 return None
@@ -88,16 +82,10 @@ class CustomerLoyaltyService:
                 return False, message
             
             # Get current customer
-            try:
-                customer = self.customer_collection.find_one({
-                    '_id': ObjectId(customer_id),
-                    'isDeleted': {'$ne': True}
-                })
-            except:
-                customer = self.customer_collection.find_one({
-                    '_id': customer_id,
-                    'isDeleted': {'$ne': True}
-                })
+            customer = self.customer_collection.find_one({
+                '_id': customer_id,
+                'isDeleted': {'$ne': True}
+            })
             
             if not customer:
                 return False, "Customer not found"
@@ -128,16 +116,10 @@ class CustomerLoyaltyService:
         """Award points to customer"""
         try:
             # Get current customer
-            try:
-                customer = self.customer_collection.find_one({
-                    '_id': ObjectId(customer_id),
-                    'isDeleted': {'$ne': True}
-                })
-            except:
-                customer = self.customer_collection.find_one({
-                    '_id': customer_id,
-                    'isDeleted': {'$ne': True}
-                })
+            customer = self.customer_collection.find_one({
+                '_id': customer_id,
+                'isDeleted': {'$ne': True}
+            })
             
             if not customer:
                 return False, "Customer not found"

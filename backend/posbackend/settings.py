@@ -128,9 +128,7 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# MongoDB settings
-MONGODB_URL = "mongodb://localhost:27017"
-MONGODB_NAME = "pos_system"
+
 
 # REST Framework settings
 REST_FRAMEWORK = {

@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import HttpResponse
 from ..services.saleslog_service import SalesLogService, SalesItemHistory, SalesTopItem
-from bson import ObjectId
+
 from datetime import datetime
 import logging
 from django.utils.dateparse import parse_date
@@ -39,7 +39,7 @@ class SalesLogView(APIView):
             # Convert string IDs to ObjectId if provided
             if 'customer_id' in invoice_data and isinstance(invoice_data['customer_id'], str):
                 try:
-                    invoice_data['customer_id'] = ObjectId(invoice_data['customer_id'])
+                    invoice_data['customer_id'] = invoice_data['customer_id']
                 except Exception:
                     return Response(
                         {'error': 'Invalid customer_id format'}, 
@@ -48,7 +48,7 @@ class SalesLogView(APIView):
             
             if 'user_id' in invoice_data and isinstance(invoice_data['user_id'], str):
                 try:
-                    invoice_data['user_id'] = ObjectId(invoice_data['user_id'])
+                    invoice_data['user_id'] = invoice_data['user_id']
                 except Exception:
                     return Response(
                         {'error': 'Invalid user_id format'}, 
@@ -156,7 +156,7 @@ class SalesLogView(APIView):
             # Convert ObjectId fields if needed
             if 'customer_id' in update_data and isinstance(update_data['customer_id'], str):
                 try:
-                    update_data['customer_id'] = ObjectId(update_data['customer_id'])
+                    update_data['customer_id'] = update_data['customer_id']
                 except Exception:
                     return Response(
                         {'error': 'Invalid customer_id format'}, 
@@ -165,7 +165,7 @@ class SalesLogView(APIView):
             
             if 'user_id' in update_data and isinstance(update_data['user_id'], str):
                 try:
-                    update_data['user_id'] = ObjectId(update_data['user_id'])
+                    update_data['user_id'] = update_data['user_id']
                 except Exception:
                     return Response(
                         {'error': 'Invalid user_id format'}, 

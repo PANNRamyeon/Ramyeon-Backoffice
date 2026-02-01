@@ -1,5 +1,4 @@
 from rest_framework import serializers
-from bson import ObjectId
 
 class UserCreateSerializer(serializers.Serializer):
     username = serializers.CharField(
