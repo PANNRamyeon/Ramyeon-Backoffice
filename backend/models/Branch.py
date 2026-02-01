@@ -1,792 +1,721 @@
 """
-Branch Model - Following Exact ERD Specification
-PK = "branches", SK = "BRAN-##"
+Branch Model - Following ERD Specification with Address & Timestamp
+PK = "branches", SK = "BRAN-##" (2-digit format)
+Single Table Design using RamyeonCornerDB
 """
 from pynamodb.models import Model
-from pynamodb.attributes import (
-    UnicodeAttribute, BooleanAttribute, 
-    UTCDateTimeAttribute, JSONAttribute
-)
+from pynamodb.attributes import UnicodeAttribute, UTCDateTimeAttribute
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
 from datetime import datetime
-import os
-import boto3
-from botocore.exceptions import ClientError
-from typing import Dict, Any, Optional, List
-import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Branch(Model):
     """
-    BRANCH MODEL - Following Exact ERD Specification
+    BRANCH MODEL - Enhanced for Practical Use
     
-    PK/SK Pattern:
-    - PK: "branches" (table name/entity type)
-    - SK: "BRAN-##" (2-digit auto-increment: 01, 02, etc.)
+    Core ERD Fields:
+    - PK = branches
+    - SK = BRAN-## (2-digit)
+    - branch_name (String)
     
-    For tracking business branches/locations.
+    Enhanced with:
+    - address (String) - for location identifier
+    - created_at (ISODATE) - for audit trail
     """
     
     class Meta:
-        table_name = os.environ.get('BRANCH_TABLE_NAME', 'Branches')
-        region = os.environ.get('AWS_REGION', 'us-east-1')
-        if os.environ.get('DYNAMODB_LOCAL', 'false').lower() == 'true':
-            host = os.environ.get('DYNAMODB_LOCAL_HOST', 'http://localhost:8000')
-        read_capacity_units = 5
-        write_capacity_units = 5
+        table_name = DYNAMO_TABLE_NAME  # RamyeonCornerDB (single table)
+        region = AWS_REGION
+        
+        #if DYNAMODB_LOCAL:
+        #    host = DYNAMODB_LOCAL_HOST
+        
+        # Minimal capacity for branch operations
+        read_capacity_units = 3
+        write_capacity_units = 3
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True)   # Partition Key: "branches"
-    sk = UnicodeAttribute(range_key=True)  # Sort Key: "BRAN-01"
+    pk = UnicodeAttribute(hash_key=True, default="branches")
+    sk = UnicodeAttribute(range_key=True)  # "BRAN-01" (2-digit)
     
-    # ============= BRANCH DATA (EXACT ERD FIELDS) =============
+    # ============= CORE ERD FIELDS =============
+    branch_name = UnicodeAttribute()
     
-    # Branch ID (derived from SK, but stored for easy access)
-    branch_id = UnicodeAttribute()  # "BRAN-01"
-    branch_number = UnicodeAttribute()  # "01" (string to preserve leading zeros)
+    # ============= ENHANCED FIELDS =============
+    address = UnicodeAttribute(null=True)  # For location identification
+    created_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)  # For audit trail
     
-    # Required field from ERD
-    branch_name = UnicodeAttribute()  # String
-    
-    # ============= ADDITIONAL FIELDS (Not in ERD but practical) =============
-    # We'll include these but make them optional/nullable
-    
-    # Contact Information
-    address = UnicodeAttribute(null=True)  # String: Physical address
-    phone_number = UnicodeAttribute(null=True)  # String
-    email = UnicodeAttribute(null=True)  # String
-    
-    # Branch Details
-    description = UnicodeAttribute(null=True)  # String
-    branch_type = UnicodeAttribute(null=True)  # String: "main", "retail", "warehouse", "office"
-    
-    # Management
-    manager_id = UnicodeAttribute(null=True)  # String: ID of branch manager
-    manager_name = UnicodeAttribute(null=True)  # String: Name of branch manager
-    
-    # Status
-    status = UnicodeAttribute(default="active")  # String: "active", "inactive", "closed", "under_maintenance"
-    is_deleted = BooleanAttribute(default=False)  # Boolean
-    
-    # Operating Information
-    opening_time = UnicodeAttribute(null=True)  # String: "09:00"
-    closing_time = UnicodeAttribute(null=True)  # String: "18:00"
-    timezone = UnicodeAttribute(null=True)  # String: "America/New_York"
-    
-    # Geolocation
-    latitude = UnicodeAttribute(null=True)  # String: "40.7128"
-    longitude = UnicodeAttribute(null=True)  # String: "-74.0060"
-    
-    # Metadata
-    metadata = JSONAttribute(null=True)  # JSON: Additional configuration/data
-    
-    # Audit Trail
-    date_created = UTCDateTimeAttribute(default_for_new=datetime.utcnow)  # ISODATE
-    last_updated = UTCDateTimeAttribute(default_for_new=datetime.utcnow)  # ISODATE
-    
-    # ============= COUNTER CONFIGURATION =============
-    ID_PREFIX = "BRAN-"
-    DIGITS = 2  # 2-digit format: BRAN-01 to BRAN-99
-    DEFAULT_START_NUMBER = 1
-    
-    # ============= COUNTER MANAGEMENT =============
+    # ============= CLASS METHODS =============
     
     @classmethod
-    def _get_dynamodb_client(cls):
-        """Get DynamoDB client"""
-        return boto3.resource(
-            'dynamodb', 
-            region_name=cls.Meta.region,
-            aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-            aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
-        )
-    
-    @classmethod
-    def _format_branch_id(cls, number: int) -> str:
-        """Format branch ID with prefix and 2 digits"""
-        return f"{cls.ID_PREFIX}{number:0{cls.DIGITS}d}"
-    
-    @classmethod
-    def _get_next_branch_id(cls) -> Dict[str, Any]:
+    def create_branch(cls, branch_name: str, address: str = None) -> 'Branch':
         """
-        Get next auto-incrementing branch ID (thread-safe)
-        Returns: {"branch_id": "BRAN-01", "branch_number": "01", "numeric_number": 1}
-        """
-        dynamodb = cls._get_dynamodb_client()
-        table = dynamodb.Table(cls.Meta.table_name)
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                # Atomic increment
-                response = table.update_item(
-                    Key={
-                        'pk': 'COUNTERS',
-                        'sk': 'BRANCH'
-                    },
-                    UpdateExpression='SET #value = if_not_exists(#value, :start) + :inc, updated_at = :now',
-                    ExpressionAttributeNames={'#value': 'value'},
-                    ExpressionAttributeValues={
-                        ':start': cls.DEFAULT_START_NUMBER - 1,
-                        ':inc': 1,
-                        ':now': datetime.utcnow().isoformat()
-                    },
-                    ReturnValues='UPDATED_NEW'
-                )
-                
-                new_number = response['Attributes']['value']
-                branch_id = cls._format_branch_id(new_number)
-                branch_number_str = f"{new_number:0{cls.DIGITS}d}"
-                
-                return {
-                    "branch_id": branch_id,
-                    "branch_number": branch_number_str,
-                    "numeric_number": new_number
-                }
-                
-            except ClientError as e:
-                if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                    time.sleep(0.1 * (attempt + 1))
-                    continue
-                else:
-                    # Create counter if doesn't exist
-                    try:
-                        table.put_item(
-                            Item={
-                                'pk': 'COUNTERS',
-                                'sk': 'BRANCH',
-                                'value': cls.DEFAULT_START_NUMBER - 1,
-                                'created_at': datetime.utcnow().isoformat()
-                            },
-                            ConditionExpression='attribute_not_exists(pk)'
-                        )
-                        time.sleep(0.1)
-                        continue
-                    except:
-                        pass
-        
-        # Fallback - use timestamp
-        timestamp = int(datetime.utcnow().timestamp() * 1000)
-        return {
-            "branch_id": f"{cls.ID_PREFIX}T{timestamp}",
-            "branch_number": f"T{timestamp}",
-            "numeric_number": timestamp
-        }
-    
-    @classmethod
-    def get_current_counter(cls) -> Dict[str, Any]:
-        """Get current counter value"""
-        dynamodb = cls._get_dynamodb_client()
-        table = dynamodb.Table(cls.Meta.table_name)
-        
-        try:
-            response = table.get_item(
-                Key={'pk': 'COUNTERS', 'sk': 'BRANCH'}
-            )
-            
-            if 'Item' in response:
-                current = response['Item'].get('value', cls.DEFAULT_START_NUMBER - 1)
-                return {
-                    "current_value": current,
-                    "next_id": cls._format_branch_id(current + 1)
-                }
-        except:
-            pass
-        
-        return {
-            "current_value": cls.DEFAULT_START_NUMBER - 1,
-            "next_id": cls._format_branch_id(cls.DEFAULT_START_NUMBER)
-        }
-    
-    @classmethod
-    def set_counter_value(cls, value: int):
-        """Manually set counter value"""
-        dynamodb = cls._get_dynamodb_client()
-        table = dynamodb.Table(cls.Meta.table_name)
-        
-        table.update_item(
-            Key={'pk': 'COUNTERS', 'sk': 'BRANCH'},
-            UpdateExpression='SET #value = :val',
-            ExpressionAttributeNames={'#value': 'value'},
-            ExpressionAttributeValues={':val': value}
-        )
-    
-    @classmethod
-    def initialize_counter(cls, start_value: int = None):
-        """Initialize counter"""
-        if start_value is None:
-            start_value = cls.DEFAULT_START_NUMBER - 1
-        
-        dynamodb = cls._get_dynamodb_client()
-        table = dynamodb.Table(cls.Meta.table_name)
-        
-        try:
-            table.put_item(
-                Item={
-                    'pk': 'COUNTERS',
-                    'sk': 'BRANCH',
-                    'value': start_value,
-                    'created_at': datetime.utcnow().isoformat()
-                },
-                ConditionExpression='attribute_not_exists(pk)'
-            )
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                print("Branch counter already exists")
-    
-    # ============= TEMPLATE METHODS =============
-    
-    @classmethod
-    def create_branch(cls, branch_data: Dict[str, Any]) -> 'Branch':
-        """
-        Create branch from data
+        Create a new branch with auto-generated 2-digit SK
         
         Args:
-            branch_data: Dictionary with branch fields (must include 'branch_name')
+            branch_name: Name of the branch (required)
+            address: Physical address (optional)
         
-        Returns: Branch instance (not saved yet)
+        Returns:
+            Branch: Created and saved branch instance
         
         Raises:
             ValueError: If branch_name is not provided
         """
-        # Validate required field
-        if 'branch_name' not in branch_data:
-            raise ValueError("branch_name is required")
-        
-        # Get next ID
-        id_info = cls._get_next_branch_id()
-        branch_id = id_info["branch_id"]
-        branch_number = id_info["branch_number"]
-        
-        # Set PK/SK
-        pk = "branches"
-        sk = branch_id
-        
-        # Prepare data
-        branch_data_with_ids = {
-            "pk": pk,
-            "sk": sk,
-            "branch_id": branch_id,
-            "branch_number": branch_number,
-            **branch_data
-        }
-        
-        # Create instance
-        return cls(**branch_data_with_ids)
+        try:
+            if not branch_name or not branch_name.strip():
+                raise ValueError("branch_name is required")
+            
+            # Generate 2-digit SK using utils.py
+            sk = generate_sk('BRAN-', 'branch_seq')
+            
+            # Create and save branch
+            branch = cls(
+                pk="branches",
+                sk=sk,
+                branch_name=branch_name.strip(),
+                address=address.strip() if address else None,
+                created_at=datetime.utcnow()
+            )
+            branch.save()
+            
+            logger.info(f"Branch created: {sk} - '{branch_name}' at {address or 'No address'}")
+            return branch
+            
+        except Exception as e:
+            logger.error(f"Failed to create branch: {str(e)}")
+            raise
     
     @classmethod
-    def get_by_id(cls, branch_id: str) -> Optional['Branch']:
+    def get_by_id(cls, branch_id: str) -> 'Branch | None':
         """
         Get branch by ID
         
         Args:
-            branch_id: "BRAN-01" format
+            branch_id: Format "BRAN-01" or just "01"
         
-        Returns: Branch or None
+        Returns:
+            Branch or None if not found
         """
         try:
+            # Ensure proper format
+            if not branch_id.startswith('BRAN-'):
+                branch_id = f"BRAN-{branch_id.zfill(2)}"  # Pad to 2 digits if needed
+            
             return cls.get("branches", branch_id)
         except cls.DoesNotExist:
+            logger.warning(f"Branch not found: {branch_id}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching branch {branch_id}: {str(e)}")
             return None
     
     @classmethod
-    def get_by_name(cls, branch_name: str) -> Optional['Branch']:
+    def get_by_name(cls, branch_name: str) -> 'Branch | None':
         """
-        Get branch by name (exact match)
+        Get branch by exact name match
         
         Args:
-            branch_name: Branch name to search for
+            branch_name: Exact branch name to find
         
-        Returns: Branch or None
+        Returns:
+            Branch or None if not found
         """
-        for branch in cls.scan(cls.branch_name == branch_name):
-            return branch
-        return None
+        try:
+            # Scan operation (acceptable for < 100 branches)
+            for branch in cls.scan(cls.branch_name == branch_name):
+                return branch
+            return None
+        except Exception as e:
+            logger.error(f"Error finding branch by name '{branch_name}': {str(e)}")
+            return None
     
     @classmethod
-    def search_by_name(cls, search_term: str, limit: int = 10) -> List['Branch']:
+    def search_by_name(cls, search_term: str, limit: int = 10) -> list:
         """
-        Search branches by name (partial match)
+        Search branches by name (partial, case-insensitive)
         
         Args:
-            search_term: Search term (case-insensitive)
+            search_term: Search term
             limit: Maximum number of branches to return
         
-        Returns: List of matching branches
+        Returns:
+            list: List of matching branches
         """
-        branches = []
-        search_term_lower = search_term.lower()
-        
-        for branch in cls.scan(cls.is_deleted == False, limit=100):  # Scan with limit
-            if search_term_lower in branch.branch_name.lower():
-                branches.append(branch)
-                if len(branches) >= limit:
-                    break
-        
-        return branches
+        try:
+            branches = []
+            search_term_lower = search_term.lower()
+            
+            # Scan all branches (acceptable for < 100 branches)
+            for branch in cls.query("branches", limit=100):  # Max 99 branches
+                if search_term_lower in branch.branch_name.lower():
+                    branches.append(branch)
+                    if len(branches) >= limit:
+                        break
+            
+            return branches
+        except Exception as e:
+            logger.error(f"Error searching branches: {str(e)}")
+            return []
     
     @classmethod
-    def get_all_branches(cls, limit: int = 100) -> List['Branch']:
+    def search_by_address(cls, search_term: str, limit: int = 10) -> list:
+        """
+        Search branches by address (partial, case-insensitive)
+        
+        Args:
+            search_term: Search term for address
+            limit: Maximum number of branches to return
+        
+        Returns:
+            list: List of matching branches
+        """
+        try:
+            branches = []
+            search_term_lower = search_term.lower()
+            
+            # Scan all branches
+            for branch in cls.query("branches", limit=100):
+                if branch.address and search_term_lower in branch.address.lower():
+                    branches.append(branch)
+                    if len(branches) >= limit:
+                        break
+            
+            return branches
+        except Exception as e:
+            logger.error(f"Error searching branches by address: {str(e)}")
+            return []
+    
+    @classmethod
+    def get_all_branches(cls) -> list:
         """
         Get all branches
         
+        Returns:
+            list: List of all branches
+        """
+        try:
+            return list(cls.query("branches"))
+        except Exception as e:
+            logger.error(f"Error getting all branches: {str(e)}")
+            return []
+    
+    @classmethod
+    def get_branch_count(cls) -> int:
+        """
+        Get total number of branches
+        
+        Returns:
+            int: Number of branches
+        """
+        try:
+            count = 0
+            for _ in cls.query("branches"):
+                count += 1
+            return count
+        except Exception as e:
+            logger.error(f"Error counting branches: {str(e)}")
+            return 0
+    
+    @classmethod
+    def get_branch_ids(cls) -> list:
+        """
+        Get list of all branch IDs
+        
+        Returns:
+            list: List of branch IDs (SK values)
+        """
+        try:
+            return [branch.sk for branch in cls.query("branches")]
+        except Exception as e:
+            logger.error(f"Error getting branch IDs: {str(e)}")
+            return []
+    
+    @classmethod
+    def get_branch_names(cls) -> list:
+        """
+        Get list of all branch names
+        
+        Returns:
+            list: List of branch names
+        """
+        try:
+            return [branch.branch_name for branch in cls.query("branches")]
+        except Exception as e:
+            logger.error(f"Error getting branch names: {str(e)}")
+            return []
+    
+    @classmethod
+    def branch_exists(cls, branch_name: str) -> bool:
+        """
+        Check if a branch with given name already exists
+        
         Args:
+            branch_name: Branch name to check
+        
+        Returns:
+            bool: True if branch exists, False otherwise
+        """
+        try:
+            return cls.get_by_name(branch_name) is not None
+        except Exception as e:
+            logger.error(f"Error checking branch existence: {str(e)}")
+            return False
+    
+    @classmethod
+    def get_branches_without_address(cls) -> list:
+        """
+        Get all branches that don't have an address set
+        
+        Returns:
+            list: List of branches without address
+        """
+        try:
+            branches = []
+            for branch in cls.query("branches"):
+                if not branch.address:
+                    branches.append(branch)
+            return branches
+        except Exception as e:
+            logger.error(f"Error getting branches without address: {str(e)}")
+            return []
+    
+    @classmethod
+    def get_branches_by_creation_date(cls, 
+                                     start_date: datetime = None, 
+                                     end_date: datetime = None) -> list:
+        """
+        Get branches created within a date range
+        
+        Args:
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+        
+        Returns:
+            list: List of branches created in the date range
+        """
+        try:
+            branches = []
+            for branch in cls.query("branches"):
+                # Filter by date range if provided
+                if start_date and end_date:
+                    if start_date <= branch.created_at <= end_date:
+                        branches.append(branch)
+                elif start_date and branch.created_at >= start_date:
+                    branches.append(branch)
+                elif end_date and branch.created_at <= end_date:
+                    branches.append(branch)
+                else:
+                    branches.append(branch)
+            return branches
+        except Exception as e:
+            logger.error(f"Error getting branches by creation date: {str(e)}")
+            return []
+    
+    # ============= INSTANCE METHODS =============
+    
+    def update_branch(self, branch_name: str = None, address: str = None) -> 'Branch':
+        """
+        Update branch name and/or address
+        
+        Args:
+            branch_name: New branch name (optional)
+            address: New address (optional)
+        
+        Returns:
+            Branch: Updated branch instance
+        """
+        try:
+            updated = False
+            
+            if branch_name is not None:
+                if not branch_name.strip():
+                    raise ValueError("branch_name cannot be empty")
+                self.branch_name = branch_name.strip()
+                updated = True
+            
+            if address is not None:
+                self.address = address.strip() if address.strip() else None
+                updated = True
+            
+            if updated:
+                self.save()
+                logger.info(f"Branch {self.sk} updated: name={branch_name or 'unchanged'}, address={address or 'unchanged'}")
+            
+            return self
+        except Exception as e:
+            logger.error(f"Failed to update branch: {str(e)}")
+            raise
+    
+    def update_name(self, new_name: str) -> 'Branch':
+        """
+        Update branch name only
+        
+        Args:
+            new_name: New branch name
+        
+        Returns:
+            Branch: Updated branch instance
+        """
+        return self.update_branch(branch_name=new_name)
+    
+    def update_address(self, new_address: str) -> 'Branch':
+        """
+        Update branch address only
+        
+        Args:
+            new_address: New address
+        
+        Returns:
+            Branch: Updated branch instance
+        """
+        return self.update_branch(address=new_address)
+    
+    def get_location_info(self) -> dict:
+        """
+        Get location information for mapping/display
+        
+        Returns:
+            dict: Location information
+        """
+        return {
+            "branch_id": self.sk,
+            "branch_name": self.branch_name,
+            "address": self.address,
+            "created_date": self.created_at.date().isoformat() if self.created_at else None,
+            "age_days": (datetime.utcnow().date() - self.created_at.date()).days if self.created_at else None
+        }
+    
+    def delete_branch(self):
+        """
+        Delete this branch from the database
+        """
+        try:
+            self.delete()
+            logger.info(f"Branch deleted: {self.sk} - '{self.branch_name}'")
+        except Exception as e:
+            logger.error(f"Failed to delete branch {self.sk}: {str(e)}")
+            raise
+    
+    def to_dict(self) -> dict:
+        """
+        Convert branch to dictionary for API response
+        
+        Returns:
+            dict: Dictionary representation
+        """
+        try:
+            return {
+                "branch_id": self.sk,
+                "branch_name": self.branch_name,
+                "address": self.address,
+                "created_at": self.created_at.isoformat() if self.created_at else None
+            }
+        except Exception as e:
+            logger.error(f"Error converting branch to dict: {str(e)}")
+            return {}
+    
+    def to_simple_dict(self) -> dict:
+        """
+        Minimal dictionary representation (for basic listings)
+        
+        Returns:
+            dict: Basic branch info
+        """
+        try:
+            return {
+                "id": self.sk,
+                "name": self.branch_name,
+                "address": self.address or "No address"
+            }
+        except Exception as e:
+            logger.error(f"Error converting branch to simple dict: {str(e)}")
+            return {}
+    
+    def to_audit_dict(self) -> dict:
+        """
+        Dictionary for audit trail purposes
+        
+        Returns:
+            dict: Audit trail representation
+        """
+        try:
+            return {
+                "entity_type": "branch",
+                "branch_id": self.sk,
+                "branch_name": self.branch_name,
+                "address": self.address,
+                "created_at": self.created_at.isoformat() if self.created_at else None,
+                "audit_timestamp": datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error converting branch to audit dict: {str(e)}")
+            return {}
+
+
+# ============= BRANCH VALIDATION =============
+def validate_branch_id(branch_id: str) -> bool:
+    """
+    Validate if a branch ID is in correct format
+    
+    Args:
+        branch_id: Branch ID to validate
+    
+    Returns:
+        bool: True if valid format, False otherwise
+    """
+    try:
+        if not branch_id:
+            return False
+        
+        # Check format: BRAN-## where ## are exactly 2 digits
+        if not branch_id.startswith('BRAN-'):
+            return False
+        
+        number_part = branch_id[5:]  # Remove "BRAN-"
+        if len(number_part) != 2:
+            return False
+        
+        # Check if it's a valid number (01-99)
+        number = int(number_part)
+        return 1 <= number <= 99
+        
+    except (ValueError, IndexError):
+        return False
+
+
+def format_branch_id(number: int) -> str:
+    """
+    Format a number as a branch ID
+    
+    Args:
+        number: Number to format (1-99)
+    
+    Returns:
+        str: Formatted branch ID (BRAN-##)
+    
+    Raises:
+        ValueError: If number is not between 1 and 99
+    """
+    if not 1 <= number <= 99:
+        raise ValueError("Branch number must be between 1 and 99")
+    
+    return f"BRAN-{number:02d}"
+
+
+def validate_branch_data(branch_name: str, address: str = None) -> tuple[bool, str]:
+    """
+    Validate branch data before creation
+    
+    Args:
+        branch_name: Branch name to validate
+        address: Address to validate (optional)
+    
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    if not branch_name or not branch_name.strip():
+        return False, "Branch name is required"
+    
+    if len(branch_name.strip()) > 100:
+        return False, "Branch name must be 100 characters or less"
+    
+    if address and len(address.strip()) > 200:
+        return False, "Address must be 200 characters or less"
+    
+    return True, ""
+
+
+# ============= BULK OPERATIONS =============
+def create_initial_branches(branch_data: list[dict]) -> dict:
+    """
+    Create multiple branches at once (for initialization)
+    
+    Args:
+        branch_data: List of dictionaries with 'name' and optional 'address'
+    
+    Returns:
+        dict: Summary of creation results
+    """
+    created_branches = []
+    errors = []
+    
+    for data in branch_data:
+        try:
+            name = data.get('name')
+            address = data.get('address')
+            
+            if not name:
+                errors.append(f"Missing branch name in data: {data}")
+                continue
+            
+            # Check if branch already exists
+            if Branch.branch_exists(name):
+                errors.append(f"Branch '{name}' already exists")
+                continue
+            
+            branch = Branch.create_branch(name, address)
+            created_branches.append(branch.to_dict())
+            
+        except Exception as e:
+            errors.append(f"Failed to create branch from data {data}: {str(e)}")
+    
+    return {
+        "created": created_branches,
+        "total_created": len(created_branches),
+        "errors": errors,
+        "success": len(errors) == 0
+    }
+
+
+def update_branches_address(branch_updates: list[dict]) -> dict:
+    """
+    Update addresses for multiple branches
+    
+    Args:
+        branch_updates: List of dicts with 'branch_id' and 'address'
+    
+    Returns:
+        dict: Summary of update results
+    """
+    updated = []
+    errors = []
+    
+    for update in branch_updates:
+        try:
+            branch_id = update.get('branch_id')
+            address = update.get('address')
+            
+            if not branch_id:
+                errors.append(f"Missing branch_id in update: {update}")
+                continue
+            
+            branch = Branch.get_by_id(branch_id)
+            if not branch:
+                errors.append(f"Branch not found: {branch_id}")
+                continue
+            
+            branch.update_address(address)
+            updated.append({
+                "branch_id": branch_id,
+                "new_address": address
+            })
+            
+        except Exception as e:
+            errors.append(f"Failed to update branch {update.get('branch_id')}: {str(e)}")
+    
+    return {
+        "updated": updated,
+        "total_updated": len(updated),
+        "errors": errors,
+        "success": len(errors) == 0
+    }
+
+
+# ============= BRANCH MANAGER =============
+class BranchManager:
+    """
+    Manager class for branch-related operations
+    """
+    
+    @staticmethod
+    def get_branch_summary() -> dict:
+        """
+        Get summary statistics for all branches
+        
+        Returns:
+            dict: Branch summary
+        """
+        try:
+            branches = Branch.get_all_branches()
+            total = len(branches)
+            with_address = sum(1 for b in branches if b.address)
+            without_address = total - with_address
+            
+            # Group by creation month
+            from collections import defaultdict
+            by_month = defaultdict(int)
+            for branch in branches:
+                if branch.created_at:
+                    month_key = branch.created_at.strftime("%Y-%m")
+                    by_month[month_key] += 1
+            
+            return {
+                "total_branches": total,
+                "with_address": with_address,
+                "without_address": without_address,
+                "address_coverage": (with_address / total * 100) if total > 0 else 0,
+                "branches_by_month": dict(by_month),
+                "oldest_branch": min(branches, key=lambda x: x.created_at).sk if branches else None,
+                "newest_branch": max(branches, key=lambda x: x.created_at).sk if branches else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting branch summary: {str(e)}")
+            return {}
+    
+    @staticmethod
+    def export_branches_to_csv_format() -> list:
+        """
+        Export branches in CSV-friendly format
+        
+        Returns:
+            list: List of dictionaries for CSV export
+        """
+        try:
+            branches = Branch.get_all_branches()
+            csv_data = []
+            
+            for branch in branches:
+                csv_data.append({
+                    "branch_id": branch.sk,
+                    "branch_name": branch.branch_name,
+                    "address": branch.address or "",
+                    "created_at": branch.created_at.isoformat() if branch.created_at else "",
+                    "created_date": branch.created_at.date().isoformat() if branch.created_at else ""
+                })
+            
+            return csv_data
+            
+        except Exception as e:
+            logger.error(f"Error exporting branches: {str(e)}")
+            return []
+    
+    @staticmethod
+    def find_nearby_branches(location_keywords: list, limit: int = 5) -> list:
+        """
+        Find branches by location keywords in address
+        
+        Args:
+            location_keywords: List of location keywords (e.g., ["downtown", "main st"])
             limit: Maximum number of branches to return
         
-        Returns: List of branches
+        Returns:
+            list: List of matching branches
         """
-        return list(cls.query("branches", limit=limit))
-    
-    @classmethod
-    def get_active_branches(cls) -> List['Branch']:
-        """
-        Get all active, non-deleted branches
-        
-        Returns: List of active branches
-        """
-        branches = []
-        for branch in cls.query("branches"):
-            if branch.status == "active" and not branch.is_deleted:
-                branches.append(branch)
-        return branches
-    
-    @classmethod
-    def get_branches_by_type(cls, branch_type: str) -> List['Branch']:
-        """
-        Get branches by type
-        
-        Args:
-            branch_type: Type of branch to filter by
-        
-        Returns: List of branches of specified type
-        """
-        branches = []
-        for branch in cls.query("branches"):
-            if branch.branch_type == branch_type and not branch.is_deleted:
-                branches.append(branch)
-        return branches
-    
-    def save(self, *args, **kwargs):
-        """Override save to update last_updated timestamp"""
-        self.last_updated = datetime.utcnow()
-        return super().save(*args, **kwargs)
-    
-    def update_branch(self, update_data: Dict[str, Any]) -> 'Branch':
-        """
-        Update branch with provided data
-        
-        Args:
-            update_data: Dictionary with fields to update
-        
-        Returns: Updated Branch instance
-        """
-        for key, value in update_data.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-        
-        self.save()
-        return self
-    
-    def set_status(self, new_status: str) -> 'Branch':
-        """
-        Update branch status
-        
-        Args:
-            new_status: New status value
-        
-        Returns: Updated Branch instance
-        """
-        valid_statuses = ["active", "inactive", "closed", "under_maintenance"]
-        if new_status not in valid_statuses:
-            raise ValueError(f"Invalid status. Must be one of: {valid_statuses}")
-        
-        self.status = new_status
-        self.save()
-        return self
-    
-    def soft_delete(self):
-        """Soft delete branch"""
-        self.is_deleted = True
-        self.status = "closed"
-        self.save()
-    
-    def set_manager(self, manager_id: str, manager_name: str = None) -> 'Branch':
-        """
-        Set branch manager
-        
-        Args:
-            manager_id: ID of the manager
-            manager_name: Name of the manager (optional)
-        
-        Returns: Updated Branch instance
-        """
-        self.manager_id = manager_id
-        if manager_name:
-            self.manager_name = manager_name
-        self.save()
-        return self
-    
-    def set_location(self, latitude: str, longitude: str) -> 'Branch':
-        """
-        Set branch geolocation
-        
-        Args:
-            latitude: Latitude coordinate
-            longitude: Longitude coordinate
-        
-        Returns: Updated Branch instance
-        """
-        self.latitude = latitude
-        self.longitude = longitude
-        self.save()
-        return self
-    
-    def set_operating_hours(self, opening_time: str, closing_time: str, 
-                           timezone: str = None) -> 'Branch':
-        """
-        Set branch operating hours
-        
-        Args:
-            opening_time: Opening time (e.g., "09:00")
-            closing_time: Closing time (e.g., "18:00")
-            timezone: Timezone (e.g., "America/New_York")
-        
-        Returns: Updated Branch instance
-        """
-        self.opening_time = opening_time
-        self.closing_time = closing_time
-        if timezone:
-            self.timezone = timezone
-        self.save()
-        return self
-    
-    def is_open_now(self) -> bool:
-        """
-        Check if branch is currently open based on operating hours
-        
-        Returns: True if branch is open, False otherwise
-        """
-        # This is a simplified implementation
-        # In production, you'd need to handle timezones and days of the week
-        if not self.opening_time or not self.closing_time:
-            return True  # Assume open if hours not set
-        
-        # Simple check (ignoring timezone for this example)
         try:
-            from datetime import time as dt_time
+            branches = Branch.get_all_branches()
+            matching_branches = []
             
-            # Get current time in UTC
-            now = datetime.utcnow()
+            for branch in branches:
+                if not branch.address:
+                    continue
+                
+                address_lower = branch.address.lower()
+                for keyword in location_keywords:
+                    if keyword.lower() in address_lower:
+                        matching_branches.append(branch)
+                        break
+                
+                if len(matching_branches) >= limit:
+                    break
             
-            # Parse opening and closing times
-            open_hour, open_minute = map(int, self.opening_time.split(':'))
-            close_hour, close_minute = map(int, self.closing_time.split(':'))
+            return matching_branches
             
-            open_time = now.replace(hour=open_hour, minute=open_minute, second=0)
-            close_time = now.replace(hour=close_hour, minute=close_minute, second=0)
-            
-            # Adjust for closing times past midnight
-            if close_time < open_time:
-                close_time = close_time.replace(day=close_time.day + 1)
-            
-            return open_time <= now <= close_time
-            
-        except (ValueError, AttributeError):
-            return True  # Assume open if there's an error parsing times
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert to dictionary for API response
-        
-        Returns: Dictionary representation
-        """
-        data = {
-            'branch_id': self.branch_id,
-            'branch_number': self.branch_number,
-            'branch_name': self.branch_name,
-            'status': self.status,
-            'is_deleted': self.is_deleted,
-        }
-        
-        # Add optional fields if they exist
-        optional_fields = [
-            'address', 'phone_number', 'email', 'description', 'branch_type',
-            'manager_id', 'manager_name', 'opening_time', 'closing_time',
-            'timezone', 'latitude', 'longitude'
-        ]
-        
-        for field in optional_fields:
-            if hasattr(self, field) and getattr(self, field) is not None:
-                data[field] = getattr(self, field)
-        
-        # Add timestamps
-        if self.date_created:
-            data['date_created'] = self.date_created.isoformat()
-        if self.last_updated:
-            data['last_updated'] = self.last_updated.isoformat()
-        
-        # Add metadata if exists
-        if self.metadata:
-            data['metadata'] = self.metadata
-        
-        # Add computed field
-        if hasattr(self, 'opening_time') and hasattr(self, 'closing_time'):
-            data['is_open_now'] = self.is_open_now()
-        
-        return data
+        except Exception as e:
+            logger.error(f"Error finding nearby branches: {str(e)}")
+            return []
 
-
-# ============= BRANCH FACTORY =============
-class BranchFactory:
-    """
-    Factory for creating branches
-    """
-    
-    @staticmethod
-    def create_main_branch(branch_name: str, 
-                          address: str = None,
-                          phone_number: str = None) -> Branch:
-        """
-        Create main/headquarters branch
-        
-        Args:
-            branch_name: Name of the branch
-            address: Physical address
-            phone_number: Contact phone number
-        
-        Returns: Branch instance
-        """
-        return Branch.create_branch({
-            "branch_name": branch_name,
-            "branch_type": "main",
-            "address": address,
-            "phone_number": phone_number,
-            "status": "active"
-        })
-    
-    @staticmethod
-    def create_retail_branch(branch_name: str,
-                            address: str,
-                            opening_time: str = "09:00",
-                            closing_time: str = "18:00") -> Branch:
-        """
-        Create retail branch
-        
-        Args:
-            branch_name: Name of the branch
-            address: Physical address
-            opening_time: Opening time
-            closing_time: Closing time
-        
-        Returns: Branch instance
-        """
-        return Branch.create_branch({
-            "branch_name": branch_name,
-            "branch_type": "retail",
-            "address": address,
-            "opening_time": opening_time,
-            "closing_time": closing_time,
-            "status": "active"
-        })
-    
-    @staticmethod
-    def create_warehouse_branch(branch_name: str,
-                               address: str,
-                               manager_id: str = None) -> Branch:
-        """
-        Create warehouse branch
-        
-        Args:
-            branch_name: Name of the branch
-            address: Physical address
-            manager_id: ID of warehouse manager
-        
-        Returns: Branch instance
-        """
-        return Branch.create_branch({
-            "branch_name": branch_name,
-            "branch_type": "warehouse",
-            "address": address,
-            "manager_id": manager_id,
-            "status": "active"
-        })
-
-
-# ============= GLOBAL SECONDARY INDEXES =============
-from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
-
-class BranchNameIndex(GlobalSecondaryIndex):
-    """GSI for querying by branch name"""
-    class Meta:
-        index_name = 'branch-name-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    
-    branch_name = UnicodeAttribute(hash_key=True)
-    branch_id = UnicodeAttribute(range_key=True)
-
-
-class BranchTypeIndex(GlobalSecondaryIndex):
-    """GSI for querying by branch type"""
-    class Meta:
-        index_name = 'branch-type-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    
-    branch_type = UnicodeAttribute(hash_key=True)
-    branch_id = UnicodeAttribute(range_key=True)
-
-
-class StatusIndex(GlobalSecondaryIndex):
-    """GSI for querying by status"""
-    class Meta:
-        index_name = 'branch-status-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    
-    status = UnicodeAttribute(hash_key=True)
-    branch_id = UnicodeAttribute(range_key=True)
-
-
-# To use GSIs, add to Branch class:
-# name_index = BranchNameIndex()
-# type_index = BranchTypeIndex()
-# status_index = StatusIndex()
-
-
-# ============= USAGE EXAMPLES =============
-if __name__ == "__main__":
-    print("Branch Model (Exact ERD Specification) Ready!")
-    print("=" * 60)
-    
-    # Initialize table and counter
-    if not Branch.exists():
-        Branch.create_table(wait=True)
-        print("Table created successfully")
-        Branch.initialize_counter()
-        print("Counter initialized")
-    
-    # Check counter status
-    counter = Branch.get_current_counter()
-    print(f"Next branch ID will be: {counter['next_id']}")
-    
-    # Example 1: Create main branch
-    print("\n1. Creating main branch:")
-    
-    main_branch = BranchFactory.create_main_branch(
-        branch_name="Headquarters",
-        address="123 Main Street, New York, NY 10001",
-        phone_number="+1-212-555-1234"
-    )
-    main_branch.save()
-    
-    print(f"Created: {main_branch.branch_id}")
-    print(f"Name: {main_branch.branch_name}")
-    print(f"Type: {main_branch.branch_type}")
-    print(f"Address: {main_branch.address}")
-    
-    # Example 2: Create retail branch
-    print("\n2. Creating retail branch:")
-    
-    retail_branch = BranchFactory.create_retail_branch(
-        branch_name="Downtown Store",
-        address="456 Oak Avenue, New York, NY 10002",
-        opening_time="10:00",
-        closing_time="20:00"
-    )
-    retail_branch.save()
-    
-    print(f"Created: {retail_branch.branch_id}")
-    print(f"Hours: {retail_branch.opening_time} - {retail_branch.closing_time}")
-    
-    # Example 3: Create warehouse branch
-    print("\n3. Creating warehouse branch:")
-    
-    warehouse_branch = BranchFactory.create_warehouse_branch(
-        branch_name="Brooklyn Warehouse",
-        address="789 Industrial Blvd, Brooklyn, NY 11201",
-        manager_id="USER-005"
-    )
-    warehouse_branch.save()
-    
-    print(f"Created: {warehouse_branch.branch_id}")
-    print(f"Manager ID: {warehouse_branch.manager_id}")
-    
-    # Example 4: Direct branch creation
-    print("\n4. Direct branch creation:")
-    
-    office_branch = Branch.create_branch({
-        "branch_name": "Midtown Office",
-        "branch_type": "office",
-        "address": "101 Park Avenue, New York, NY 10003",
-        "email": "midtown@company.com",
-        "phone_number": "+1-212-555-5678"
-    })
-    office_branch.save()
-    
-    print(f"Created: {office_branch.branch_id}")
-    print(f"Email: {office_branch.email}")
-    
-    # Example 5: Update branch
-    print("\n5. Updating branch:")
-    
-    retail_branch.update_branch({
-        "phone_number": "+1-212-555-9999",
-        "email": "downtown@company.com"
-    })
-    
-    print(f"Updated phone: {retail_branch.phone_number}")
-    print(f"Updated email: {retail_branch.email}")
-    
-    # Example 6: Set location
-    print("\n6. Setting branch location:")
-    
-    main_branch.set_location("40.7128", "-74.0060")
-    print(f"Location: {main_branch.latitude}, {main_branch.longitude}")
-    
-    # Example 7: Check if branch is open
-    print("\n7. Checking if branch is open:")
-    is_open = retail_branch.is_open_now()
-    print(f"Downtown Store is currently open: {is_open}")
-    
-    # Example 8: Retrieve branch
-    print("\n8. Retrieving branch by ID:")
-    retrieved = Branch.get_by_id(main_branch.branch_id)
-    if retrieved:
-        print(f"Found: {retrieved.branch_name}")
-        print(f"Data: {retrieved.to_dict().keys()}")
-    
-    # Example 9: Get all branches
-    print("\n9. All branches:")
-    branches = Branch.get_all_branches()
-    for branch in branches:
-        print(f"  - {branch.branch_id}: {branch.branch_name} ({branch.branch_type})")
-    
-    # Example 10: Get active branches
-    print("\n10. Active branches:")
-    active_branches = Branch.get_active_branches()
-    print(f"Active branches count: {len(active_branches)}")
-    
-    # Example 11: Search branches by name
-    print("\n11. Searching branches by name:")
-    search_results = Branch.search_by_name("store", limit=5)
-    print(f"Found {len(search_results)} branches with 'store' in name")
-    
-    # Example 12: Set branch manager
-    print("\n12. Setting branch manager:")
-    retail_branch.set_manager("USER-010", "John Manager")
-    print(f"Manager: {retail_branch.manager_name} ({retail_branch.manager_id})")
-    
-    # Example 13: Soft delete branch
-    print("\n13. Soft deleting branch:")
-    warehouse_branch.soft_delete()
-    print(f"Is deleted: {warehouse_branch.is_deleted}")
-    print(f"Status: {warehouse_branch.status}")
-    
-    # Example 14: Convert to API response
-    print("\n14. Converting branch to API response:")
-    api_data = main_branch.to_dict()
-    print(f"API response keys: {list(api_data.keys())}")
-    print(f"Sample data: { {k: v for k, v in list(api_data.items())[:8]} }")
