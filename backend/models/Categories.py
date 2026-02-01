@@ -86,8 +86,8 @@ class Category(Model):
         table_name = DYNAMO_TABLE_NAME  # RamyeonCornerDB (single table)
         region = AWS_REGION
         
-        if DYNAMODB_LOCAL:
-            host = DYNAMODB_LOCAL_HOST
+        #if DYNAMODB_LOCAL:
+        #    host = DYNAMODB_LOCAL_HOST
         
         read_capacity_units = 5
         write_capacity_units = 5
