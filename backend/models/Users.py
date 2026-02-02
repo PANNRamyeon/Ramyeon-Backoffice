@@ -1,650 +1,616 @@
 """
-User Model - Following Exact ERD Specification
-PK = "users", SK = "USER-###"
+User Model - Following ERD Specification with Single Table Design
+PK = users, SK = USER-### (3-digit format)
+Single Table Design using RamyeonCornerDB with GSIs
 """
 from pynamodb.models import Model
 from pynamodb.attributes import (
-    UnicodeAttribute, BooleanAttribute, 
-    UTCDateTimeAttribute
+    UnicodeAttribute, BooleanAttribute, UTCDateTimeAttribute
 )
+from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
 from datetime import datetime
-import os
-import boto3
-from botocore.exceptions import ClientError
-from typing import Dict, Any, Optional, List
-import time
+import logging
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from typing import Optional, Dict, Any, List
+
+logger = logging.getLogger(__name__)
+
+
+# ============= GLOBAL SECONDARY INDEXES =============
+
+class UserIdentifierGSI(GlobalSecondaryIndex):
+    """
+    GSI for unique user identifier lookups (email, username)
+    Query patterns:
+    1. Find user by email: identifier_type="EMAIL", identifier_value="user@example.com"
+    2. Find user by username: identifier_type="USERNAME", identifier_value="john_doe"
+    """
+    class Meta:
+        index_name = 'gsi-user-identifiers'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+    
+    identifier_type = UnicodeAttribute(hash_key=True)  # "EMAIL", "USERNAME"
+    identifier_value = UnicodeAttribute(range_key=True)  # actual email or username
+
+
+class UserRoleStatusGSI(GlobalSecondaryIndex):
+    """
+    GSI for role-based and status-based queries
+    Query patterns:
+    1. Find active admins: role_status="ADMIN#ACTIVE"
+    2. Find all cashiers: role_status="CASHIER#ACTIVE"
+    3. Find suspended users: role_status="#SUSPENDED" (all roles)
+    """
+    class Meta:
+        index_name = 'gsi-user-role-status'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+    
+    role_status = UnicodeAttribute(hash_key=True)  # "ADMIN#ACTIVE", "CASHIER#ACTIVE", "#SUSPENDED"
+    user_id = UnicodeAttribute(range_key=True)  # USER-001
 
 
 class User(Model):
     """
-    USER MODEL - Following Exact ERD Specification
+    USER MODEL - Following ERD Specification with GSIs
     
-    PK/SK Pattern:
-    - PK: "users" (table name/entity type)
-    - SK: "USER-###" (3-digit auto-increment: 001, 002, etc.)
-    
-    Attributes as per ERD with exact data types
+    Core ERD Fields:
+    - PK = users
+    - SK = USER-### (3-digit)
+    - username (String)
+    - email (String)
+    - password (String)
+    - full_name (String)
+    - role (String)
+    - status (String)
+    - date_created (ISODATE)
+    - last_updated (ISODATE)
+    - isDeleted (boolean)
+    - last_login (ISODATE)
+    - email_verified (boolean)
+    - email_verified_at (ISODATE)
     """
     
     class Meta:
-        table_name = os.environ.get('USER_TABLE_NAME', 'Users')
-        region = os.environ.get('AWS_REGION', 'us-east-1')
-        if os.environ.get('DYNAMODB_LOCAL', 'false').lower() == 'true':
-            host = os.environ.get('DYNAMODB_LOCAL_HOST', 'http://localhost:8000')
+        table_name = DYNAMO_TABLE_NAME  # RamyeonCornerDB (single table)
+        region = AWS_REGION
+        
+        #if DYNAMODB_LOCAL:
+        #    host = DYNAMODB_LOCAL_HOST
+        
+        # Capacity settings for user operations
         read_capacity_units = 5
         write_capacity_units = 5
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True)   # Partition Key: "users"
-    sk = UnicodeAttribute(range_key=True)  # Sort Key: "USER-001"
+    pk = UnicodeAttribute(hash_key=True, default="users")
+    sk = UnicodeAttribute(range_key=True)  # "USER-001" (3-digit)
     
-    # ============= USER DATA (EXACT ERD FIELDS) =============
+    # ============= GSI KEYS =============
+    # GSI 1: Identifier index
+    identifier_type = UnicodeAttribute(null=True)  # "EMAIL", "USERNAME"
+    identifier_value = UnicodeAttribute(null=True)  # actual value
     
-    # User ID (derived from SK, but stored for easy access)
-    user_id = UnicodeAttribute()  # "USER-001"
-    user_number = UnicodeAttribute()  # "001" (string to preserve leading zeros)
+    # GSI 2: Role/Status index
+    role_status = UnicodeAttribute(null=True)  # "ADMIN#ACTIVE", "CASHIER#ACTIVE"
     
-    # Authentication & Profile
-    username = UnicodeAttribute(null=True)  # String
-    email = UnicodeAttribute(null=True)  # String
-    password = UnicodeAttribute(null=True)  # String (hashed)
-    full_name = UnicodeAttribute(null=True)  # String
+    # ============= GSI REFERENCES =============
+    identifier_gsi = UserIdentifierGSI()
+    role_status_gsi = UserRoleStatusGSI()
     
-    # Role & Permissions
-    role = UnicodeAttribute(default="user")  # String: "user", "admin", "manager", "staff"
+    # ============= CORE ERD FIELDS =============
+    username = UnicodeAttribute(null=True)
+    email = UnicodeAttribute(null=True)
+    password = UnicodeAttribute(null=True)  # Store hashed passwords only!
+    full_name = UnicodeAttribute(null=True)
+    role = UnicodeAttribute(default="user")  # "user", "admin", "manager", "staff", "cashier"
+    status = UnicodeAttribute(default="active")  # "active", "inactive", "suspended"
+    date_created = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    last_updated = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    isDeleted = BooleanAttribute(default=False)
+    last_login = UTCDateTimeAttribute(null=True)
+    email_verified = BooleanAttribute(default=False)
+    email_verified_at = UTCDateTimeAttribute(null=True)
     
-    # Status
-    status = UnicodeAttribute(default="active")  # String: "active", "inactive", "suspended"
-    isDeleted = BooleanAttribute(default=False)  # boolean (keeping ERD casing)
-    
-    # Email Verification
-    email_verified = BooleanAttribute(default=False)  # boolean
-    email_verified_at = UTCDateTimeAttribute(null=True)  # ISODATE
-    
-    # Activity Tracking
-    last_login = UTCDateTimeAttribute(null=True)  # ISODATE
-    
-    # Audit Trail
-    date_created = UTCDateTimeAttribute(default_for_new=datetime.utcnow)  # ISODATE
-    last_updated = UTCDateTimeAttribute(default_for_new=datetime.utcnow)  # ISODATE
-    
-    # ============= COUNTER CONFIGURATION =============
-    ID_PREFIX = "USER-"
-    DIGITS = 3  # 3-digit format: USER-001 to USER-999
-    DEFAULT_START_NUMBER = 1
-    
-    # ============= COUNTER MANAGEMENT =============
+    # ============= CLASS METHODS =============
     
     @classmethod
-    def _get_dynamodb_client(cls):
-        """Get DynamoDB client"""
-        return boto3.resource(
-            'dynamodb', 
-            region_name=cls.Meta.region,
-            aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-            aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
-        )
-    
-    @classmethod
-    def _format_user_id(cls, number: int) -> str:
-        """Format user ID with prefix and 3 digits"""
-        return f"{cls.ID_PREFIX}{number:0{cls.DIGITS}d}"
-    
-    @classmethod
-    def _get_next_user_id(cls) -> Dict[str, Any]:
+    def create_user(cls, username: str, email: str, password_hash: str, **kwargs) -> 'User':
         """
-        Get next auto-incrementing user ID (thread-safe)
-        Returns: {"user_id": "USER-001", "user_number": "001", "numeric_number": 1}
+        Create a new user with auto-generated 3-digit SK and GSIs
+        
+        Args:
+            username: Username (required)
+            email: Email address (required)
+            password_hash: Hashed password (required)
+            **kwargs: Additional user attributes
+            
+        Returns:
+            User: Created and saved user instance
+            
+        Raises:
+            ValueError: If required fields are not provided
         """
-        dynamodb = cls._get_dynamodb_client()
-        table = dynamodb.Table(cls.Meta.table_name)
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                # Atomic increment
-                response = table.update_item(
-                    Key={
-                        'pk': 'COUNTERS',
-                        'sk': 'USER'
-                    },
-                    UpdateExpression='SET #value = if_not_exists(#value, :start) + :inc, updated_at = :now',
-                    ExpressionAttributeNames={'#value': 'value'},
-                    ExpressionAttributeValues={
-                        ':start': cls.DEFAULT_START_NUMBER - 1,
-                        ':inc': 1,
-                        ':now': datetime.utcnow().isoformat()
-                    },
-                    ReturnValues='UPDATED_NEW'
-                )
-                
-                new_number = response['Attributes']['value']
-                user_id = cls._format_user_id(new_number)
-                user_number_str = f"{new_number:0{cls.DIGITS}d}"
-                
-                return {
-                    "user_id": user_id,
-                    "user_number": user_number_str,
-                    "numeric_number": new_number
-                }
-                
-            except ClientError as e:
-                if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                    time.sleep(0.1 * (attempt + 1))
-                    continue
-                else:
-                    # Create counter if doesn't exist
-                    try:
-                        table.put_item(
-                            Item={
-                                'pk': 'COUNTERS',
-                                'sk': 'USER',
-                                'value': cls.DEFAULT_START_NUMBER - 1,
-                                'created_at': datetime.utcnow().isoformat()
-                            },
-                            ConditionExpression='attribute_not_exists(pk)'
-                        )
-                        time.sleep(0.1)
-                        continue
-                    except:
-                        pass
-        
-        # Fallback
-        timestamp = int(datetime.utcnow().timestamp() * 1000)
-        return {
-            "user_id": f"{cls.ID_PREFIX}T{timestamp}",
-            "user_number": f"T{timestamp}",
-            "numeric_number": timestamp
-        }
-    
-    @classmethod
-    def get_current_counter(cls) -> Dict[str, Any]:
-        """Get current counter value"""
-        dynamodb = cls._get_dynamodb_client()
-        table = dynamodb.Table(cls.Meta.table_name)
-        
         try:
-            response = table.get_item(
-                Key={'pk': 'COUNTERS', 'sk': 'USER'}
+            # Validate required fields
+            if not username or not username.strip():
+                raise ValueError("username is required")
+            if not email or not email.strip():
+                raise ValueError("email is required")
+            if not password_hash or not password_hash.strip():
+                raise ValueError("password_hash is required")
+            
+            # Normalize inputs
+            username_norm = username.strip().lower()
+            email_norm = email.strip().lower()
+            
+            # Check if username or email already exists using GSI
+            if cls.get_by_username(username_norm):
+                raise ValueError(f"Username '{username_norm}' already exists")
+            if cls.get_by_email(email_norm):
+                raise ValueError(f"Email '{email_norm}' already exists")
+            
+            # Generate 3-digit SK using utils.py
+            sk = generate_sk('USER-', 'user_seq', digits=3)
+            
+            # Get role and status
+            role = kwargs.get('role', 'user')
+            status = kwargs.get('status', 'active')
+            role_status = f"{role.upper()}#{status.upper()}"
+            
+            # Create and save user
+            user = cls(
+                pk="users",
+                sk=sk,
+                username=username_norm,
+                email=email_norm,
+                password=password_hash,
+                full_name=kwargs.get('full_name'),
+                role=role,
+                status=status,
+                isDeleted=kwargs.get('isDeleted', False),
+                email_verified=kwargs.get('email_verified', False),
+                email_verified_at=kwargs.get('email_verified_at'),
+                
+                # GSI 1: Identifier index
+                identifier_type=None,  # Will be set via _update_gsi_identifiers()
+                identifier_value=None,
+                
+                # GSI 2: Role/Status index
+                role_status=role_status,
+                
+                date_created=datetime.utcnow(),
+                last_updated=datetime.utcnow(),
+                last_login=None
             )
             
-            if 'Item' in response:
-                current = response['Item'].get('value', cls.DEFAULT_START_NUMBER - 1)
-                return {
-                    "current_value": current,
-                    "next_id": cls._format_user_id(current + 1)
-                }
-        except:
-            pass
-        
-        return {
-            "current_value": cls.DEFAULT_START_NUMBER - 1,
-            "next_id": cls._format_user_id(cls.DEFAULT_START_NUMBER)
-        }
+            # Save to create the item
+            user.save()
+            
+            # Update identifier GSI after save (to avoid duplicate key issues)
+            user._update_gsi_identifiers()
+            
+            logger.info(f"User created: {sk} - '{username_norm}'")
+            return user
+            
+        except Exception as e:
+            logger.error(f"Failed to create user: {str(e)}")
+            raise
+    
+    # ============= GSI-BASED QUERY METHODS =============
     
     @classmethod
-    def set_counter_value(cls, value: int):
-        """Manually set counter value"""
-        dynamodb = cls._get_dynamodb_client()
-        table = dynamodb.Table(cls.Meta.table_name)
-        
-        table.update_item(
-            Key={'pk': 'COUNTERS', 'sk': 'USER'},
-            UpdateExpression='SET #value = :val',
-            ExpressionAttributeNames={'#value': 'value'},
-            ExpressionAttributeValues={':val': value}
-        )
-    
-    @classmethod
-    def initialize_counter(cls, start_value: int = None):
-        """Initialize counter"""
-        if start_value is None:
-            start_value = cls.DEFAULT_START_NUMBER - 1
-        
-        dynamodb = cls._get_dynamodb_client()
-        table = dynamodb.Table(cls.Meta.table_name)
-        
-        try:
-            table.put_item(
-                Item={
-                    'pk': 'COUNTERS',
-                    'sk': 'USER',
-                    'value': start_value,
-                    'created_at': datetime.utcnow().isoformat()
-                },
-                ConditionExpression='attribute_not_exists(pk)'
-            )
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                print("User counter already exists")
-    
-    # ============= TEMPLATE METHODS =============
-    
-    @classmethod
-    def create_user(cls, user_data: Dict[str, Any]) -> 'User':
+    def get_by_email(cls, email: str) -> 'User | None':
         """
-        Create user from data
+        Get user by email using GSI (fast lookup)
         
         Args:
-            user_data: Dictionary with user fields
-        
-        Returns: User instance (not saved yet)
-        """
-        # Get next ID
-        id_info = cls._get_next_user_id()
-        user_id = id_info["user_id"]
-        user_number = id_info["user_number"]
-        
-        # Set PK/SK
-        pk = "users"
-        sk = user_id
-        
-        # Prepare data
-        user_data_with_ids = {
-            "pk": pk,
-            "sk": sk,
-            "user_id": user_id,
-            "user_number": user_number,
-            **user_data
-        }
-        
-        # Create instance
-        return cls(**user_data_with_ids)
-    
-    @classmethod
-    def get_by_id(cls, user_id: str) -> Optional['User']:
-        """
-        Get user by ID
-        
-        Args:
-            user_id: "USER-001" format
-        
-        Returns: User or None
+            email: Email to find
+            
+        Returns:
+            User or None if not found
         """
         try:
-            return cls.get("users", user_id)
-        except cls.DoesNotExist:
+            email_norm = email.strip().lower()
+            for user in cls.identifier_gsi.query(
+                hash_key="EMAIL",
+                range_key_condition=cls.identifier_value == email_norm
+            ):
+                return user
             return None
+        except Exception as e:
+            logger.error(f"Error finding user by email '{email}': {str(e)}")
+            # Fallback to scan
+            return cls._get_by_email_scan(email_norm)
     
     @classmethod
-    def get_by_email(cls, email: str) -> Optional['User']:
+    def get_by_username(cls, username: str) -> 'User | None':
         """
-        Get user by email (scan - for small datasets)
+        Get user by username using GSI (fast lookup)
         
         Args:
-            email: Email address
-        
-        Returns: User or None
+            username: Username to find
+            
+        Returns:
+            User or None if not found
         """
-        for user in cls.scan(cls.email == email):
-            return user
+        try:
+            username_norm = username.strip().lower()
+            for user in cls.identifier_gsi.query(
+                hash_key="USERNAME",
+                range_key_condition=cls.identifier_value == username_norm
+            ):
+                return user
+            return None
+        except Exception as e:
+            logger.error(f"Error finding user by username '{username}': {str(e)}")
+            # Fallback to scan
+            return cls._get_by_username_scan(username_norm)
+    
+    @classmethod
+    def get_users_by_role_status(cls, role: str = None, status: str = None) -> List['User']:
+        """
+        Get users by role and/or status using GSI
+        
+        Args:
+            role: Role to filter by (optional)
+            status: Status to filter by (optional)
+            
+        Returns:
+            list: List of users matching criteria
+        """
+        try:
+            users = []
+            
+            if role and status:
+                # Exact role-status match
+                role_status = f"{role.upper()}#{status.upper()}"
+                for user in cls.role_status_gsi.query(role_status):
+                    users.append(user)
+            elif role:
+                # All users with role (any status)
+                # Query with begins_with
+                for user in cls.role_status_gsi.query(
+                    f"{role.upper()}#",
+                    range_key_condition=cls.role_status.startswith(f"{role.upper()}#")
+                ):
+                    users.append(user)
+            elif status:
+                # All users with status (any role)
+                # This is less efficient but works for status-only queries
+                for user in cls.query("users"):
+                    if user.status.upper() == status.upper():
+                        users.append(user)
+            else:
+                # No filters, return all users
+                return cls.get_all_users()
+            
+            return users
+        except Exception as e:
+            logger.error(f"Error getting users by role/status: {str(e)}")
+            return []
+    
+    @classmethod
+    def get_cashiers(cls, active_only: bool = True) -> List['User']:
+        """
+        Get all cashier users using GSI
+        
+        Args:
+            active_only: Only return active cashiers
+            
+        Returns:
+            list: List of cashier users
+        """
+        try:
+            if active_only:
+                return cls.get_users_by_role_status(role="cashier", status="active")
+            else:
+                return cls.get_users_by_role_status(role="cashier")
+        except Exception as e:
+            logger.error(f"Error getting cashiers: {str(e)}")
+            return []
+    
+    @classmethod
+    def get_admins(cls, active_only: bool = True) -> List['User']:
+        """
+        Get all admin users using GSI
+        
+        Args:
+            active_only: Only return active admins
+            
+        Returns:
+            list: List of admin users
+        """
+        try:
+            if active_only:
+                return cls.get_users_by_role_status(role="admin", status="active")
+            else:
+                return cls.get_users_by_role_status(role="admin")
+        except Exception as e:
+            logger.error(f"Error getting admins: {str(e)}")
+            return []
+    
+    # ============= FALLBACK SCAN METHODS (if GSI fails) =============
+    
+    @classmethod
+    def _get_by_email_scan(cls, email: str) -> 'User | None':
+        """Fallback method to find user by email (scan)"""
+        for user in cls.query("users"):
+            if user.email and user.email.lower() == email:
+                return user
         return None
     
     @classmethod
-    def get_by_username(cls, username: str) -> Optional['User']:
-        """
-        Get user by username
-        
-        Args:
-            username: Username
-        
-        Returns: User or None
-        """
-        for user in cls.scan(cls.username == username):
-            return user
+    def _get_by_username_scan(cls, username: str) -> 'User | None':
+        """Fallback method to find user by username (scan)"""
+        for user in cls.query("users"):
+            if user.username and user.username.lower() == username:
+                return user
         return None
     
-    @classmethod
-    def get_all_users(cls, limit: int = 100) -> List['User']:
+    # ============= INSTANCE METHODS =============
+    
+    def _update_gsi_identifiers(self):
+        """Update GSI identifier fields"""
+        try:
+            # Update identifier GSI
+            if self.email:
+                self.identifier_type = "EMAIL"
+                self.identifier_value = self.email.lower()
+            elif self.username:
+                self.identifier_type = "USERNAME"
+                self.identifier_value = self.username.lower()
+            
+            # Update role_status GSI
+            if self.role and self.status:
+                self.role_status = f"{self.role.upper()}#{self.status.upper()}"
+            
+            self.save()
+        except Exception as e:
+            logger.error(f"Failed to update GSI identifiers for user {self.sk}: {str(e)}")
+    
+    def update_user(self, **kwargs) -> 'User':
         """
-        Get all users
+        Update user information with GSI updates
         
         Args:
-            limit: Maximum number to return
-        
-        Returns: List of users
+            **kwargs: User attributes to update
+            
+        Returns:
+            User: Updated user instance
         """
-        return list(cls.query("users", limit=limit))
+        try:
+            updated = False
+            
+            # Handle special fields that affect GSIs
+            if 'username' in kwargs:
+                new_username = kwargs['username'].strip().lower()
+                existing = self.get_by_username(new_username)
+                if existing and existing.sk != self.sk:
+                    raise ValueError(f"Username '{new_username}' already taken")
+                self.username = new_username
+                updated = True
+            
+            if 'email' in kwargs:
+                new_email = kwargs['email'].strip().lower()
+                existing = self.get_by_email(new_email)
+                if existing and existing.sk != self.sk:
+                    raise ValueError(f"Email '{new_email}' already taken")
+                self.email = new_email
+                updated = True
+            
+            if 'role' in kwargs:
+                new_role = kwargs['role']
+                valid_roles = ['user', 'admin', 'manager', 'staff', 'cashier']
+                if new_role not in valid_roles:
+                    raise ValueError(f"Role must be one of: {valid_roles}")
+                self.role = new_role
+                updated = True
+            
+            if 'status' in kwargs:
+                new_status = kwargs['status']
+                valid_statuses = ['active', 'inactive', 'suspended']
+                if new_status not in valid_statuses:
+                    raise ValueError(f"Status must be one of: {valid_statuses}")
+                self.status = new_status
+                updated = True
+            
+            # Handle other fields
+            for key, value in kwargs.items():
+                if key not in ['username', 'email', 'role', 'status'] and hasattr(self, key) and getattr(self, key) != value:
+                    setattr(self, key, value)
+                    updated = True
+            
+            if updated:
+                self.last_updated = datetime.utcnow()
+                # Update GSIs
+                self._update_gsi_identifiers()
+                logger.info(f"User {self.sk} updated: {list(kwargs.keys())}")
+            
+            return self
+        except Exception as e:
+            logger.error(f"Failed to update user: {str(e)}")
+            raise
     
-    @classmethod
-    def get_active_users(cls) -> List['User']:
-        """Get all active, non-deleted users"""
-        users = []
-        for user in cls.query("users"):
-            if user.status == "active" and not user.isDeleted:
-                users.append(user)
-        return users
+    # ============= REST OF THE METHODS (similar to before but with GSI awareness) =============
     
-    @classmethod
-    def get_by_role(cls, role: str) -> List['User']:
-        """Get users by role"""
-        users = []
-        for user in cls.query("users"):
-            if user.role == role and not user.isDeleted:
-                users.append(user)
-        return users
+    def update_password(self, new_password_hash: str) -> 'User':
+        """Update user password"""
+        try:
+            self.password = new_password_hash
+            self.last_updated = datetime.utcnow()
+            self.save()
+            logger.info(f"Password updated for user {self.sk}")
+            return self
+        except Exception as e:
+            logger.error(f"Failed to update password: {str(e)}")
+            raise
     
-    def save(self, *args, **kwargs):
-        """Override save to update last_updated timestamp"""
-        self.last_updated = datetime.utcnow()
-        return super().save(*args, **kwargs)
+    def record_login(self) -> 'User':
+        """Record user login timestamp"""
+        try:
+            self.last_login = datetime.utcnow()
+            self.save()
+            return self
+        except Exception as e:
+            logger.error(f"Failed to record login: {str(e)}")
+            raise
     
-    def record_login(self):
-        """Record user login"""
-        self.last_login = datetime.utcnow()
-        self.save()
-    
-    def verify_email(self):
+    def verify_email(self) -> 'User':
         """Mark email as verified"""
-        self.email_verified = True
-        self.email_verified_at = datetime.utcnow()
-        self.save()
+        try:
+            self.email_verified = True
+            self.email_verified_at = datetime.utcnow()
+            self.last_updated = datetime.utcnow()
+            self.save()
+            logger.info(f"Email verified for user {self.sk}")
+            return self
+        except Exception as e:
+            logger.error(f"Failed to verify email: {str(e)}")
+            raise
     
-    def set_password(self, hashed_password: str):
-        """Set password"""
-        self.password = hashed_password
-        self.save()
+    def soft_delete(self) -> 'User':
+        """Soft delete user (mark as deleted)"""
+        try:
+            self.isDeleted = True
+            self.status = 'inactive'
+            self.last_updated = datetime.utcnow()
+            # Update GSIs
+            self._update_gsi_identifiers()
+            logger.info(f"User soft deleted: {self.sk}")
+            return self
+        except Exception as e:
+            logger.error(f"Failed to soft delete user: {str(e)}")
+            raise
     
-    def update_role(self, new_role: str):
-        """Update user role"""
-        valid_roles = ["user", "admin", "manager", "staff", "support"]
-        if new_role not in valid_roles:
-            raise ValueError(f"Invalid role. Must be one of: {valid_roles}")
-        
-        self.role = new_role
-        self.save()
-    
-    def update_status(self, new_status: str):
-        """Update user status"""
-        valid_statuses = ["active", "inactive", "suspended", "pending"]
-        if new_status not in valid_statuses:
-            raise ValueError(f"Invalid status. Must be one of: {valid_statuses}")
-        
-        self.status = new_status
-        self.save()
-    
-    def soft_delete(self):
-        """Soft delete user"""
-        self.isDeleted = True
-        self.status = "inactive"
-        self.save()
+    def restore(self) -> 'User':
+        """Restore soft-deleted user"""
+        try:
+            self.isDeleted = False
+            self.status = 'active'
+            self.last_updated = datetime.utcnow()
+            # Update GSIs
+            self._update_gsi_identifiers()
+            logger.info(f"User restored: {self.sk}")
+            return self
+        except Exception as e:
+            logger.error(f"Failed to restore user: {str(e)}")
+            raise
     
     def to_dict(self, include_sensitive: bool = False) -> Dict[str, Any]:
         """
-        Convert to dictionary for API response
-        
-        Args:
-            include_sensitive: Include sensitive fields like password
-        
-        Returns: Dictionary representation
+        Convert user to dictionary for API response
         """
-        data = {
-            'user_id': self.user_id,
-            'user_number': self.user_number,
-            'username': self.username,
-            'email': self.email,
-            'full_name': self.full_name,
-            'role': self.role,
-            'status': self.status,
-            'isDeleted': self.isDeleted,
-            'email_verified': self.email_verified,
-        }
-        
-        # Add dates
-        if self.date_created:
-            data['date_created'] = self.date_created.isoformat()
-        if self.last_updated:
-            data['last_updated'] = self.last_updated.isoformat()
-        if self.last_login:
-            data['last_login'] = self.last_login.isoformat()
-        if self.email_verified_at:
-            data['email_verified_at'] = self.email_verified_at.isoformat()
-        
-        # Add sensitive fields if requested
-        if include_sensitive:
-            data['password'] = self.password  # Hashed password
-        
-        return data
+        try:
+            result = {
+                "user_id": self.sk,
+                "username": self.username,
+                "email": self.email,
+                "full_name": self.full_name,
+                "role": self.role,
+                "status": self.status,
+                "isDeleted": self.isDeleted,
+                "email_verified": self.email_verified,
+                "date_created": self.date_created.isoformat() if self.date_created else None,
+                "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+                "last_login": self.last_login.isoformat() if self.last_login else None,
+                "email_verified_at": self.email_verified_at.isoformat() if self.email_verified_at else None
+            }
+            
+            if include_sensitive:
+                result["password"] = self.password
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error converting user to dict: {str(e)}")
+            return {}
+
+
+# ============= GSI-SPECIFIC UTILITIES =============
+
+class UserGSIManager:
+    """
+    Manager for GSI-specific operations
+    """
     
-    def authenticate(self, password_hash: str) -> bool:
+    @staticmethod
+    def rebuild_gsi_for_user(user_id: str):
         """
-        Authenticate user by comparing password hashes
+        Manually rebuild GSI entries for a user
+        Useful if GSI gets out of sync
         
         Args:
-            password_hash: Hashed password to compare
-        
-        Returns: True if authentication successful
+            user_id: User ID to rebuild GSIs for
         """
-        if not self.password:
+        try:
+            user = User.get_by_id(user_id)
+            if user:
+                user._update_gsi_identifiers()
+                logger.info(f"GSI rebuilt for user {user_id}")
+                return True
             return False
-        
-        # In production, use proper password hashing library (bcrypt, argon2, etc.)
-        return self.password == password_hash
-
-
-# ============= FACTORY CLASS =============
-class UserFactory:
-    """
-    Factory for creating users
-    """
+        except Exception as e:
+            logger.error(f"Failed to rebuild GSI for user {user_id}: {str(e)}")
+            return False
     
     @staticmethod
-    def create_admin_user(email: str, password_hash: str, 
-                         full_name: str = None) -> User:
+    def get_user_stats_via_gsi() -> Dict[str, Any]:
         """
-        Create admin user
-        
-        Args:
-            email: Email address
-            password_hash: Hashed password
-            full_name: Full name (optional)
-        
-        Returns: User instance
+        Get user statistics using GSIs (more efficient)
         """
-        username = email.split('@')[0] if '@' in email else email
-        
-        user = User.create_user({
-            "username": username,
-            "email": email,
-            "full_name": full_name,
-            "role": "admin",
-            "status": "active"
-        })
-        
-        user.set_password(password_hash)
-        return user
+        try:
+            stats = {
+                "total_users": 0,
+                "by_role": {},
+                "by_status": {},
+                "by_role_status": {}
+            }
+            
+            # Count by role-status combinations using GSI
+            role_status_counts = {}
+            for item in User.role_status_gsi.scan():
+                role_status = item.role_status
+                role_status_counts[role_status] = role_status_counts.get(role_status, 0) + 1
+            
+            # Parse role_status combinations
+            for role_status, count in role_status_counts.items():
+                stats["by_role_status"][role_status] = count
+                
+                # Extract role and status
+                if '#' in role_status:
+                    role, status = role_status.split('#', 1)
+                    stats["by_role"][role] = stats["by_role"].get(role, 0) + count
+                    stats["by_status"][status] = stats["by_status"].get(status, 0) + count
+            
+            stats["total_users"] = sum(role_status_counts.values())
+            
+            return stats
+        except Exception as e:
+            logger.error(f"Error getting user stats via GSI: {str(e)}")
+            return {}
     
     @staticmethod
-    def create_regular_user(email: str, password_hash: str,
-                           full_name: str = None, username: str = None) -> User:
+    def find_duplicate_emails() -> List[str]:
         """
-        Create regular user
-        
-        Args:
-            email: Email address
-            password_hash: Hashed password
-            full_name: Full name (optional)
-            username: Username (optional, defaults to email prefix)
-        
-        Returns: User instance
+        Find duplicate emails using GSI
+        Should return empty list if email uniqueness constraint is working
         """
-        if not username and '@' in email:
-            username = email.split('@')[0]
-        
-        user = User.create_user({
-            "username": username,
-            "email": email,
-            "full_name": full_name,
-            "role": "user",
-            "status": "active"
-        })
-        
-        user.set_password(password_hash)
-        return user
-    
-    @staticmethod
-    def create_staff_user(email: str, password_hash: str,
-                         full_name: str, role: str = "staff") -> User:
-        """
-        Create staff user (manager, support, etc.)
-        
-        Args:
-            email: Email address
-            password_hash: Hashed password
-            full_name: Full name
-            role: "staff", "manager", "support" (default: "staff")
-        
-        Returns: User instance
-        """
-        username = email.split('@')[0] if '@' in email else email
-        
-        user = User.create_user({
-            "username": username,
-            "email": email,
-            "full_name": full_name,
-            "role": role,
-            "status": "active"
-        })
-        
-        user.set_password(password_hash)
-        return user
-
-
-# ============= GLOBAL SECONDARY INDEXES =============
-from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
-
-class EmailIndex(GlobalSecondaryIndex):
-    """GSI for querying by email"""
-    class Meta:
-        index_name = 'user-email-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    
-    email = UnicodeAttribute(hash_key=True)
-    user_id = UnicodeAttribute(range_key=True)
-
-
-class UsernameIndex(GlobalSecondaryIndex):
-    """GSI for querying by username"""
-    class Meta:
-        index_name = 'user-username-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    
-    username = UnicodeAttribute(hash_key=True)
-    user_id = UnicodeAttribute(range_key=True)
-
-
-class RoleIndex(GlobalSecondaryIndex):
-    """GSI for querying by role"""
-    class Meta:
-        index_name = 'user-role-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    
-    role = UnicodeAttribute(hash_key=True)
-    user_id = UnicodeAttribute(range_key=True)
-
-
-# To use GSIs, add to User class:
-# email_index = EmailIndex()
-# username_index = UsernameIndex()
-# role_index = RoleIndex()
-
-
-# ============= USAGE EXAMPLES =============
-if __name__ == "__main__":
-    print("User Model (Exact ERD Specification) Ready!")
-    print("=" * 60)
-    
-    # Initialize table and counter
-    if not User.exists():
-        User.create_table(wait=True)
-        print("Table created successfully")
-        User.initialize_counter()
-        print("Counter initialized")
-    
-    # Check counter status
-    counter = User.get_current_counter()
-    print(f"Next user ID will be: {counter['next_id']}")
-    
-    # Example 1: Create admin user
-    print("\n1. Creating admin user:")
-    
-    admin_user = UserFactory.create_admin_user(
-        email="admin@example.com",
-        password_hash="$2b$12$...hashedpassword...",  # Use proper hashing
-        full_name="System Administrator"
-    )
-    admin_user.save()
-    
-    print(f"Created: {admin_user.user_id}")
-    print(f"Email: {admin_user.email}")
-    print(f"Role: {admin_user.role}")
-    print(f"Status: {admin_user.status}")
-    
-    # Example 2: Create regular user
-    print("\n2. Creating regular user:")
-    
-    regular_user = UserFactory.create_regular_user(
-        email="john.doe@example.com",
-        password_hash="$2b$12$...hashedpassword...",
-        full_name="John Doe",
-        username="johndoe"
-    )
-    regular_user.save()
-    
-    print(f"Created: {regular_user.user_id}")
-    print(f"Username: {regular_user.username}")
-    print(f"Email verified: {regular_user.email_verified}")
-    
-    # Example 3: Record login and verify email
-    print("\n3. Recording login and verifying email:")
-    regular_user.record_login()
-    regular_user.verify_email()
-    
-    print(f"Last login: {regular_user.last_login}")
-    print(f"Email verified at: {regular_user.email_verified_at}")
-    
-    # Example 4: Retrieve user
-    print("\n4. Retrieving user:")
-    retrieved = User.get_by_id(admin_user.user_id)
-    if retrieved:
-        print(f"Found: {retrieved.full_name}")
-        print(f"Data: {retrieved.to_dict().keys()}")
-    
-    # Example 5: Get users by role
-    print("\n5. Getting admin users:")
-    admins = User.get_by_role("admin")
-    print(f"Found {len(admins)} admin users")
-    
-    # Example 6: Authenticate user
-    print("\n6. Authenticating user:")
-    # In real scenario, you'd hash the provided password first
-    is_authenticated = regular_user.authenticate("$2b$12$...hashedpassword...")
-    print(f"Authentication successful: {is_authenticated}")
-    
-    # Example 7: Update user role
-    print("\n7. Updating user role:")
-    regular_user.update_role("manager")
-    print(f"New role: {regular_user.role}")
-    
-    # Example 8: Get all users
-    print("\n8. All users:")
-    users = User.get_all_users()
-    for user in users:
-        print(f"  - {user.user_id}: {user.username} ({user.role})")
-    
-    # Example 9: Soft delete user
-    print("\n9. Soft deleting user:")
-    regular_user.soft_delete()
-    print(f"isDeleted: {regular_user.isDeleted}")
-    print(f"Status: {regular_user.status}")
-    
-    # Example 10: Get only active users
-    print("\n10. Active users (should exclude deleted):")
-    active_users = User.get_active_users()
-    print(f"Active users count: {len(active_users)}")
+        try:
+            emails_seen = set()
+            duplicates = []
+            
+            # Query all email entries from GSI
+            for item in User.identifier_gsi.query("EMAIL"):
+                email = item.identifier_value
+                if email in emails_seen:
+                    duplicates.append(email)
+                else:
+                    emails_seen.add(email)
+            
+            return duplicates
+        except Exception as e:
+            logger.error(f"Error finding duplicate emails: {str(e)}")
+            return []
