@@ -20,16 +20,18 @@ class DatabaseManager:
                 self.dynamodb = boto3.resource(
                     'dynamodb',
                     endpoint_url=config('DYNAMODB_LOCAL_ENDPOINT', default='http://localhost:8000'),
-                    region_name=config('AWS_REGION', default='ap-southeast-1'),
+                    region_name=config('AWS_REGION_NAME', default='ap-southeast-1'),
                     aws_access_key_id=config('AWS_ACCESS_KEY_ID', default='dummy'),
                     aws_secret_access_key=config('AWS_SECRET_ACCESS_KEY', default='dummy')
                 )
             else:
                 logger.info("Connecting to AWS DynamoDB")
-                # When running on AWS (e.g., EC2, Lambda), credentials can be sourced from the environment or IAM roles automatically.
+                # Explicitly load credentials from .env file
                 self.dynamodb = boto3.resource(
                     'dynamodb',
-                    region_name=config('AWS_REGION', default='ap-southeast-1')
+                    region_name=config('AWS_REGION_NAME', default='ap-southeast-1'),
+                    aws_access_key_id=config('AWS_ACCESS_KEY_ID'),
+                    aws_secret_access_key=config('AWS_SECRET_ACCESS_KEY')
                 )
             
             # A simple way to test the connection is to list tables.
