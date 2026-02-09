@@ -1,58 +1,251 @@
 <template>
-  <div class="container-fluid pt-4 pb-4">
-    <div class="card card-theme">
-      <div class="card-header">
-        <h4 class="mb-0 text-primary">🧪 Product Data Test</h4>
-      </div>
+  <div class="p-8 max-w-4xl mx-auto page-container">
+    <h1 class="text-3xl font-bold mb-8 text-center text-primary">🔍 Auth Debug & Test</h1>
+    
+    <!-- Login Test Form -->
+    <div class="surface-card border-theme rounded-lg p-6 shadow-md mb-6">
+      <h2 class="text-xl font-semibold mb-4 text-primary">Login Test</h2>
       
-      <div class="card-body">
-        <!-- Loading State -->
-        <div v-if="loading" class="text-center py-4">
-          <div class="spinner-border text-accent" role="status"></div>
-          <p class="mt-2">Fetching product data...</p>
+      <form @submit.prevent="testLogin" class="mb-4">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <input 
+              type="email" 
+              class="form-control" 
+              placeholder="Email"
+              v-model="testForm.email"
+              :disabled="isLoading"
+            />
+          </div>
+          <div class="col-md-4">
+            <input 
+              type="password" 
+              class="form-control" 
+              placeholder="Password"
+              v-model="testForm.password"
+              :disabled="isLoading"
+            />
+          </div>
+          <div class="col-md-4">
+            <button 
+              type="submit" 
+              class="btn btn-submit w-100"
+              :disabled="isLoading || !testForm.email || !testForm.password"
+            >
+              {{ isLoading ? 'Testing Login...' : 'Test Login' }}
+            </button>
+          </div>
         </div>
+      </form>
 
-        <!-- Error Display -->
-        <div v-if="error" class="alert alert-danger">
-          <strong>❌ Error:</strong> {{ error }}
-        </div>
-
-        <!-- Product Display -->
-        <div v-if="product && !loading">
-          <h5>📦 Product Details:</h5>
-          <div class="row">
-            <div class="col-md-6">
-              <p><strong>Name:</strong> {{ product.product_name }}</p>
-              <p><strong>SKU:</strong> {{ product.SKU }}</p>
-              <p><strong>Category ID:</strong> <code>{{ product.category_id }}</code></p>
-              <p><strong>Category Name:</strong> 
-                <span :class="product.category_name ? 'text-success' : 'text-warning'">
-                  {{ product.category_name || 'NOT ENRICHED' }}
-                </span>
-              </p>
-            </div>
-            <div class="col-md-6">
-              <p><strong>Stock:</strong> {{ product.stock }}</p>
-              <p><strong>Price:</strong> ₱{{ product.selling_price }}</p>
-              <p><strong>Status:</strong> {{ product.status }}</p>
+            <!-- Add this new section after the Login Test Form -->
+      <div class="surface-card border-theme rounded-lg p-6 shadow-md mb-6">
+        <h2 class="text-xl font-semibold mb-4 text-primary">Initialization Status</h2>
+        
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="p-3 surface-secondary rounded">
+              <div class="text-sm text-tertiary mb-2">Auth Composable Status</div>
+              <div class="text-sm">
+                <div>Loading: <span :class="isLoading ? 'text-warning' : 'text-success'">
+                  {{ isLoading ? 'YES' : 'NO' }}
+                </span></div>
+                <div>Error: <span :class="error ? 'text-error' : 'text-success'">
+                  {{ error || 'None' }}
+                </span></div>
+                <div>User Initialized: <span :class="user ? 'text-success' : 'text-tertiary'">
+                  {{ user ? 'YES' : 'NO' }}
+                </span></div>
+              </div>
             </div>
           </div>
           
-          <hr>
-          <h6>🔍 Raw JSON:</h6>
-          <pre class="bg-light p-3 rounded small">{{ JSON.stringify(product, null, 2) }}</pre>
-        </div>
-
-        <!-- Categories Display -->
-        <div v-if="categories.length > 0 && !loading" class="mt-4">
-          <h5>🏷️ Available Categories ({{ categories.length }}):</h5>
-          <div class="row">
-            <div v-for="category in categories" :key="category._id" class="col-md-4 mb-2">
-              <div class="p-2 border rounded">
-                <strong>{{ category.category_name }}</strong><br>
-                <small class="text-muted">{{ category._id }}</small>
+          <div class="col-md-6">
+            <div class="p-3 surface-secondary rounded">
+              <div class="text-sm text-tertiary mb-2">Quick Actions</div>
+              <div class="d-flex gap-2 flex-wrap">
+                <button 
+                  @click="testTokenValidation"
+                  :disabled="!token || isLoading"
+                  class="btn btn-sm btn-view"
+                >
+                  Validate Token
+                </button>
+                <button 
+                  @click="forceInitialize"
+                  :disabled="isLoading"
+                  class="btn btn-sm btn-refresh"
+                >
+                  Force Initialize
+                </button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Login Result -->
+      <div v-if="loginResult" class="p-3 rounded mb-4" 
+          :class="loginResult.success ? 'status-success' : 'status-error'">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <strong>Login Result:</strong> 
+          <span class="badge" :class="loginResult.success ? 'bg-success' : 'bg-danger'">
+            {{ loginResult.success ? 'SUCCESS' : 'FAILED' }}
+          </span>
+        </div>
+        
+        <div v-if="loginResult.error" class="mt-2 text-sm">
+          <strong>Error:</strong> {{ loginResult.error }}
+        </div>
+        
+        <div v-if="loginResult.success && loginResult.data" class="mt-2 text-sm">
+          <div class="row">
+            <div class="col-md-6">
+              <strong>Tokens:</strong>
+              <ul class="list-unstyled mb-0 text-xs">
+                <li>Access: {{ loginResult.data.hasToken ? '✅ Received' : '❌ Missing' }}</li>
+                <li>Refresh: {{ loginResult.data.hasRefreshToken ? '✅ Received' : '❌ Missing' }}</li>
+              </ul>
+            </div>
+            <div class="col-md-6">
+              <strong>User Data:</strong>
+              <ul class="list-unstyled mb-0 text-xs">
+                <li>ID: {{ loginResult.data.user?.id || 'N/A' }}</li>
+                <li>Role: {{ loginResult.data.user?.role || 'N/A' }}</li>
+                <li>Email: {{ loginResult.data.user?.email || 'N/A' }}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Current Auth Status -->
+    <div class="surface-card border-theme rounded-lg p-6 shadow-md mb-6">
+      <h2 class="text-xl font-semibold mb-6 text-primary">Authentication Status</h2>
+      
+      <!-- Status Grid -->
+      <div class="row g-4 mb-6">
+        <div class="col-md-4 text-center">
+          <div class="p-4 surface-secondary rounded">
+            <div class="text-sm text-tertiary mb-2">Is Authenticated</div>
+            <div :class="isAuthenticated ? 'text-success' : 'text-error'" class="text-2xl font-bold">
+              {{ isAuthenticated ? 'YES' : 'NO' }}
+            </div>
+          </div>
+        </div>
+        
+        <div class="col-md-4 text-center">
+          <div class="p-4 surface-secondary rounded">
+            <div class="text-sm text-tertiary mb-2">Has User Data</div>
+            <div :class="!!user ? 'text-success' : 'text-error'" class="text-2xl font-bold">
+              {{ !!user ? 'YES' : 'NO' }}
+            </div>
+          </div>
+        </div>
+        
+        <div class="col-md-4 text-center">
+          <div class="p-4 surface-secondary rounded">
+            <div class="text-sm text-tertiary mb-2">Has Token</div>
+            <div :class="!!token ? 'text-success' : 'text-error'" class="text-2xl font-bold">
+              {{ !!token ? 'YES' : 'NO' }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detailed Debug Info -->
+      <div class="row g-4">
+        <!-- User Data -->
+        <div class="col-md-6">
+          <div class="p-4 surface-tertiary rounded">
+            <h3 class="font-semibold mb-3 text-primary">User Data</h3>
+            <div v-if="user" class="text-sm space-y-2">
+              <div><strong>ID:</strong> {{ user.id || 'N/A' }}</div>
+              <div><strong>Email:</strong> {{ user.email || 'N/A' }}</div>
+              <div><strong>Role:</strong> 
+                <span class="badge" :class="getRoleBadgeClass(user.role)">
+                  {{ user.role || 'N/A' }}
+                </span>
+              </div>
+              <div><strong>Name:</strong> {{ user.name || 'N/A' }}</div>
+              <div><strong>Username:</strong> {{ user.username || 'N/A' }}</div>
+              <div><strong>Status:</strong> {{ user.status || 'N/A' }}</div>
+            </div>
+            <div v-else class="text-tertiary">
+              No user data available
+            </div>
+          </div>
+        </div>
+
+        <!-- Token Data -->
+        <div class="col-md-6">
+          <div class="p-4 surface-tertiary rounded">
+            <h3 class="font-semibold mb-3 text-primary">Token Data</h3>
+            <div class="text-sm space-y-2">
+              <div><strong>Access Token:</strong> 
+                <span :class="!!token ? 'text-success' : 'text-error'">
+                  {{ token ? 'EXISTS' : 'MISSING' }}
+                </span>
+              </div>
+              <div><strong>Refresh Token:</strong> 
+                <span :class="!!refreshToken ? 'text-success' : 'text-error'">
+                  {{ refreshToken ? 'EXISTS' : 'MISSING' }}
+                </span>
+              </div>
+              <div v-if="token"><strong>Token Preview:</strong> 
+                <code class="text-xs">{{ token.substring(0, 30) }}...</code>
+              </div>
+              <div><strong>LocalStorage Check:</strong> 
+                <span :class="localStorageToken ? 'text-success' : 'text-error'">
+                  {{ localStorageToken ? 'EXISTS' : 'MISSING' }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual Actions -->
+    <div class="surface-card border-theme rounded-lg p-6 shadow-md">
+      <h2 class="text-xl font-semibold mb-4 text-primary">Debug Actions</h2>
+      
+      <div class="d-flex gap-3 flex-wrap mb-4">
+        <button 
+          @click="debugGetCurrentUser"
+          :disabled="!token || isLoading"
+          class="btn btn-view"
+        >
+          {{ isLoading ? 'Loading...' : 'Get Current User' }}
+        </button>
+        <button 
+          @click="checkTokenInStorage"
+          class="btn btn-export"
+        >
+          Check Token Storage
+        </button>
+        <button 
+          @click="clearAllData"
+          class="btn btn-delete"
+        >
+          Clear All Data
+        </button>
+        <button 
+          @click="refreshAuthState"
+          class="btn btn-refresh"
+        >
+          Refresh State
+        </button>
+      </div>
+
+      <!-- Debug Console -->
+      <div v-if="debugMessages.length > 0" class="p-4 surface-tertiary rounded">
+        <h3 class="font-semibold mb-3 text-primary">Debug Console</h3>
+        <div class="debug-console" style="max-height: 200px; overflow-y: auto;">
+          <div v-for="(msg, index) in debugMessages" :key="index" 
+               class="text-xs font-mono mb-1" :class="getDebugMessageClass(msg.type)">
+            <span class="text-tertiary-medium">[{{ msg.time }}]</span> {{ msg.message }}
           </div>
         </div>
       </div>
@@ -60,174 +253,181 @@
   </div>
 </template>
 
-<script>
-import { ref, onMounted } from 'vue'
-import productsApiService from '@/services/apiProducts.js'
-import categoryApiService from '@/services/apiCategory.js'
-import { api } from '@/services/api.js'
+<script setup>
+import { ref, onMounted, computed } from 'vue'
+import { useAuth } from '@/composables/auth/useAuth.js'
+import apiService from '@/services/api.js'
 
-export default {
-  name: 'TesterPage',
-  setup() {
-    const loading = ref(true)
-    const error = ref(null)
-    const product = ref(null)
-    const categories = ref([])
+// Auth composable
+const { 
+  user, 
+  token, 
+  refreshToken,
+  isAuthenticated, 
+  isLoading,
+  error,
+  login,
+  getCurrentUser,
+  clearAuth,
+  validateToken
+} = useAuth()
+
+// Local state
+const testForm = ref({
+  email: '',
+  password: ''
+})
+
+const loginResult = ref(null)
+const debugMessages = ref([])
+const localStorageToken = ref(null)
+
+// Debug methods
+const addDebugMessage = (message, type = 'info') => {
+  debugMessages.value.unshift({
+    message,
+    type,
+    time: new Date().toLocaleTimeString()
+  })
+  
+  // Keep only last 50 messages
+  if (debugMessages.value.length > 50) {
+    debugMessages.value = debugMessages.value.slice(0, 50)
+  }
+}
+
+const testLogin = async () => {
+  addDebugMessage('🔐 Starting login test...', 'info')
+  loginResult.value = null
+  
+  try {
+    addDebugMessage(`📧 Email: ${testForm.value.email}`, 'info')
+    addDebugMessage(`🔑 Password length: ${testForm.value.password.length}`, 'info')
     
-    const fetchTestData = async () => {
-      try {
-        loading.value = true
-        console.log('🔍 Starting test data fetch...')
-        
-        // Step 1: Test different category endpoints
-        console.log('📋 Testing category endpoints...')
-        try {
-          // Test 1: Try getAllCategories method
-          console.log('🧪 Test 1: Trying getAllCategories...')
-          if (categoryApiService.getAllCategories) {
-            categories.value = await categoryApiService.getAllCategories()
-            console.log('✅ getAllCategories worked:', categories.value.length, 'categories')
-          } else {
-            console.log('❌ getAllCategories method not found')
-          }
-          
-          // Test 2: Try CategoryData as fallback
-          if (categories.value.length === 0) {
-            console.log('🧪 Test 2: Trying CategoryData fallback...')
-            const categoryResponse = await categoryApiService.CategoryData()
-            console.log('📋 CategoryData response:', categoryResponse)
-            
-            if (Array.isArray(categoryResponse)) {
-              categories.value = categoryResponse
-            } else if (categoryResponse.categories) {
-              categories.value = categoryResponse.categories
-            } else {
-              categories.value = categoryResponse || []
-            }
-            console.log('✅ CategoryData result:', categories.value.length, 'categories')
-          }
-          
-          // Test 3: Direct API call as last resort
-          if (categories.value.length === 0) {
-            console.log('🧪 Test 3: Trying direct API call...')
-            const directResponse = await api.get('/category/')
-            console.log('📋 Direct API response:', directResponse.data)
-            categories.value = directResponse.data || []
-          }
-          
-        } catch (categoryError) {
-          console.error('❌ All category fetch methods failed:', categoryError)
-          categories.value = []
+    // Call the login method from useAuth
+    const success = await login(testForm.value.email, testForm.value.password)
+    
+    if (success) {
+      addDebugMessage('✅ Login successful!', 'success')
+      addDebugMessage(`👤 User data: ${user.value ? 'RECEIVED' : 'MISSING'}`, user.value ? 'success' : 'error')
+      addDebugMessage(`🎫 Token: ${token.value ? 'RECEIVED' : 'MISSING'}`, token.value ? 'success' : 'error')
+      
+      loginResult.value = {
+        success: true,
+        data: {
+          user: user.value,
+          hasToken: !!token.value,
+          hasRefreshToken: !!refreshToken.value
         }
-        
-        // Step 2: Fetch products
-        console.log('📦 Fetching products...')
-        const productsResponse = await productsApiService.getProducts()
-        console.log('📦 Products API response structure:', {
-          hasResults: !!productsResponse.results,
-          isArray: Array.isArray(productsResponse),
-          hasProducts: !!productsResponse.products,
-          keys: Object.keys(productsResponse)
-        })
-        
-        let products = []
-        if (productsResponse.results) {
-          products = productsResponse.results
-        } else if (Array.isArray(productsResponse)) {
-          products = productsResponse
-        } else {
-          products = productsResponse.products || []
-        }
-        
-        console.log(`📦 Found ${products.length} products`)
-        
-        if (products.length > 0) {
-          // Get the first product
-          product.value = products[0]
-          console.log('🎯 Selected product for testing:', {
-            name: product.value.product_name,
-            id: product.value._id,
-            category_id: product.value.category_id,
-            has_category_name: !!product.value.category_name
-          })
-          
-          // Step 3: Manual enrichment test
-          console.log('🔄 Testing manual category enrichment...')
-          if (product.value.category_id && categories.value.length > 0) {
-            console.log('🔍 Looking for category ID:', product.value.category_id)
-            console.log('🔍 Available categories:', categories.value.map(c => ({
-              id: c._id,
-              name: c.category_name
-            })))
-            
-            const matchingCategory = categories.value.find(cat => cat._id === product.value.category_id)
-            if (matchingCategory) {
-              product.value.category_name = matchingCategory.category_name
-              console.log('✅ Successfully enriched with category name:', matchingCategory.category_name)
-            } else {
-              console.log('❌ No matching category found!')
-              console.log('   Product category_id:', product.value.category_id, typeof product.value.category_id)
-              console.log('   Available category IDs:', categories.value.map(c => `${c._id} (${typeof c._id})`))
-            }
-          } else {
-            console.log('⚠️ Cannot enrich: missing category_id or no categories available')
-          }
-          
-          // Step 4: Test the enrichProductsWithCategoryInfo method
-          console.log('🧪 Testing enrichProductsWithCategoryInfo method...')
-          try {
-            const enrichedProducts = await productsApiService.enrichProductsWithCategoryInfo([product.value])
-            console.log('✅ enrichProductsWithCategoryInfo result:', enrichedProducts[0])
-            if (enrichedProducts[0]?.category_name) {
-              product.value = enrichedProducts[0]
-            }
-          } catch (enrichError) {
-            console.log('❌ enrichProductsWithCategoryInfo failed:', enrichError.message)
-          }
-          
-        } else {
-          console.log('❌ No products found')
-        }
-        
-      } catch (err) {
-        console.error('❌ Test fetch error:', err)
-        error.value = err.message
-      } finally {
-        loading.value = false
+      }
+    } else {
+      addDebugMessage('❌ Login failed', 'error')
+      addDebugMessage(`Error: ${error.value}`, 'error')
+      
+      loginResult.value = {
+        success: false,
+        error: error.value
       }
     }
     
-    onMounted(() => {
-      fetchTestData()
-    })
+    // Update localStorage check
+    localStorageToken.value = localStorage.getItem('access_token')
+    addDebugMessage(`🗃️ Token in localStorage: ${localStorageToken.value ? 'YES' : 'NO'}`, localStorageToken.value ? 'success' : 'error')
     
-    return {
-      loading,
-      error,
-      product,
-      categories
+  } catch (err) {
+    addDebugMessage(`💥 Login exception: ${err.message}`, 'error')
+    loginResult.value = {
+      success: false,
+      error: err.message
     }
   }
 }
+
+const debugGetCurrentUser = async () => {
+  addDebugMessage('👤 Testing getCurrentUser...', 'info')
+  
+  try {
+    const userData = await getCurrentUser()
+    addDebugMessage('✅ getCurrentUser successful', 'success')
+    addDebugMessage(`User: ${JSON.stringify(userData)}`, 'info')
+  } catch (err) {
+    addDebugMessage(`❌ getCurrentUser failed: ${err.message}`, 'error')
+  }
+}
+
+const checkTokenInStorage = () => {
+  const accessToken = localStorage.getItem('access_token')
+  const refresh = localStorage.getItem('refresh_token')
+  
+  addDebugMessage(`🗃️ Access token in localStorage: ${accessToken ? 'EXISTS' : 'MISSING'}`, accessToken ? 'success' : 'error')
+  addDebugMessage(`🗃️ Refresh token in localStorage: ${refresh ? 'EXISTS' : 'MISSING'}`, refresh ? 'success' : 'error')
+  
+  if (accessToken) {
+    addDebugMessage(`🎫 Token preview: ${accessToken.substring(0, 30)}...`, 'info')
+  }
+  
+  localStorageToken.value = accessToken
+}
+
+const clearAllData = () => {
+  clearAuth()
+  localStorage.clear()
+  loginResult.value = null
+  localStorageToken.value = null
+  addDebugMessage('🧹 All auth data cleared', 'info')
+}
+
+const refreshAuthState = () => {
+  localStorageToken.value = localStorage.getItem('access_token')
+  addDebugMessage('🔄 Auth state refreshed', 'info')
+}
+
+// Helper methods
+const getRoleBadgeClass = (role) => {
+  return role === 'admin' ? 'bg-success' : 'bg-secondary'
+}
+
+const getDebugMessageClass = (type) => {
+  switch (type) {
+    case 'success': return 'text-success'
+    case 'error': return 'text-error'
+    case 'warning': return 'text-warning'
+    default: return 'text-tertiary'
+  }
+}
+
+const testTokenValidation = async () => {
+  addDebugMessage('🎫 Testing token validation...', 'info')
+  
+  try {
+    const isValid = await validateToken()
+    addDebugMessage(`Token validation result: ${isValid ? 'VALID' : 'INVALID'}`, isValid ? 'success' : 'error')
+  } catch (err) {
+    addDebugMessage(`Token validation error: ${err.message}`, 'error')
+  }
+}
+
+const forceInitialize = () => {
+  addDebugMessage('🔄 Force reinitializing auth...', 'info')
+  // The auth composable will auto-initialize, we just need to refresh our local state
+  refreshAuthState()
+}
+
+onMounted(() => {
+  checkTokenInStorage()
+  addDebugMessage('🚀 Auth debug page loaded', 'info')
+})
 </script>
 
 <style scoped>
-.card {
-  max-width: 1200px;
-  margin: 0 auto;
+/* Existing styles plus additions... */
+.debug-console {
+  background-color: #1a1a1a;
+  border-radius: 4px;
+  padding: 1rem;
 }
 
-pre {
-  max-height: 300px;
-  overflow-y: auto;
-  font-size: 12px;
-}
-
-.text-success {
-  color: #28a745 !important;
-}
-
-.text-warning {
-  color: #ffc107 !important;
+.space-y-2 > * + * {
+  margin-top: 0.5rem;
 }
 </style>

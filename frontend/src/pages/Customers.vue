@@ -1,934 +1,584 @@
 <template>
-  <div class="customers-page">
-    <div class="page-header">
-      <h1 class="page-title">Customer Management</h1>
-    </div>
-
-    <!-- KPI Cards Row -->
-    <div class="row g-4 mb-2">
-      <div class="col-md-4">
-        <CardTemplate
-          title="Active Users"
-          :value="activeUsersCount"
-          subtitle="Total Active Users"
-          size="md"
-          value-color="success"
-          border-color="success"
-          border-position="start"
-          shadow="sm"
-        />
-      </div>
-      <div class="col-md-4">
-        <CardTemplate
-          title="Monthly New Users"
-          :value="monthlyUsersCount"
-          subtitle="This month's new users"
-          size="md"
-          value-color="primary"
-          border-color="primary"
-          border-position="start"
-          shadow="sm"
-        />
-      </div>
-      <div class="col-md-4">
-        <CardTemplate
-          title="Daily Customer Logins"
-          :value="dailyUsersCount"
-          subtitle="Last 24 hours"
-          size="md"
-          value-color="info"
-          border-color="info"
-          border-position="start"
-          shadow="sm"
-        />
-      </div>
-    </div>
-
-    <!-- Header Section with Search and Actions -->
-    <div class="search-section-wrapper">
-      <div class="search-and-actions-row">
-        <!-- Search Bar -->
-        <div class="search-section">
-          <div class="search-container">
-            <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
-              <path d="21 21l-4.35-4.35" stroke="currentColor" stroke-width="2"/>
-            </svg>
-            <input 
-              v-model="searchQuery"
-              @input="handleSearch"
-              type="text" 
-              class="search-input"
-              placeholder="Search customers by name, email, phone, or address..."
-            />
-            <button 
-              v-if="searchQuery" 
-              @click="clearSearch" 
-              class="clear-search-btn"
-              title="Clear search"
-            >
-              ✕
-            </button>
-          </div>
-          <div v-if="searchQuery" class="search-results-info">
-            Showing {{ filteredCustomers.length }} of {{ customers.length }} customers
-          </div>
-        </div>
-        
-        <!-- Action Buttons -->
-        <div class="action-buttons-group">
-          <!-- Auto-refresh status and controls -->
-          <div class="auto-refresh-status">
-            <i class="bi bi-arrow-repeat text-success" :class="{ 'spinning': loading }"></i>
-            <span class="status-text">
-              <span v-if="autoRefreshEnabled">Updates in {{ countdown }}s</span>
-              <span v-else>Auto-refresh disabled</span>
-            </span>
-            
-            <!-- Toggle button -->
-            <button 
-              class="btn btn-sm"
-              :class="autoRefreshEnabled ? 'btn-outline-secondary' : 'btn-outline-success'"
-              @click="toggleAutoRefresh"
-            >
-              {{ autoRefreshEnabled ? 'Disable' : 'Enable' }}
-            </button>
-          </div>
-          
-          <!-- Connection health indicator -->
-          <div class="connection-indicator" :class="getConnectionStatus()">
-            <i :class="getConnectionIcon()"></i>
-            <span class="connection-text">{{ getConnectionText() }}</span>
-          </div>
-          
-          <!-- Emergency Refresh - Only show if error or connection lost -->
-          <button 
-            v-if="error || connectionLost" 
-            class="btn btn-warning" 
-            @click="emergencyReconnect"
-            :disabled="loading"
-          >
-            <i class="bi bi-arrow-clockwise" :class="{ 'spinning': loading }"></i>
-            {{ loading ? 'Reconnecting...' : 'Reconnect' }}
-          </button>
-
-          <button 
-            class="btn btn-danger" 
-            @click="deleteSelected" 
-            :disabled="selectedCustomers.length === 0 || loading"
-          >
-            Delete Selected ({{ selectedCustomers.length }})
-          </button>
-          <button class="btn btn-success" @click="showAddCustomerModal">
-            <Plus :size="16" />
-            Add Customer
-          </button>
-          <button class="btn btn-primary" @click="exportData" :disabled="loading || exporting">
-            <i class="bi bi-download"></i> {{ exporting ? 'Exporting...' : 'Export' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Refresh Progress Indicator -->
-    <div v-if="loading && customers.length > 0" class="refresh-indicator">
-      <div class="alert alert-info d-flex align-items-center" role="alert">
-        <div class="spinner-border spinner-border-sm me-2" role="status">
-          <span class="visually-hidden">Loading...</span>
-        </div>
-        Refreshing customer data... {{ refreshProgress }}
-      </div>
-    </div>
+  <div class="page-container p-4">
 
     <!-- Loading State -->
-    <div v-if="loading && customers.length === 0" class="loading-state">
-      <div class="spinner-border text-primary"></div>
-      <p>Loading customers...</p>
+    <div v-if="isLoading && !hasCustomers" class="text-center py-12">
+      <div class="spinner-border text-accent mb-4" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+      <p class="text-secondary">Loading customers...</p>
     </div>
 
     <!-- Error State -->
-    <div v-if="error" class="error-state">
-      <div class="alert alert-danger text-center" role="alert">
-        <i class="bi bi-exclamation-triangle"></i>
-        <p class="mb-3">{{ error }}</p>
-        <button class="btn btn-primary" @click="emergencyReconnect" :disabled="loading">
-          <i class="bi bi-arrow-clockwise"></i>
-          {{ loading ? 'Retrying...' : 'Try Again' }}
-        </button>
-      </div>
+    <div v-if="error" class="status-error rounded-lg p-4 mb-4">
+      <h3 class="text-lg fw-medium text-status-error mb-2">Error Loading Customers</h3>
+      <p class="text-status-error mb-3">{{ error }}</p>
+      <button 
+        @click="handleRetry" 
+        class="btn btn-submit transition-theme"
+        :disabled="isLoading"
+      >
+        {{ isLoading ? 'Retrying...' : 'Try Again' }}
+      </button>
     </div>
 
-    <!-- Success Message -->
-    <div v-if="successMessage" class="success-message">
-      <div class="alert alert-success text-center" role="alert">
-        <i class="bi bi-check-circle"></i>
-        {{ successMessage }}
-      </div>
-    </div>
+    <!-- Action Bar -->
+    <ActionBar
+      v-if="!isLoading || hasCustomers"
+      entity-name="customer"
+      add-button-text="ADD CUSTOMER"
+      search-placeholder="Search customers..."
+      :add-options="addOptions"
+      :selected-items="selectedCustomers"
+      :selection-actions="selectionActions"
+      :filters="filters"
+      :search-value="searchValue"
+      :exporting="exporting"
+      :show-columns-button="false"
+      @add-action="handleAddAction"
+      @selection-action="handleSelectionAction"
+      @filter-change="handleFilterChange"
+      @search-input="handleSearchInput"
+      @search-clear="handleSearchClear"
+      @export="handleExport"
+    />
+
+    <!-- Hidden input for Import -->
+    <input
+      id="customer-import"
+      type="file"
+      accept=".csv"
+      class="d-none"
+      @change="handleImport"
+    />
 
     <!-- Table -->
-    <DataTable 
-      v-if="!loading || customers.length > 0"
-      :items-per-page="itemsPerPage"
-      :total-items="filteredCustomers.length"
-      :current-page="currentPage"
-      @page-changed="handlePageChange"
-    >
+    <TableTemplate
+        v-if="hasCustomers || isLoading"
+        :items-per-page="itemsPerPage"
+        :total-items="totalCustomers"
+        :current-page="currentPage"
+        :show-pagination="totalCustomers > itemsPerPage"
+        @page-changed="handlePageChange"
+        class="shadow-md"
+      >
       <template #header>
         <tr>
-          <th class="text-center" style="width: 50px;">
-            <input 
-              type="checkbox" 
-              class="form-check-input"
-              @change="selectAll" 
-              :checked="allSelected"
-              :indeterminate="someSelected"
-            />
-          </th>
-          <th style="width: 80px;">ID</th>
-          <th>Name</th>
+          <th style="width: 150px;">Customer ID</th>
+          <th style="width: 140px;">Username</th>
+          <th>Full Name</th>
           <th>Email</th>
           <th>Phone</th>
-          <th>Delivery Address</th>
-          <th class="text-center" style="width: 100px;">Points</th>
-          <th style="width: 120px;">Date Created</th>
-          <th class="text-center" style="width: 130px;">Actions</th>
+          <th style="width: 120px;">Loyalty Points</th>
+          <th style="width: 100px;">Status</th>
+          <th style="width: 140px;">Date Created</th>
+          <th style="width: 120px;" class="text-center">Actions</th>
         </tr>
       </template>
-      
+
       <template #body>
-        <tr 
-          v-for="customer in paginatedCustomers" 
-          :key="customer._id || customer.customer_id"
-          :class="{ 'table-primary': selectedCustomers.includes(customer._id || customer.customer_id) }"
-        >
-          <td class="text-center">
-            <input 
-              type="checkbox" 
-              class="form-check-input"
-              :value="customer._id || customer.customer_id"
-              v-model="selectedCustomers"
-            />
-          </td>
+         <tr v-for="customer in paginatedCustomers" :key="customer._id || customer.customer_id" class="hover-surface transition-theme">
           <td>
-            <span class="badge bg-light text-primary" style="font-family: monospace;">
-              {{ (customer.customer_id || customer._id).slice(-6) }}
+            <span class="badge surface-tertiary text-accent border-theme-subtle fw-medium"
+              style="font-family: var(--font-mono, 'Courier New', monospace);">
+              {{ customer.customer_id || customer._id }}
             </span>
           </td>
-          <td class="fw-medium" style="color: var(--tertiary-dark);">
-            <span v-html="highlightMatch(customer.full_name, searchQuery)"></span>
+          <td>
+            <div class="fw-medium text-tertiary-dark">
+              {{ customer.username || 'N/A' }}
+            </div>
           </td>
-          <td style="color: var(--tertiary-medium);">
-            <span v-html="highlightMatch(customer.email, searchQuery)"></span>
+          <td>
+            <div class="fw-medium text-primary">
+              {{ customer.full_name || 'N/A' }}
+            </div>
           </td>
-          <td style="color: var(--tertiary-medium);">
-            <span v-html="highlightMatch(customer.phone || 'N/A', searchQuery)"></span>
-          </td>
-          <td style="color: var(--tertiary-medium);">
-            <span v-html="highlightMatch(formatAddress(customer.delivery_address), searchQuery)" 
-                  :title="formatAddress(customer.delivery_address)"></span>
+          <td><div class="text-secondary">{{ customer.email }}</div></td>
+          <td><div class="text-secondary">{{ customer.phone || 'N/A' }}</div></td>
+          <td class="text-center">
+            <span class="badge bg-success text-inverse fw-medium">
+              {{ customer.loyalty_points || 0 }}
+            </span>
           </td>
           <td class="text-center">
-            <span class="badge bg-success">{{ customer.loyalty_points || 0 }}</span>
+            <span
+              class="badge fw-medium"
+              :class="customer.status === 'active' ? 'bg-success text-inverse' : 'surface-tertiary text-tertiary border-theme'"
+            >
+              {{ customer.status || 'active' }}
+            </span>
           </td>
-          <td style="color: var(--tertiary-medium); font-size: 0.875rem;">
-            {{ formatDate(customer.date_created) }}
+          <td>
+            <div class="text-tertiary small">
+              {{ formatDate(customer.date_created) }}
+            </div>
           </td>
           <td>
             <div class="d-flex justify-content-center gap-1">
-              <button class="btn btn-outline-primary action-btn action-btn-edit" 
-                      @click="editCustomer(customer)" 
-                      title="Edit">
-                <Edit :size="14" />
-              </button>
-              <button class="btn btn-outline-primary action-btn action-btn-view" 
-                      @click="viewCustomer(customer)" 
-                      title="View">
+              <!-- ✅ Fixed View Button -->
+              <button 
+                class="btn btn-outline-primary action-btn btn-icon-only btn-sm shadow-sm"
+                @click="openViewCustomerModal(customer)"
+                title="View Customer Details"
+              >
                 <Eye :size="14" />
               </button>
-              <button class="btn btn-outline-danger action-btn action-btn-delete" 
-                      @click="deleteCustomer(customer)" 
-                      title="Delete">
-                <Trash2 :size="14" />
+
+              <!-- ✅ Fixed Edit Button -->
+              <button 
+                class="btn btn-outline-secondary action-btn btn-icon-only btn-sm shadow-sm"
+                @click="openEditCustomerModal(customer)"
+                title="Edit Customer"
+              >
+                <Edit :size="14" />
+              </button>
+
+              <button 
+                class="btn btn-outline-danger action-btn btn-icon-only btn-sm shadow-sm"
+                @click="deleteCustomer(customer)"
+                title="Delete Customer"
+                :disabled="deletingCustomerId === (customer._id || customer.customer_id)"
+              >
+                <Trash2 v-if="deletingCustomerId !== (customer._id || customer.customer_id)" :size="14" />
+                <div v-else class="spinner-border spinner-border-sm"></div>
               </button>
             </div>
           </td>
         </tr>
       </template>
-    </DataTable>
+    </TableTemplate>
 
     <!-- Empty State -->
-    <div v-if="!loading && filteredCustomers.length === 0 && !error" 
-         class="text-center py-5 bg-white rounded shadow-sm">
-      <UserX :size="48" style="color: var(--tertiary-medium);" class="mb-3" />
-      <p style="color: var(--tertiary-medium);">
-        {{ customers.length === 0 ? 'No customers found' : 'No customers match the current filters' }}
-      </p>
+    <div
+      v-if="!hasCustomers && !isLoading && !error"
+      class="text-center py-12 surface-card rounded shadow-md"
+    >
+      <div class="display-1 mb-4">👥</div>
+      <h3 class="h4 fw-medium text-primary mb-2">No Customers Found</h3>
+      <p class="text-secondary mb-4">Get started by adding your first customer.</p>
       <button 
-        v-if="customers.length === 0" 
-        class="btn btn-primary btn-with-icon mt-3" 
-        @click="showAddCustomerModal"
+        class="btn btn-submit px-4 py-2 shadow-sm transition-theme"
+        @click="openAddCustomerModal"
       >
-        <Plus :size="16" />
-        <span>Add First Customer</span>
-      </button>
-      <button 
-        v-else 
-        class="btn btn-secondary btn-with-icon mt-3"
-        @click="clearFilters"
-      >
-        <RefreshCw :size="16" />
-        <span>Clear Filters</span>
+        Add First Customer
       </button>
     </div>
 
-    <!-- Customer Modal -->
-    <AddCustomerModal
-      :show="showCustomerModal"
-      :mode="modalMode"
-      :customer="modalCustomer"
-      @close="closeCustomerModal"
-      @edit-mode="handleEditMode"
-    />
+    <!-- Delete Confirmation Modal -->
+    <div class="modal fade" ref="deleteModalElement" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header border-theme">
+            <h5 class="modal-title text-error">Confirm Delete</h5>
+            <button type="button" class="btn-close" @click="closeDeleteModal"></button>
+          </div>
+          <div class="modal-body">
+            <div v-if="customerToDelete" class="text-center">
+              <div class="text-5xl mb-3">⚠️</div>
+              <h6 class="text-primary mb-3">Delete Customer</h6>
+              <p class="text-secondary mb-3">
+                Are you sure you want to delete customer 
+                <strong>{{ customerToDelete.full_name }}</strong>?
+              </p>
+              <div class="alert alert-warning" role="alert">
+                <small>
+                  This will hide the customer from the active list, but they can be restored later if needed.
+                </small>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer border-theme">
+            <button type="button" class="btn btn-secondary" @click="closeDeleteModal">
+              Cancel
+            </button>
+            <button 
+              type="button" 
+              class="btn btn-danger" 
+              @click="confirmDelete"
+              :disabled="isLoading"
+            >
+              <span v-if="isLoading">Deleting...</span>
+              <span v-else>Delete Customer</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
+
+  <!-- Customer Modal -->
+  <AddCustomerModal
+    ref="customerModal"
+    :mode="modalMode"
+    :customer="selectedCustomer"
+    @close="handleModalClose"
+    @success="handleModalSuccess"
+    @mode-changed="handleModeChanged"
+  />
+
+  <!-- Delete Confirmation Modal -->
+  <DeleteConfirmationModal
+    ref="deleteModal"
+    :is-loading="deletingCustomerId !== null"
+    @confirm="confirmDelete"
+    @cancel="cancelDelete"
+  />
 </template>
 
-<script>
-import { onMounted } from 'vue'
-import CardTemplate from '@/components/common/CardTemplate.vue'
-import DataTable from '../components/common/TableTemplate.vue'
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { Modal } from 'bootstrap'
+import { Eye, Edit, Trash2 } from 'lucide-vue-next'
+import { useCustomers } from '@/composables/api/useCustomers.js'
+import TableTemplate from '@/components/common/TableTemplate.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 import AddCustomerModal from '@/components/customers/AddCustomerModal.vue'
-import { useCustomers } from '../composables/ui/customers/useCustomers.js'
-import { Plus, RefreshCw, Search, X, Edit, Eye, Trash2, UserX } from 'lucide-vue-next'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 
-export default {
-  name: 'CustomersPage',
-  components: {
-    CardTemplate,
-    DataTable,
-    AddCustomerModal,
-    Plus,
-    RefreshCw,
-    Search,
-    X,
-    Edit,
-    Eye,
-    Trash2,
-    UserX
+const addOptions = [
+  { key: 'single', icon: 'Plus', title: 'Add Customer', description: 'Add manually' },
+  { key: 'import', icon: 'Upload', title: 'Import Customers', description: 'Upload CSV/Excel' },
+  { key: 'template', icon: 'FileText', title: 'Download Template', description: 'For imports' }
+];
+
+
+// =====================
+// COMPOSABLE HOOKS
+// =====================
+const {
+  customers,
+  isLoading,
+  error,
+  statistics,
+  totalCustomers,
+  hasCustomers,
+  fetchCustomers,
+  fetchStatistics,
+  deleteCustomer: deleteCustomerAPI,
+  clearError,
+  importCustomers,
+  exportCustomers
+} = useCustomers()
+
+// =====================
+// STATE & MODAL REFS
+// =====================
+const currentPage = ref(1)
+const itemsPerPage = ref(10)
+const exporting = ref(false)
+const searchValue = ref('')
+const customerModal = ref(null)
+const deleteModalElement = ref(null)
+const deleteModalInstance = ref(null)
+const modalMode = ref('create')
+const selectedCustomer = ref(null)
+const customerToDelete = ref(null)
+const deletingCustomerId = ref(null)
+const selectedCustomers = ref([])
+
+// =====================
+// FILTERS
+// =====================
+const filters = ref([
+  {
+    key: 'status',
+    label: 'Status',
+    value: 'all',
+    options: [
+      { value: 'all', label: 'All customers' },
+      { value: 'active', label: 'Active' },
+      { value: 'inactive', label: 'Inactive' }
+    ]
   },
-  setup() {
-    const {
-      // State
-      customers,
-      filteredCustomers,
-      selectedCustomers,
-      loading,
-      error,
-      successMessage,
-      searchQuery,
-      searchMode,
-      statusFilter,
-      pointsFilter,
-      currentPage,
-      itemsPerPage,
-      showCustomerModal,
-      modalMode,
-      modalCustomer,
-      activeUsersCount,
-      monthlyUsersCount,
-      dailyUsersCount,
-      
-      // Auto-refresh functionality
-      autoRefreshEnabled,
-      countdown,
-      connectionLost,
-      exporting,
-      refreshProgress,
-      
-      // Computed
-      allSelected,
-      someSelected,
-      paginatedCustomers,
-      
-      // Methods
-      initialize,
-      toggleAutoRefresh,
-      handleSearch,
-      clearSearch,
-      applyFilters,
-      clearFilters,
-      refreshData,
-      selectAll,
-      deleteSelected: deleteSelectedCustomers,
-      deleteCustomer,
-      showAddCustomerModal,
-      editCustomer,
-      viewCustomer,
-      handleEditMode,
-      closeCustomerModal,
-      exportData,
-      formatAddress,
-      formatDate,
-      highlightMatch,
-      handlePageChange,
-      emergencyReconnect,
-      getConnectionStatus,
-      getConnectionIcon,
-      getConnectionText
-    } = useCustomers()
+  {
+    key: 'points',
+    label: 'Loyalty Points',
+    value: 'all',
+    options: [
+      { value: 'all', label: 'All points' },
+      { value: 'high', label: 'High (100+)' },
+      { value: 'medium', label: 'Medium (50-99)' },
+      { value: 'low', label: 'Low (0-49)' }
+    ]
+  }
+])
 
-    onMounted(() => {
-      window.scrollTo(0, 0)
-      initialize()
-    })
-
-    return {
-      // State
-      customers,
-      filteredCustomers,
-      selectedCustomers,
-      loading,
-      error,
-      successMessage,
-      searchQuery,
-      searchMode,
-      statusFilter,
-      pointsFilter,
-      currentPage,
-      itemsPerPage,
-      showCustomerModal,
-      modalMode,
-      modalCustomer,
-      activeUsersCount,
-      monthlyUsersCount,
-      dailyUsersCount,
-      
-      // Auto-refresh functionality
-      autoRefreshEnabled,
-      countdown,
-      connectionLost,
-      exporting,
-      refreshProgress,
-      
-      // Computed
-      allSelected,
-      someSelected,
-      paginatedCustomers,
-      
-      // Methods
-      toggleAutoRefresh,
-      handleSearch,
-      clearSearch,
-      applyFilters,
-      clearFilters,
-      refreshData,
-      selectAll,
-      deleteSelected: deleteSelectedCustomers,
-      deleteCustomer,
-      showAddCustomerModal,
-      editCustomer,
-      viewCustomer,
-      handleEditMode,
-      closeCustomerModal,
-      exportData,
-      formatAddress,
-      formatDate,
-      highlightMatch,
-      handlePageChange,
-      emergencyReconnect,
-      getConnectionStatus,
-      getConnectionIcon,
-      getConnectionText
+// =====================
+// QUERY PARAM MAPPER
+// =====================
+const buildQueryParams = () => {
+  const params = {}
+  // status filter
+  const statusFilter = filters.value.find(f => f.key === 'status')?.value
+  if (statusFilter && statusFilter !== 'all') params.status = statusFilter
+  // points filter
+  const pointsFilter = filters.value.find(f => f.key === 'points')?.value
+  if (pointsFilter && pointsFilter !== 'all') {
+    if (pointsFilter === 'high') params.min_loyalty_points = 100
+    else if (pointsFilter === 'medium') {
+      params.min_loyalty_points = 50
+      params.max_loyalty_points = 99
+    } else if (pointsFilter === 'low') {
+      params.min_loyalty_points = 0
+      params.max_loyalty_points = 49
     }
   }
+  // search
+  if (searchValue.value && searchValue.value.trim()) params.search = searchValue.value.trim()
+  // pagination
+  params.page = currentPage.value
+  params.limit = itemsPerPage.value
+  return params
 }
+
+// =====================
+// TABLE DATA
+// =====================
+const paginatedCustomers = computed(() => customers.value) // backend returns correct page right away
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'N/A'
+  try {
+    return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+  } catch { return 'Invalid Date' }
+}
+
+// =====================
+// CORE HANDLERS -- modified
+// =====================
+const handleRetry = async () => {
+  clearError()
+  await fetchCustomers(buildQueryParams())
+}
+
+// page change triggers new fetch
+const handlePageChange = async (page) => {
+  currentPage.value = page
+  await fetchCustomers(buildQueryParams())
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+const handleFilterChange = async (filterKey, value) => {
+  const filter = filters.value.find(f => f.key === filterKey)
+  if (filter) filter.value = value
+  currentPage.value = 1
+  await fetchCustomers(buildQueryParams())
+}
+
+const handleSearchInput = async (value) => {
+  searchValue.value = value
+  currentPage.value = 1
+  await fetchCustomers(buildQueryParams())
+}
+
+const handleSearchClear = async () => {
+  searchValue.value = ''
+  currentPage.value = 1
+  await fetchCustomers(buildQueryParams())
+}
+
+const handleImport = async (event) => {
+  const file = event.target.files[0]
+  if (!file) return
+  try {
+    isLoading.value = true
+    await importCustomers(file)
+    alert('✅ Customers imported successfully!')
+    await fetchCustomers(buildQueryParams())
+  } catch (err) {
+    alert('❌ Import failed: ' + err.message)
+  } finally {
+    isLoading.value = false
+    event.target.value = ''
+  }
+}
+
+const handleExport = async () => {
+  try {
+    exporting.value = true
+    await exportCustomers()
+  } catch (err) {
+    alert('❌ Export failed: ' + err.message)
+  } finally {
+    exporting.value = false
+  }
+}
+
+const downloadTemplate = () => {
+  const csvTemplate = `username,full_name,email,phone,loyalty_points,status\njohndoe,John Doe,john@example.com,09171234567,100,active\njanedoe,Jane Doe,jane@example.com,09181112222,50,inactive\n`
+  const blob = new Blob([csvTemplate], { type: 'text/csv' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = 'customer_import_template.csv'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+const handleAddAction = (actionKey) => {
+  switch (actionKey) {
+    case 'single': openAddCustomerModal(); break
+    case 'import': document.getElementById('customer-import')?.click(); break
+    case 'template': downloadTemplate(); break
+  }
+}
+
+const handleSelectionAction = (actionKey, selectedItems) => {
+  switch (actionKey) {
+    case 'delete': break
+  }
+}
+
+const openAddCustomerModal = () => {
+  modalMode.value = 'create'
+  selectedCustomer.value = null
+  customerModal.value?.openModal()
+}
+const openViewCustomerModal = (customer) => {
+  modalMode.value = 'view'
+  selectedCustomer.value = customer
+  customerModal.value?.openModal()
+}
+const openEditCustomerModal = (customer) => {
+  modalMode.value = 'edit'
+  selectedCustomer.value = customer
+  customerModal.value?.openModal()
+}
+const handleModalClose = () => {
+  modalMode.value = 'create'
+  selectedCustomer.value = null
+}
+const handleModalSuccess = async () => {
+  try {
+    await fetchCustomers(buildQueryParams())
+    if (modalMode.value === 'create') currentPage.value = 1
+  } catch (error) {
+    console.error('Failed to refresh customer list:', error)
+  }
+}
+
+// delete
+const openDeleteModal = (customer) => {
+  customerToDelete.value = customer
+  deleteModalInstance.value?.show()
+}
+const closeDeleteModal = () => {
+  customerToDelete.value = null
+  deleteModalInstance.value?.hide()
+}
+const confirmDelete = async () => {
+  if (!customerToDelete.value) return
+  try {
+    deletingCustomerId.value = customerToDelete.value._id || customerToDelete.value.customer_id
+    await deleteCustomerAPI(deletingCustomerId.value)
+    closeDeleteModal()
+    deletingCustomerId.value = null
+    await fetchCustomers(buildQueryParams())
+  } catch (error) {
+    console.error('Failed to delete customer:', error)
+  }
+}
+const deleteCustomer = (customer) => {
+  openDeleteModal(customer)
+}
+
+// INIT
+onMounted(async () => {
+  try {
+    await Promise.all([fetchCustomers(buildQueryParams()), fetchStatistics()])
+    if (deleteModalElement.value) {
+      deleteModalInstance.value = new Modal(deleteModalElement.value)
+      deleteModalElement.value.addEventListener('hidden.bs.modal', () => {
+        customerToDelete.value = null
+      })
+    }
+  } catch (err) {
+    console.error('Failed to initialize customers page:', err)
+  }
+})
 </script>
 
+
+
 <style scoped>
-.customers-page {
-  padding: 1.5rem;
-  max-width: 1400px;
-  margin: 0 auto;
-  min-height: 100vh;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 1.5rem;
-  gap: 2rem;
-}
-
-.page-title {
-  font-size: 2rem;
-  font-weight: 600;
-  color: #1e293b;
-  margin: 0;
-}
-
-/* Search and Actions Row */
-.search-and-actions-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 2rem;
-  margin-bottom: 1.5rem;
-}
-
-/* Search Section Styles */
-.search-section {
-  flex: 1;
-  max-width: 500px;
-}
-
-.action-buttons-group {
-  display: flex;
-  gap: 0.75rem;
-  flex-shrink: 0;
-  align-items: flex-start;
-}
-
-.search-container {
-  position: relative;
-  display: flex;
-  align-items: center;
-  background: white;
-  border: 2px solid #e5e7eb;
-  border-radius: 0.75rem;
-  padding: 0.75rem 1rem;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
-  transition: all 0.2s ease;
-}
-
-.search-container:focus-within {
-  border-color: #4f46e5;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
-}
-
-.search-icon {
-  color: #9ca3af;
-  margin-right: 0.75rem;
-  flex-shrink: 0;
-}
-
-.search-input {
-  flex: 1;
-  border: none;
-  outline: none;
-  font-size: 1rem;
-  background: transparent;
-  color: #1f2937;
-}
-
-.search-input::placeholder {
-  color: #9ca3af;
-}
-
-.clear-search-btn {
-  background: none;
-  border: none;
-  color: #9ca3af;
-  cursor: pointer;
-  padding: 0.25rem;
-  border-radius: 0.25rem;
-  transition: all 0.2s ease;
-  font-size: 1.25rem;
-  line-height: 1;
-}
-
-.clear-search-btn:hover {
-  color: #6b7280;
-  background-color: #f3f4f6;
-}
-
-.search-results-info {
-  margin-top: 0.5rem;
-  font-size: 0.875rem;
-  color: #6b7280;
-  padding-left: 1rem;
-}
-
-/* Auto-refresh status indicator */
-.auto-refresh-status {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: #f0fdf4;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
-  border: 1px solid #bbf7d0;
-  min-width: 280px;
-}
-
-.status-text {
-  font-size: 0.875rem;
-  color: #16a34a;
-  font-weight: 500;
-  flex: 1;
-}
-
-/* Connection indicator */
-.connection-indicator {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.connection-good {
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  color: #16a34a;
-}
-
-.connection-unstable {
-  background: #fefce8;
-  border: 1px solid #fde047;
-  color: #ca8a04;
-}
-
-.connection-lost {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #dc2626;
-}
-
-.connection-unknown {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  color: #64748b;
-}
-
-/* Enhanced button styles */
-.btn {
-  padding: 0.5rem 1.25rem;
-  border-radius: 0.5rem;
-  border: none;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 0.875rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  white-space: nowrap;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background-color: #3b82f6;
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background-color: #2563eb;
-}
-
-.btn-secondary {
-  background-color: #e2e8f0;
-  color: #475569;
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background-color: #cbd5e1;
-}
-
-.btn-success {
-  background-color: #10b981;
-  color: white;
-}
-
-.btn-success:hover:not(:disabled) {
-  background-color: #059669;
-}
-
-.btn-warning {
-  background-color: #f59e0b;
-  color: white;
-}
-
-.btn-warning:hover:not(:disabled) {
-  background-color: #d97706;
-}
-
-.btn-danger {
-  background-color: #ef4444;
-  color: white;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background-color: #dc2626;
-}
-
-.btn-sm {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
-}
-
-.btn-outline-success {
-  background-color: transparent;
-  color: #16a34a;
-  border: 1px solid #16a34a;
-}
-
-.btn-outline-success:hover {
-  background-color: #16a34a;
-  color: white;
-  border-color: #16a34a;
-}
-
-.btn-outline-secondary {
-  background-color: transparent;
-  color: #6b7280;
-  border: 1px solid #6b7280;
-}
-
-.btn-outline-secondary:hover {
-  background-color: #6b7280;
-  color: white;
-  border-color: #6b7280;
-}
-
-/* Spinning icon animation */
-.spinning {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.loading-state, .error-state {
-  text-align: center;
-  padding: 3rem;
-  background: white;
-  border-radius: 0.75rem;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
-}
-
-.error-state {
-  color: #dc2626;
-}
-
-.success-message {
-  background-color: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  color: #16a34a;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
-  margin-bottom: 1rem;
-  text-align: center;
-}
-
-.refresh-indicator {
-  margin-bottom: 1rem;
-}
-
-/* Action Button Styles */
-.action-btn {
-  padding: 0.25rem 0.4rem;
-  font-size: 0.75rem;
-  line-height: 1;
-  border-radius: 0.25rem;
-}
-
-/* Enhanced Alert Styles */
-.alert {
-  padding: 1rem 1.25rem;
-  margin-bottom: 1rem;
-  border: 1px solid transparent;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
-}
-
-.alert-success {
-  color: #0f5132;
-  background-color: #d1e7dd;
-  border-color: #badbcc;
-}
-
-.alert-danger {
-  color: #842029;
-  background-color: #f8d7da;
-  border-color: #f5c2c7;
-}
-
-.alert-info {
-  color: #055160;
-  background-color: #d1ecf1;
-  border-color: #b8daff;
-}
-
-/* Utility classes */
-.d-flex {
-  display: flex !important;
-}
-
-.align-items-center {
-  align-items: center !important;
-}
-
-.justify-content-between {
-  justify-content: space-between !important;
-}
-
-.justify-content-center {
-  justify-content: center !important;
-}
-
-.gap-1 {
-  gap: 0.25rem !important;
-}
-
-.gap-2 {
-  gap: 0.5rem !important;
-}
-
-.me-2 {
-  margin-right: 0.5rem !important;
-}
-
-.mb-3 {
-  margin-bottom: 1rem !important;
-}
-
-.mt-3 {
-  margin-top: 1rem !important;
-}
-
-.py-5 {
-  padding-top: 3rem !important;
-  padding-bottom: 3rem !important;
-}
-
-.text-center {
-  text-align: center !important;
-}
-
-.fw-medium {
-  font-weight: 500 !important;
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.35em 0.65em;
-  font-size: 0.75em;
-  font-weight: 700;
-  line-height: 1;
-  color: #fff;
-  text-align: center;
-  white-space: nowrap;
-  vertical-align: baseline;
-  border-radius: 0.25rem;
-}
-
-.bg-light {
-  background-color: #f8f9fa !important;
-}
-
-.bg-success {
-  background-color: #198754 !important;
-}
-
-.text-primary {
-  color: #0d6efd !important;
-}
-
+/* Utility classes that complement the semantic system */
 .spinner-border {
-  display: inline-block;
-  width: 2rem;
-  height: 2rem;
-  vertical-align: text-bottom;
-  border: 0.25em solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: spinner-border 0.75s linear infinite;
+  width: 3rem;
+  height: 3rem;
+  border-width: 0.3em;
 }
 
 .spinner-border-sm {
-  width: 1rem;
-  height: 1rem;
-  border-width: 0.2em;
+  width: 0.875rem;
+  height: 0.875rem;
+  border-width: 0.125em;
 }
 
-@keyframes spinner-border {
-  to { transform: rotate(360deg); }
+.display-1 {
+  font-size: 3.5rem;
+  line-height: 1.2;
 }
 
-.visually-hidden {
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
-  padding: 0 !important;
-  margin: -1px !important;
-  overflow: hidden !important;
-  clip: rect(0, 0, 0, 0) !important;
-  white-space: nowrap !important;
-  border: 0 !important;
+.small {
+  font-size: 0.875rem;
 }
 
-/* Responsive Design */
-@media (max-width: 1024px) {
-  .customers-page {
+/* Badge enhancements */
+.badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.375rem;
+}
+
+/* Action button spacing */
+.action-btn {
+  transition: all 0.2s ease;
+}
+
+.action-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Responsive typography */
+@media (max-width: 768px) {
+  .p-4 {
     padding: 1rem;
   }
   
-  .search-and-actions-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 1rem;
-  }
-
-  .search-section {
-    max-width: none;
-  }
-
-  .action-buttons-group {
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  .auto-refresh-status {
-    min-width: auto;
-  }
-}
-
-@media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    gap: 1rem;
-    align-items: stretch;
+  .display-1 {
+    font-size: 2.5rem;
   }
   
-  .btn {
-    padding: 0.5rem 1rem;
-    font-size: 0.8125rem;
-  }
-
-  .auto-refresh-status {
-    flex-direction: column;
-    text-align: center;
-    gap: 0.25rem;
-    min-width: auto;
-  }
-
-  .connection-indicator {
-    order: -1;
+  .h4 {
+    font-size: 1.25rem;
   }
 }
 
-@media (max-width: 576px) {
-  .customers-page {
-    padding: 0.75rem;
-  }
+/* Ensure proper text color inheritance for buttons */
+.btn-icon-only {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Loading animation */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.spinner-border {
+  animation: spin 0.75s linear infinite;
 }
 </style>

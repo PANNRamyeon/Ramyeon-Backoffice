@@ -1,670 +1,285 @@
 # notifications/services.py
 from datetime import datetime, timedelta
-from bson import ObjectId
+import uuid
+from decimal import Decimal
 from django.contrib.auth.models import User
 from django.http import JsonResponse
-from app.database import db_manager
-import uuid
+from app.services.database_service import DatabaseService
+from boto3.dynamodb.conditions import Key, Attr
+
+# Helper to convert floats to Decimals for DynamoDB
+def floats_to_decimals(obj):
+    if isinstance(obj, list):
+        return [floats_to_decimals(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: floats_to_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, float):
+        return Decimal(str(obj))
+    return obj
 
 class NotificationService:
     def __init__(self):
-        self.db = db_manager.get_database()
-        self.collection = self.db.notifications
+        db_service = DatabaseService()
+        self.table = db_service.get_table('notifications')
+
+    def _build_filter_expression(self, filters):
+        expression = None
+        for f in filters:
+            if expression is None:
+                expression = f
+            else:
+                expression &= f
+        return expression
+
+    # ================================================================
+    # ID GENERATION METHOD
+    # ================================================================
     
+    def generate_notification_id(self):
+        """
+        Generate a unique notification ID using UUID.
+        """
+        return f"NOTIF-{uuid.uuid4()}"
+
     # ================================================================
     # NOTIFICATION CREATION METHODS
     # ================================================================
     
     def create_notification(self, title, message, recipient_id=None, recipient_username=None, 
                           priority='medium', notification_type='system', metadata=None):
-        """Create a new notification"""
+        """Create a new notification in DynamoDB"""
         try:
-            notification_doc = {
-                "_id": ObjectId(),
+            notification_id = self.generate_notification_id()
+            now_utc_iso = datetime.utcnow().isoformat() + "Z"
+            
+            notification_item = {
+                "notification_id": notification_id,
                 "title": title,
                 "message": message,
                 "priority": priority,
                 "is_read": False,
-                "archived": False,  # Add archived field
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
+                "archived": False,
+                "created_at": now_utc_iso,
+                "updated_at": now_utc_iso,
                 "notification_type": notification_type,
                 "metadata": metadata or {}
             }
             
-            # Only add recipient info if provided
             if recipient_id or recipient_username:
                 recipient = self._get_recipient(recipient_id, recipient_username)
                 if not recipient:
                     raise ValueError("Recipient not found")
                 
-                notification_doc.update({
+                notification_item.update({
                     "recipient_id": str(recipient.id),
                     "recipient_username": recipient.username
                 })
             
-            result = self.collection.insert_one(notification_doc)
-            notification_doc['_id'] = str(result.inserted_id)
+            notification_item = floats_to_decimals(notification_item)
+            notification_item = {k: v for k, v in notification_item.items() if v not in [None, '']}
+
+            self.table.put_item(Item=notification_item)
             
-            return notification_doc
+            return notification_item
             
         except Exception as e:
             raise Exception(f"Error creating notification: {str(e)}")
-    
+
     def create_inventory_alert(self, recipient_id, product_id, current_stock, product_name=None):
         """Create an inventory alert notification"""
         title = "Low Stock Alert"
         message = f"{product_name or 'Product'} is running low"
-        
-        metadata = {
-            "product_id": product_id,
-            "current_stock": current_stock
-        }
-        
-        return self.create_notification(
-            title=title,
-            message=message,
-            recipient_id=recipient_id,
-            priority='high',
-            notification_type='inventory',
-            metadata=metadata
-        )
-    
+        metadata = {"product_id": product_id, "current_stock": current_stock}
+        return self.create_notification(title=title, message=message, recipient_id=recipient_id,
+                                      priority='high', notification_type='inventory', metadata=metadata)
+
     # ================================================================
     # NOTIFICATION RETRIEVAL METHODS
     # ================================================================
     
     def get_notifications(self, recipient_id=None, notification_type=None, is_read=None, limit=50, include_archived=False):
-        """Get notifications with filters"""
-        query = {}
-        
-        # Exclude archived notifications by default
+        """Get notifications with filters from DynamoDB."""
+        filters = []
         if not include_archived:
-            query['archived'] = {'$ne': True}
-        
+            filters.append(Attr('archived').ne(True))
         if recipient_id:
-            query['recipient_id'] = str(recipient_id)
+            filters.append(Attr('recipient_id').eq(str(recipient_id)))
         if notification_type:
-            query['notification_type'] = notification_type
+            filters.append(Attr('notification_type').eq(notification_type))
         if is_read is not None:
-            query['is_read'] = is_read
-        
-        notifications = list(self.collection.find(query)
-                        .sort('created_at', -1)
-                        .limit(limit))
-        
-        return self._format_notifications(notifications)
-    
+            filters.append(Attr('is_read').eq(is_read))
+
+        scan_kwargs = {'Limit': limit}
+        if filters:
+            scan_kwargs['FilterExpression'] = self._build_filter_expression(filters)
+
+        try:
+            response = self.table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            return items
+        except Exception as e:
+            print(f"Error getting notifications: {e}")
+            return []
+
     def get_notification_by_id(self, notification_id):
-        """Get a specific notification by ID"""
+        """Get a specific notification by ID from DynamoDB"""
         try:
-            notification = self.collection.find_one({'_id': ObjectId(notification_id)})
-            if notification:
-                notification = self._format_notification(notification)
-            return notification
-        except Exception:
+            response = self.table.get_item(Key={'notification_id': notification_id})
+            return response.get('Item')
+        except Exception as e:
+            print(f"Error getting notification {notification_id}: {e}")
             return None
-    
+
     def get_recent_notifications(self, limit=10, hours=None, include_archived=False):
-        """Get recent notifications (last X hours or last X notifications)"""
+        """Get recent notifications from DynamoDB"""
+        filters = []
+        if not include_archived:
+            filters.append(Attr('archived').ne(True))
+        if hours:
+            time_threshold = (datetime.utcnow() - timedelta(hours=hours)).isoformat() + "Z"
+            filters.append(Attr('created_at').gte(time_threshold))
+        
+        scan_kwargs = {'Limit': limit}
+        if filters:
+            scan_kwargs['FilterExpression'] = self._build_filter_expression(filters)
+
         try:
-            query = {}
-            
-            # Exclude archived notifications by default
-            if not include_archived:
-                query['archived'] = {'$ne': True}
-            
-            # If hours specified, filter by time
-            if hours:
-                time_threshold = datetime.utcnow() - timedelta(hours=hours)
-                query['created_at'] = {'$gte': time_threshold}
-            
-            notifications = list(self.collection.find(query)
-                            .sort('created_at', -1)
-                            .limit(limit))
-            
-            return self._format_notifications(notifications)
-            
+            response = self.table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            return items
         except Exception as e:
             raise Exception(f"Error getting recent notifications: {str(e)}")
-    
-    def get_all_notifications(self, skip=0, limit=50, include_archived=False):
-        """Get all notifications with pagination"""
+
+    def get_all_notifications(self, limit=50, include_archived=False, start_key=None):
+        """Get all notifications with pagination from DynamoDB."""
+        filters = []
+        if not include_archived:
+            filters.append(Attr('archived').ne(True))
+
+        scan_kwargs = {'Limit': limit}
+        if filters:
+            scan_kwargs['FilterExpression'] = self._build_filter_expression(filters)
+        if start_key:
+            scan_kwargs['ExclusiveStartKey'] = start_key
+        
         try:
-            query = {}
-            
-            # Exclude archived notifications by default
-            if not include_archived:
-                query['archived'] = {'$ne': True}
-            
-            # Get total count for pagination
-            total_count = self.collection.count_documents(query)
-            
-            # Get notifications with pagination
-            notifications = list(self.collection.find(query)
-                                .sort('created_at', -1)
-                                .skip(skip)
-                                .limit(limit))
-            
-            formatted_notifications = self._format_notifications(notifications)
-            
-            return formatted_notifications, total_count
-            
+            response = self.table.scan(**scan_kwargs)
+            return response.get('Items', []), response.get('LastEvaluatedKey')
         except Exception as e:
             raise Exception(f"Error getting all notifications: {str(e)}")
 
-    def get_all_notifications_api(self, request):
-        """API endpoint method for getting all notifications"""
-        try:
-            # Get query parameters
-            page = int(request.GET.get('page', 1))
-            limit = int(request.GET.get('limit', 50))
-            include_archived = request.GET.get('include_archived', 'false').lower() == 'true'
-            
-            # Calculate skip for pagination
-            skip = (page - 1) * limit
-            
-            # Get notifications from service
-            notifications, total_count = self.get_all_notifications(
-                skip=skip,
-                limit=limit,
-                include_archived=include_archived  # ✅ Pass this parameter
-            )
-            
-            # Calculate pagination info
-            total_pages = (total_count + limit - 1) // limit
-            has_next = page < total_pages
-            has_previous = page > 1
-            
-            return JsonResponse({
-                'success': True,
-                'data': notifications,
-                'pagination': {
-                    'current_page': page,
-                    'total_pages': total_pages,
-                    'total_count': total_count,
-                    'per_page': limit,
-                    'has_next': has_next,
-                    'has_previous': has_previous
-                }
-            })
-            
-        except Exception as e:
-            return JsonResponse({
-                'success': False,
-                'error': str(e),
-                'data': [],
-                'pagination': {}
-            }, status=500)
-
-    def get_recent_notifications_api(self, request):
-        """API endpoint method for getting recent notifications"""
-        try:
-            limit = int(request.GET.get('limit', 10))
-            hours = request.GET.get('hours')
-            include_archived = request.GET.get('include_archived', 'false').lower() == 'true'
-            
-            if hours:
-                hours = int(hours)
-            
-            notifications = self.get_recent_notifications(
-                limit=limit,
-                hours=hours,
-                include_archived=include_archived  # ✅ Pass this parameter
-            )
-            
-            return JsonResponse({
-                'success': True,
-                'data': notifications
-            })
-            
-        except Exception as e:
-            return JsonResponse({
-                'success': False,
-                'error': str(e),
-                'data': []
-            }, status=500)
-    
     def get_unread_count(self, recipient_id=None, include_archived=False):
-        """Get count of unread notifications for a user or all notifications"""
-        query = {'is_read': False}
-        
-        # Exclude archived notifications by default
+        """Get count of unread notifications from DynamoDB"""
+        filters = [Attr('is_read').eq(False)]
         if not include_archived:
-            query['archived'] = {'$ne': True}
-        
+            filters.append(Attr('archived').ne(True))
         if recipient_id:
-            query['recipient_id'] = str(recipient_id)
+            filters.append(Attr('recipient_id').eq(str(recipient_id)))
         
-        return self.collection.count_documents(query)
-    
+        scan_kwargs = {'Select': 'COUNT'}
+        if filters:
+            scan_kwargs['FilterExpression'] = self._build_filter_expression(filters)
+
+        try:
+            response = self.table.scan(**scan_kwargs)
+            return response.get('Count', 0)
+        except Exception as e:
+            raise Exception(f"Error getting unread count: {str(e)}")
+
     # ================================================================
     # NOTIFICATION STATUS UPDATE METHODS
     # ================================================================
     
     def mark_as_read(self, notification_id):
-        """Mark notification as read"""
+        """Mark notification as read in DynamoDB"""
         try:
-            result = self.collection.update_one(
-                {'_id': ObjectId(notification_id)},
-                {
-                    '$set': {
-                        'is_read': True,
-                        'updated_at': datetime.utcnow()
-                    }
-                }
+            self.table.update_item(
+                Key={'notification_id': notification_id},
+                UpdateExpression="SET is_read = :r, updated_at = :u",
+                ExpressionAttributeValues={':r': True, ':u': datetime.utcnow().isoformat() + "Z"}
             )
-            return result.modified_count > 0
+            return True
         except Exception:
             return False
 
-    def mark_as_read_api(self, notification_id):
-        """API endpoint method for marking notification as read"""
-        try:
-            success = self.mark_as_read(notification_id)
-            
-            if success:
-                return JsonResponse({
-                    'success': True,
-                    'message': 'Notification marked as read successfully'
-                })
-            else:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Failed to mark notification as read'
-                }, status=400)
-                
-        except Exception as e:
-            return JsonResponse({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-    
     def mark_as_unread(self, notification_id):
-        """Mark notification as unread"""
+        """Mark notification as unread in DynamoDB"""
         try:
-            result = self.collection.update_one(
-                {'_id': ObjectId(notification_id)},
-                {
-                    '$set': {
-                        'is_read': False,
-                        'updated_at': datetime.utcnow()
-                    }
-                }
+            self.table.update_item(
+                Key={'notification_id': notification_id},
+                UpdateExpression="SET is_read = :r, updated_at = :u",
+                ExpressionAttributeValues={':r': False, ':u': datetime.utcnow().isoformat() + "Z"}
             )
-            return result.modified_count > 0
+            return True
         except Exception:
             return False
-    
-    def mark_all_as_read(self, recipient_id=None):
-        """
-        Mark all notifications as read
-        
-        Args:
-            recipient_id (str, optional): If provided, only mark notifications for this user as read.
-                                        If None, mark ALL notifications in the system as read.
-        
-        Returns:
-            int: Number of notifications marked as read
-        """
-        try:
-            query = {'is_read': False, 'archived': {'$ne': True}}  # Don't mark archived notifications
-            
-            # If recipient_id provided, only mark that user's notifications
-            if recipient_id:
-                query['recipient_id'] = str(recipient_id)
-            
-            result = self.collection.update_many(
-                query,
-                {
-                    '$set': {
-                        'is_read': True,
-                        'updated_at': datetime.utcnow()
-                    }
-                }
-            )
-            
-            return result.modified_count
-            
-        except Exception as e:
-            raise Exception(f"Error marking notifications as read: {str(e)}")
 
-    def mark_all_as_read_api(self, request):
-        """API endpoint method for marking all notifications as read"""
-        try:
-            recipient_id = request.GET.get('recipient_id')
-            count = self.mark_all_as_read(recipient_id)
-            
-            return JsonResponse({
-                'success': True,
-                'message': f'{count} notifications marked as read',
-                'count': count
-            })
-            
-        except Exception as e:
-            return JsonResponse({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-    
-    def mark_all_as_unread(self, recipient_id=None):
-        """
-        Mark all notifications as unread
-        
-        Args:
-            recipient_id (str, optional): If provided, only mark notifications for this user as unread.
-                                        If None, mark ALL notifications in the system as unread.
-        
-        Returns:
-            int: Number of notifications marked as unread
-        """
-        try:
-            query = {'is_read': True, 'archived': {'$ne': True}}  # Don't mark archived notifications
-            
-            # If recipient_id provided, only mark that user's notifications
-            if recipient_id:
-                query['recipient_id'] = str(recipient_id)
-            
-            result = self.collection.update_many(
-                query,
-                {
-                    '$set': {
-                        'is_read': False,
-                        'updated_at': datetime.utcnow()
-                    }
-                }
-            )
-            
-            return result.modified_count
-            
-        except Exception as e:
-            raise Exception(f"Error marking notifications as unread: {str(e)}")
-    
+    def mark_all_as_read(self, recipient_id=None):
+        """Mark all notifications as read in DynamoDB. Inefficient for large tables."""
+        items, _ = self.get_all_notifications(limit=1000, include_archived=False) # Add pagination for more than 1000
+        count = 0
+        for item in items:
+            if not item.get('is_read'):
+                if recipient_id and item.get('recipient_id') != str(recipient_id):
+                    continue
+                self.mark_as_read(item['notification_id'])
+                count += 1
+        return count
+
     # ================================================================
-    # NOTIFICATION ARCHIVING METHODS
+    # NOTIFICATION DELETION & ARCHIVING
     # ================================================================
     
     def archive_notification(self, notification_id):
-        """
-        Archive a notification (mark as archived, don't delete)
-        
-        Args:
-            notification_id (str): ID of the notification to archive
-        
-        Returns:
-            bool: True if notification was archived successfully
-        """
+        """Archive a notification in DynamoDB"""
         try:
-            result = self.collection.update_one(
-                {'_id': ObjectId(notification_id)},
-                {
-                    '$set': {
-                        'archived': True,
-                        'archived_at': datetime.utcnow(),
-                        'updated_at': datetime.utcnow()
-                    }
+            self.table.update_item(
+                Key={'notification_id': notification_id},
+                UpdateExpression="SET archived = :a, archived_at = :t, updated_at = :u",
+                ExpressionAttributeValues={
+                    ':a': True,
+                    ':t': datetime.utcnow().isoformat() + "Z",
+                    ':u': datetime.utcnow().isoformat() + "Z"
                 }
             )
-            return result.modified_count > 0
+            return True
         except Exception as e:
             raise Exception(f"Error archiving notification: {str(e)}")
-
-    def archive_notification_api(self, notification_id):
-        """API endpoint method for archiving notification"""
-        try:
-            success = self.archive_notification(notification_id)
             
-            if success:
-                return JsonResponse({
-                    'success': True,
-                    'message': 'Notification archived successfully'
-                })
-            else:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Failed to archive notification'
-                }, status=400)
-                
-        except Exception as e:
-            return JsonResponse({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-    
-    def unarchive_notification(self, notification_id):
-        """
-        Unarchive a notification
-        
-        Args:
-            notification_id (str): ID of the notification to unarchive
-        
-        Returns:
-            bool: True if notification was unarchived successfully
-        """
-        try:
-            result = self.collection.update_one(
-                {'_id': ObjectId(notification_id)},
-                {
-                    '$set': {
-                        'archived': False,
-                        'updated_at': datetime.utcnow()
-                    },
-                    '$unset': {
-                        'archived_at': ""
-                    }
-                }
-            )
-            return result.modified_count > 0
-        except Exception as e:
-            raise Exception(f"Error unarchiving notification: {str(e)}")
-
-    def unarchive_notification_api(self, notification_id):
-        """API endpoint method for unarchiving notification"""
-        try:
-            success = self.unarchive_notification(notification_id)
-            
-            if success:
-                return JsonResponse({
-                    'success': True,
-                    'message': 'Notification unarchived successfully'
-                })
-            else:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Failed to unarchive notification'
-                }, status=400)
-                
-        except Exception as e:
-            return JsonResponse({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-    
-    def archive_all_read_notifications(self, recipient_id=None):
-        """
-        Archive all read notifications
-        
-        Args:
-            recipient_id (str, optional): Only archive read notifications for this user
-        
-        Returns:
-            int: Number of notifications archived
-        """
-        try:
-            query = {'is_read': True, 'archived': {'$ne': True}}
-            
-            if recipient_id:
-                query['recipient_id'] = str(recipient_id)
-            
-            result = self.collection.update_many(
-                query,
-                {
-                    '$set': {
-                        'archived': True,
-                        'archived_at': datetime.utcnow(),
-                        'updated_at': datetime.utcnow()
-                    }
-                }
-            )
-            
-            return result.modified_count
-            
-        except Exception as e:
-            raise Exception(f"Error archiving read notifications: {str(e)}")
-    
-    def get_archived_notifications(self, recipient_id=None, skip=0, limit=50):
-        """
-        Get archived notifications with pagination
-        
-        Args:
-            recipient_id (str, optional): Only get archived notifications for this user
-            skip (int): Number of notifications to skip for pagination
-            limit (int): Maximum number of notifications to return
-        
-        Returns:
-            tuple: (notifications_list, total_count)
-        """
-        try:
-            query = {'archived': True}
-            
-            if recipient_id:
-                query['recipient_id'] = str(recipient_id)
-            
-            # Get total count for pagination
-            total_count = self.collection.count_documents(query)
-            
-            # Get notifications with pagination
-            notifications = list(self.collection.find(query)
-                                .sort('archived_at', -1)
-                                .skip(skip)
-                                .limit(limit))
-            
-            formatted_notifications = self._format_notifications(notifications)
-            
-            return formatted_notifications, total_count
-            
-        except Exception as e:
-            raise Exception(f"Error getting archived notifications: {str(e)}")
-    
-    # ================================================================
-    # NOTIFICATION DELETION METHODS
-    # ================================================================
-    
     def delete_notification(self, notification_id):
-        """Delete a notification"""
+        """Delete a notification from DynamoDB"""
         try:
-            result = self.collection.delete_one({'_id': ObjectId(notification_id)})
-            return result.deleted_count > 0
+            self.table.delete_item(Key={'notification_id': notification_id})
+            return True
         except Exception:
             return False
 
+    # ================================================================
+    # UTILITY & API METHODS (API methods need refactoring)
+    # ================================================================
+    
+    def get_all_notifications_api(self, request):
+        raise NotImplementedError("API method not yet refactored for DynamoDB")
+
+    def get_recent_notifications_api(self, request):
+        raise NotImplementedError("API method not yet refactored for DynamoDB")
+
+    def mark_as_read_api(self, notification_id):
+        raise NotImplementedError("API method not yet refactored for DynamoDB")
+
+    def mark_all_as_read_api(self, request):
+        raise NotImplementedError("API method not yet refactored for DynamoDB")
+
+    def archive_notification_api(self, notification_id):
+        raise NotImplementedError("API method not yet refactored for DynamoDB")
+
+    def unarchive_notification_api(self, notification_id):
+        raise NotImplementedError("API method not yet refactored for DynamoDB")
+
     def delete_notification_api(self, notification_id):
-        """API endpoint method for deleting notification"""
-        try:
-            success = self.delete_notification(notification_id)
-            
-            if success:
-                return jsonify({
-                    'success': True,
-                    'message': 'Notification deleted successfully'
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': 'Failed to delete notification'
-                }), 400
-                
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'error': str(e)
-            }), 500
-    
-    def delete_all_notifications(self, recipient_id=None, notification_type=None):
-        """
-        Delete all notifications with optional filters
-        
-        Args:
-            recipient_id (str, optional): Only delete notifications for this user
-            notification_type (str, optional): Only delete notifications of this type
-        
-        Returns:
-            int: Number of notifications deleted
-        """
-        try:
-            query = {}
-            
-            if recipient_id:
-                query['recipient_id'] = str(recipient_id)
-            if notification_type:
-                query['notification_type'] = notification_type
-            
-            result = self.collection.delete_many(query)
-            return result.deleted_count
-            
-        except Exception as e:
-            raise Exception(f"Error deleting notifications: {str(e)}")
-    
-    def delete_read_notifications(self, recipient_id=None):
-        """
-        Delete all read notifications
-        
-        Args:
-            recipient_id (str, optional): Only delete read notifications for this user
-        
-        Returns:
-            int: Number of notifications deleted
-        """
-        try:
-            query = {'is_read': True}
-            
-            if recipient_id:
-                query['recipient_id'] = str(recipient_id)
-            
-            result = self.collection.delete_many(query)
-            return result.deleted_count
-            
-        except Exception as e:
-            raise Exception(f"Error deleting read notifications: {str(e)}")
-    
-    def delete_archived_notifications(self, recipient_id=None):
-        """
-        Delete all archived notifications permanently
-        
-        Args:
-            recipient_id (str, optional): Only delete archived notifications for this user
-        
-        Returns:
-            int: Number of notifications deleted
-        """
-        try:
-            query = {'archived': True}
-            
-            if recipient_id:
-                query['recipient_id'] = str(recipient_id)
-            
-            result = self.collection.delete_many(query)
-            return result.deleted_count
-            
-        except Exception as e:
-            raise Exception(f"Error deleting archived notifications: {str(e)}")
-    
-    # ================================================================
-    # UTILITY METHODS
-    # ================================================================
-    
-    def _format_notification(self, notification):
-        """Format a single notification for JSON serialization"""
-        if notification:
-            notification['_id'] = str(notification['_id'])
-            notification['id'] = notification['_id']  # Add id field for consistency
-        return notification
-    
-    def _format_notifications(self, notifications):
-        """Format multiple notifications for JSON serialization"""
-        for notification in notifications:
-            self._format_notification(notification)
-        return notifications
+        raise NotImplementedError("API method not yet refactored for DynamoDB")
 
     def _get_recipient(self, recipient_id=None, recipient_username=None):
         """Helper method to get recipient User object"""
@@ -679,56 +294,6 @@ class NotificationService:
             except User.DoesNotExist:
                 return None
         return None
-    
-    # ================================================================
-    # ANALYTICS METHODS
-    # ================================================================
-    
-    def get_notification_stats(self, recipient_id=None, include_archived=False):
-        """Get notification statistics"""
-        try:
-            base_query = {}
-            if recipient_id:
-                base_query['recipient_id'] = str(recipient_id)
-            
-            # Include archived in stats if requested
-            if not include_archived:
-                base_query['archived'] = {'$ne': True}
-            
-            total = self.collection.count_documents(base_query)
-            unread = self.collection.count_documents({**base_query, 'is_read': False})
-            read = self.collection.count_documents({**base_query, 'is_read': True})
-            
-            # Get archived count separately
-            archived_query = dict(base_query)
-            archived_query['archived'] = True
-            archived = self.collection.count_documents(archived_query)
-            
-            # Get counts by type
-            type_pipeline = [
-                {'$match': base_query},
-                {'$group': {'_id': '$notification_type', 'count': {'$sum': 1}}}
-            ]
-            type_counts = list(self.collection.aggregate(type_pipeline))
-            
-            # Get counts by priority
-            priority_pipeline = [
-                {'$match': base_query},
-                {'$group': {'_id': '$priority', 'count': {'$sum': 1}}}
-            ]
-            priority_counts = list(self.collection.aggregate(priority_pipeline))
-            
-            return {
-                'total': total,
-                'read': read,
-                'unread': unread,
-                'archived': archived,
-                'by_type': {item['_id']: item['count'] for item in type_counts},
-                'by_priority': {item['_id']: item['count'] for item in priority_counts}
-            }
-            
-        except Exception as e:
-            raise Exception(f"Error getting notification stats: {str(e)}")
 
 # Singleton instance
 notification_service = NotificationService()

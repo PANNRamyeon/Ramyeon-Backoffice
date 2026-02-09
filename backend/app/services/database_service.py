@@ -1,21 +1,32 @@
-from pymongo import MongoClient
-from django.conf import settings
-from bson import ObjectId
+# backend/app/services/database_service.py
+from ..database import db_manager
 
 class DatabaseService:
     def __init__(self):
-        self.client = MongoClient(settings.MONGODB_URL)
-        self.db = self.client[settings.MONGODB_NAME]
+        """
+        Initializes the service by getting a DynamoDB resource from the database manager.
+        """
+        self.dynamodb = db_manager.get_database()
     
-    def get_collection(self, collection_name):
-        return self.db[collection_name]
-    
-    def convert_object_id(self, document):
-        """Convert ObjectId to string for JSON serialization"""
-        if document and '_id' in document:
-            document['_id'] = str(document['_id'])
-        return document
-    
-    def convert_object_ids(self, documents):
-        """Convert ObjectIds to strings for a list of documents"""
-        return [self.convert_object_id(doc) for doc in documents]
+    def get_table(self, table_name):
+        """
+        Returns a Boto3 Table resource, which can be used to perform CRUD operations.
+        
+        Args:
+            table_name (str): The name of the DynamoDB table.
+        
+        Returns:
+            boto3.resources.factory.dynamodb.Table: The DynamoDB table resource.
+        """
+        return self.dynamodb.Table(table_name)
+
+# You can add more generic helper functions here if needed, for example,
+# a function to handle decimal to float conversion for JSON serialization,
+# as DynamoDB's Decimal type is not directly JSON serializable.
+#
+# import decimal
+#
+# def decimal_default(obj):
+#     if isinstance(obj, decimal.Decimal):
+#         return float(obj)
+#     raise TypeError

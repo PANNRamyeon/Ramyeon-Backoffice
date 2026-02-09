@@ -1,0 +1,113 @@
+[
+  {
+    "_id": "683dd3e59b70f774ffe0bd95",
+    "username": "testuser",
+    "email": "test@example.com",
+    "password": "$2b$12$cxu8ODIQsSUAAxs3yDRo2eYKcChI68wVO2Nd8NPPGSFyVnQp1Uh.m",
+    "full_name": "Test User",
+    "role": "admin",
+    "date_created": "2025-06-02T16:40:05.605000",
+    "last_updated": "2025-09-17T11:16:24.738000",
+    "status": "active",
+    "last_login": "2025-09-29T04:17:14.159000",
+    "current_password": "password123",
+    "new_password": "password12"
+  },
+  {
+    "_id": "683dda192d6dd7ec13ee15d6",
+    "username": "jane@example.com",
+    "email": "jane@example.com",
+    "password": "$2b$12$ji0Nd3BawF.yZZJqoZ737OdglNPNRvUYivjI6U1bN1rBaH4wLFwAK",
+    "full_name": "Jane Smith",
+    "role": "customer",
+    "status": "active",
+    "date_created": "2025-06-02T17:06:33.453000",
+    "last_updated": "2025-06-02T17:06:33.453000",
+    "source": "customer_registration",
+    "last_login": "2025-06-05T13:57:21.458000"
+  },
+  {
+    "_id": "683eac180bb54e97fc564d92",
+    "username": "admin",
+    "email": "admin@pannpos.com",
+    "password": "$2b$12$H.YLhDajVbyMHp2X38rFaeFtKrWoAD1ATUORgNST16yBirjbQDi.i",
+    "full_name": "PANN Admin",
+    "role": "admin",
+    "date_created": "2025-06-03T08:02:32.382000",
+    "last_updated": "2025-06-03T08:02:32.382000",
+    "status": "active",
+    "last_login": "2025-06-03T08:03:21.218000"
+  },
+  {
+    "_id": "683eac1f0bb54e97fc564d94",
+    "full_name": "PANN Customer",
+    "email": "customer@pannpos.com",
+    "password": "$2b$12$gNOYeo7DOJW/whSUavtOVeJc05Ap5Cvs7n8lSQI07Ce8RaI5XEK6K",
+    "phone": "09123456789",
+    "date_created": "2025-06-03T08:02:39.801000",
+    "last_updated": "2025-06-03T08:02:39.801000",
+    "status": "active"
+  },
+  {
+    "_id": "683eb6105be1b7d3e95f277c",
+    "username": "validuser",
+    "email": "valid@example.com",
+    "password": "$2b$12$S/IbsmOlvtikrkK.Ti.xiuuZvk.OxqDj7ajahLctktqbc6jUvrBv6",
+    "full_name": "Valid User",
+    "role": "customer",
+    "status": "active",
+    "date_created": "2025-06-03T08:45:04.759000",
+    "last_updated": "2025-06-03T08:45:04.759000"
+  },
+  {
+    "_id": "6841a18d37eca0bad1552dc7",
+    "username": "Reymond",
+    "email": "Reymond@gmail.com",
+    "password": "$2b$12$OsZsWOncNKBkAtYRTQPCzO9t9IuEwsbphZRNybrnWKnwUeppaDdTi",
+    "full_name": "R Jay",
+    "role": "employee",
+    "status": "active",
+    "date_created": "2025-06-05T13:54:21.963000",
+    "last_updated": "2025-08-08T09:48:56.118000",
+    "deletedAt": "2025-08-08T09:48:56.118000",
+    "deletedBy": "testuser",
+    "deletionContext": "employee_deletion",
+    "isDeleted": true
+  },
+  {
+    "_id": "6841a20f37eca0bad1552dd5",
+    "username": "graham@gmail.com",
+    "email": "graham@gmail.com",
+    "password": "$2b$12$/Lk50/ZBE7wspq3581Sge.k39iBKTnbHaY81OXlm889JRDByBnUOi",
+    "full_name": "Graham Bell",
+    "role": "customer",
+    "status": "active",
+    "date_created": "2025-06-05T13:56:31.326000",
+    "last_updated": "2025-06-05T13:56:31.326000",
+    "source": "customer_registration"
+  },
+  {
+    "_id": "684862ec73f05a554061d9be",
+    "username": "Reymond@gmail.com",
+    "email": "Reymond@gmail.com",
+    "password": "$2b$12$mKBoXqC7Cu2kwcHosFTcgOhHQ2zBaeWsEhBPvGOJGZk0/GXnRcKPW",
+    "full_name": "Reymond CebuPac",
+    "role": "customer",
+    "status": "active",
+    "date_created": "2025-06-10T16:53:00.281000",
+    "last_updated": "2025-06-10T16:53:00.281000",
+    "source": "customer_registration"
+  },
+  {
+    "_id": "6849a4679108744e8c63da4e",
+    "username": "john_doe_123",
+    "email": "john.doe@example.com",
+    "password": "$2b$12$BmxYG4EG7T7HQ4FK05kHh.CJzs.sD4ekcJRzU9AXjW3fzWMdzxxV.",
+    "full_name": "John Doe",
+    "role": "customer",
+    "status": "active",
+    "date_created": "2025-06-11T15:44:39.210000",
+    "last_updated": "2025-07-10T17:13:35.024000",
+    "source": "customer_registration"
+  }
+]

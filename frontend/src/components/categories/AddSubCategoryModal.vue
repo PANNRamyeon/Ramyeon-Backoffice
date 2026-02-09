@@ -179,8 +179,6 @@ export default {
      * @param {string} categoryName - Category name for display
      */
     openModal(categoryId, categoryName = 'Unknown Category') {
-      console.log('Opening add subcategory modal for:', categoryId);
-      
       // Set category info
       this.categoryId = categoryId
       this.categoryName = categoryName
@@ -263,34 +261,27 @@ export default {
      */
     async submitForm() {
       try {
-        console.log('Submitting subcategory form...')
-        
         // Validate form
         if (!this.validateForm()) {
-          console.log('Form validation failed')
           return
         }
-        
+
         // Set loading state
         this.isSubmitting = true
         this.generalError = null
-        
+
         // Prepare data
         const subcategoryData = {
           name: this.subcategoryData.name.trim(),
           description: `${this.subcategoryData.name.trim()} products`,
           productName: this.subcategoryData.productName.trim() || null
         }
-        
-        console.log('Submitting subcategory data:', subcategoryData)
-        
+
         // Call API
         const result = await categoryApiService.AddSubCategoryData(
           this.categoryId,
           subcategoryData
         )
-        
-        console.log('✅ Subcategory added successfully:', result)
         
         // Emit success event to parent component
         this.$emit('subcategory-added', {
@@ -323,7 +314,6 @@ export default {
      * Show success message (you can customize this based on your notification system)
      */
     showSuccessMessage(message) {
-      console.log('✅ Success:', message)
       // Replace with your notification system
       // this.$toast.success(message)
     },
@@ -332,7 +322,6 @@ export default {
      * Show error message (you can customize this based on your notification system)
      */
     showErrorMessage(message) {
-      console.error('❌ Error:', message)
       // Replace with your notification system
       // this.$toast.error(message)
     }

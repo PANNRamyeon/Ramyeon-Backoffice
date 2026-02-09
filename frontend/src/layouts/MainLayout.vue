@@ -65,14 +65,19 @@
         </div>
       </div>
     </div>
+
+    <!-- Toast Container - Add this for global toast notifications -->
+    <ToastContainer />
   </div>
 </template>
 
 <script>
+import { useToast } from '../composables/ui/useToast.js'
+import { useAuth } from '@/composables/auth/useAuth.js'
 import Sidebar from './Sidebar.vue'
 import NotificationBell from '@/components/NotificationBell.vue'
 import DarkModeToggle from '@/components/common/DarkModeToggle.vue'
-import { X } from 'lucide-vue-next'
+import ToastContainer from '@/components/common/ToastContainer.vue'
 
 export default {
   name: 'MainLayout',
@@ -80,7 +85,19 @@ export default {
     Sidebar,
     NotificationBell,
     DarkModeToggle,
-    X
+    ToastContainer
+  },
+  setup() {
+    // Use the auth composable
+    const { logout } = useAuth()
+    
+    // Make toast available globally in this layout if needed
+    const { success, error, warning, info } = useToast()
+    
+    return {
+      authLogout: logout,
+      toast: { success, error, warning, info }
+    }
   },
   data() {
     return {
@@ -90,7 +107,21 @@ export default {
   },
   computed: {
     currentPageTitle() {
-      const titles = {
+      if (this.$route.meta?.title) {
+        return this.$route.meta.title
+      }
+
+      const path = this.$route.path
+
+      if (path.startsWith('/products/') && path !== '/products/bulk') {
+        return 'Product Details'
+      }
+
+      if (path.startsWith('/suppliers/') && path !== '/suppliers/orders') {
+        return 'Supplier Details'
+      }
+
+      const fallbackTitles = {
         '/dashboard': 'Dashboard',
         '/accounts': 'User Accounts',
         '/customers': 'Customers',
@@ -104,29 +135,23 @@ export default {
         '/salesbyitem': 'Sales By Item',
         '/salesbycategory': 'Sales By Category',
         '/uncategorized': 'Uncategorized Products',
-        '/allNotifications': 'All Notifications'
+        '/allNotifications': 'All Notifications',
+        '/profile': 'User Profile'
       }
-      
-      // Handle dynamic product detail routes
-      if (this.$route.path.startsWith('/products/') && this.$route.path !== '/products/bulk') {
-        return 'Product Details'
-      }
-      
-      return titles[this.$route.path] || 'Product Details'
+
+      return fallbackTitles[path] || 'Dashboard'
     },
     userInfo() {
-      const userData = localStorage.getItem('userData')
+      // Try both possible storage keys for backward compatibility
+      let userData = localStorage.getItem('user') || localStorage.getItem('userData')
       return userData ? JSON.parse(userData) : {}
     }
   },
   methods: {
     handleMenuChange(menu) {
-      console.log('Menu changed to:', menu)
-      // Navigate using router instead of changing currentPage
       this.$router.push(`/${menu}`)
     },
     handleShowProfile() {
-      console.log('Show profile modal')
       this.showProfileModal = true
     },
     closeProfileModal() {
@@ -136,30 +161,29 @@ export default {
       this.sidebarCollapsed = collapsed
     },
     async handleLogout() {
-      console.log('User logging out')
+      const logoutToastId = this.toast.loading('Logging out...')
       
       try {
-        // Call logout API
-        const token = localStorage.getItem('authToken')
-        if (token) {
-          await fetch('http://localhost:8000/api/v1/auth/logout/', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            }
-          })
-        }
-      } catch (error) {
-        console.error('Logout API error:', error)
-      } finally {
-        // Clear stored data
-        localStorage.removeItem('authToken')
-        localStorage.removeItem('refreshToken')
-        localStorage.removeItem('userData')
+        // Use the auth composable logout method
+        await this.authLogout()
         
-        // Redirect to login
-        this.$router.push('/login')
+        this.toast.dismiss(logoutToastId)
+        this.toast.success('Successfully logged out', { duration: 2000 })
+        
+        // Small delay before redirect
+        setTimeout(() => {
+          this.$router.push('/login')
+        }, 1500)
+        
+      } catch (error) {
+        console.error('Logout error:', error)
+        this.toast.dismiss(logoutToastId)
+        this.toast.warning('Logged out with connection issues', { duration: 3000 })
+        
+        // Still redirect even if logout API failed
+        setTimeout(() => {
+          this.$router.push('/login')
+        }, 1500)
       }
     }
   },
@@ -169,14 +193,13 @@ export default {
     if (savedState !== null) {
       this.sidebarCollapsed = JSON.parse(savedState)
     }
-  },
-  beforeRouteEnter(to, from, next) {
-    // Check if user is authenticated before entering any protected route
-    const token = localStorage.getItem('authToken')
-    if (token) {
-      next()
-    } else {
-      next('/login')
+    
+    // Show welcome toast (optional)
+    const userData = this.userInfo
+    if (userData.full_name || userData.name) {
+      this.toast.success(`Welcome back, ${userData.full_name || userData.name}!`, {
+        duration: 3000
+      })
     }
   }
 }
@@ -192,7 +215,7 @@ export default {
   width: 100vw;
   margin: 0;
   padding: 0;
-  @apply page-container transition-theme;
+  position: relative; /* Added for toast positioning */
 }
 
 /* ==========================================================================

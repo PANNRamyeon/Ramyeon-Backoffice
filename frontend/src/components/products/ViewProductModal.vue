@@ -248,7 +248,7 @@
 </template>
 
 <script>
-import { useViewProduct } from '@/composables/ui/products/useViewProduct'
+import { useProducts } from '@/composables/api/useProducts'
 import { onMounted, onBeforeUnmount } from 'vue'
 import { Edit, Package, Lock, Unlock, BarChart3 } from 'lucide-vue-next'
 
@@ -266,8 +266,8 @@ export default {
   setup(props, { emit }) {
     const {
       // State
-      show,
-      product,
+      showViewProductModal: show,
+      viewProductModalProduct: product,
       
       // Computed
       stockCardClass,
@@ -278,12 +278,12 @@ export default {
       statusToggleSubtext,
       
       // Actions
-      openViewModal,
-      closeModal,
-      handleEdit,
-      handleRestock,
-      handleToggleStatus,
-      handleGenerateBarcode,
+      openViewProductModal: openViewModal,
+      closeViewProductModal: closeModal,
+      handleViewProductEdit: handleEdit,
+      handleViewProductRestock: handleRestock,
+      handleViewProductToggleStatus: handleToggleStatus,
+      handleViewProductGenerateBarcode: handleGenerateBarcode,
       
       // Helper methods
       getCategoryName,
@@ -304,9 +304,9 @@ export default {
       formatDateTime,
       
       // Utility methods
-      setupKeyboardListeners,
-      cleanupKeyboardListeners
-    } = useViewProduct()
+      setupViewProductKeyboardListeners: setupKeyboardListeners,
+      cleanupViewProductKeyboardListeners: cleanupKeyboardListeners
+    } = useProducts()
     
     // Setup keyboard listeners on mount
     onMounted(() => {

@@ -19,16 +19,26 @@
         
         <!-- Top items list -->
         <ul v-else-if="topItems && topItems.length > 0" class="LCL2">
-          <li v-for="(item, index) in topItems" :key="index" class="list-item">
-            <span class="item-name" style="font-weight:bold; font-size: 25px;">{{ item.name }}</span>
-            <span class="item-price" style="color:green; font-size: 15px;">{{ item.price }}</span>
+          <li
+            v-for="(item, index) in topItems"
+            :key="index"
+            class="list-item"
+          >
+            <span class="item-name">
+              {{ item.name }}
+            </span>
+            <span class="item-price">
+              {{ item.price }}
+            </span>
           </li>
         </ul>
         
         <!-- Empty state for top items -->
         <div v-else class="empty-state-small">
           <p>No top items data available</p>
-          <button @click="getTopItems" class="btn btn-sm btn-primary">Retry Loading</button>
+          <button @click="loadAllData" class="btn btn-sm btn-primary">
+            Retry Loading
+          </button>
         </div>
       </div>
       
@@ -38,7 +48,11 @@
       <div class="RC-SBI">
         <div class="chart-header">
           <h1>Sales Chart</h1>
-          <select v-model="selectedFrequency" @change="onFrequencyChange" class="frequency-dropdown">
+          <select
+            v-model="selectedFrequency"
+            @change="onFrequencyChange"
+            class="frequency-dropdown"
+          >
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
             <option value="monthly">Monthly</option>
@@ -46,28 +60,44 @@
           </select>
         </div>
         <div class="chart-container">
-          <div v-if="loadingTopItems" class="chart-loading">
+          <div v-if="loadingChart" class="chart-loading">
             <div class="spinner-border text-primary"></div>
             <p>Loading chart data...</p>
           </div>
-          <BarChart v-else :chartData="chartData" :selectedFrequency="selectedFrequency" />
+          <BarChart
+            v-else
+            :chartData="chartData"
+            :selectedFrequency="selectedFrequency"
+          />
         </div>
       </div>
     </div>
     
     <!-- ========================================== -->
-    <!-- BOTTOM SECTION: Transaction History -->
+    <!-- BOTTOM SECTION: Sales by Item Table -->
     <!-- ========================================== -->
     <div class="BottomContainer">
       <!-- Header with Action Buttons -->
       <div class="transaction-header">
-        <h1>Transaction History</h1>
+        <div class="header-left">
+          <h1>Sales by Item</h1>
+          <div class="date-range-info" v-if="currentDateRange">
+            <i class="bi bi-calendar3"></i>
+            {{ dateRangeDisplay }}
+          </div>
+        </div>
+
         <div class="header-actions">
           <!-- Auto-refresh status and controls -->
           <div class="auto-refresh-status">
-            <i class="bi bi-arrow-repeat text-success" :class="{ 'spinning': loading }"></i>
+            <i
+              class="bi bi-arrow-repeat text-success"
+              :class="{ 'spinning': salesByItemLoading }"
+            ></i>
             <span class="status-text">
-              <span v-if="autoRefreshEnabled">Updates in {{ countdown }}s</span>
+              <span v-if="autoRefreshEnabled">
+                Updates in {{ countdown }}s
+              </span>
               <span v-else>Auto-refresh disabled</span>
             </span>
             
@@ -82,7 +112,10 @@
           </div>
           
           <!-- Connection health indicator -->
-          <div class="connection-indicator" :class="getConnectionStatus()">
+          <div
+            class="connection-indicator"
+            :class="getConnectionStatus()"
+          >
             <i :class="getConnectionIcon()"></i>
             <span class="connection-text">{{ getConnectionText() }}</span>
           </div>
@@ -92,85 +125,87 @@
             v-if="error || connectionLost" 
             class="btn btn-warning" 
             @click="emergencyReconnect"
-            :disabled="loading"
+            :disabled="salesByItemLoading"
           >
-            <i class="bi bi-arrow-clockwise" :class="{ 'spinning': loading }"></i>
-            {{ loading ? 'Reconnecting...' : 'Reconnect' }}
-          </button>
-
-          <button class="btn btn-primary" @click="importData" :disabled="loading || importing">
-            <i class="bi bi-upload"></i> {{ importing ? 'Importing...' : 'Import' }}
-          </button>
-          <button class="btn btn-success" @click="exportData" :disabled="loading || exporting">
-            <i class="bi bi-download"></i> {{ exporting ? 'Exporting...' : 'Export' }}
+            <i
+              class="bi bi-arrow-clockwise"
+              :class="{ 'spinning': salesByItemLoading }"
+            ></i>
+            {{ salesByItemLoading ? 'Reconnecting...' : 'Reconnect' }}
           </button>
         </div>
       </div>
 
       <!-- Loading State -->
-      <div v-if="loading" class="loading-state">
+      <div v-if="salesByItemLoading" class="loading-state">
         <div class="spinner-border text-primary"></div>
-        <p>Loading transactions...</p>
+        <p>Loading sales data...</p>
       </div>
       
-      <!-- Transaction Table -->
+      <!-- Sales by Item Table -->
       <div v-else class="table-container">
         <table class="table table-striped">
           <thead>
             <tr>
-              <th scope="col">ID</th>
-              <th scope="col">Items</th>
-              <th scope="col">Customer</th>
-              <th scope="col">Timestamp</th>
-              <th scope="col">Payment Method</th>
-              <th scope="col">Sale Type</th>
-              <th scope="col">Total</th>
-              <th scope="col">Actions</th>
+              <th scope="col">Product ID</th>
+              <th scope="col">Product Name</th>
+              <th scope="col">Category</th>
+              <th scope="col" style="text-align: center;">Stock</th>
+              <th scope="col" style="text-align: center;">Items Sold</th>
+              <th scope="col">Total Sales</th>
+              <th scope="col">Unit Price</th>
+              <th scope="col" style="text-align: center;">Actions</th>
             </tr>
           </thead>
           <tbody class="table-group-divider">
-            <tr v-for="transaction in transactions" :key="transaction._id">
-              <td class="id-column" :title="transaction._id">
-                {{ transaction._id.slice(-6) }}
+            <tr v-for="item in salesByItemRows" :key="item.id">
+              <td class="id-column" :title="item.id">
+                {{ item.id }}
               </td>
-              <td class="items-column">
-                <span class="items-list">
-                  {{ formatItemsList(transaction.item_list) }}
+              <td class="product-column">
+                <span :title="item.product">
+                  {{
+                    item.product.length > 30
+                      ? item.product.substring(0, 30) + '...'
+                      : item.product
+                  }}
                 </span>
               </td>
-              <td class="customer-column">
-                <span :title="transaction.customer_id">
-                  {{ transaction.customer_id ? transaction.customer_id.slice(-6) : 'N/A' }}
+              <td class="category-column">
+                <span class="badge badge-secondary">
+                  {{ item.category }}
                 </span>
               </td>
-              <td class="timestamp-column">
-                {{ formatDate(transaction.transaction_date) }}
-              </td>
-              <td class="payment-column">
-                <span class="badge" :class="getPaymentMethodClass(transaction.payment_method)">
-                  {{ formatPaymentMethod(transaction.payment_method) }}
+              <td class="stock-column">
+                <span
+                  :class="{
+                    'low-stock': item.stock < 10,
+                    'critical-stock': item.stock < 5
+                  }"
+                >
+                  {{ item.stock }} {{ item.unit }}
                 </span>
               </td>
-              <td class="sales-type-column">
-                <span class="badge" :class="getSalesTypeClass(transaction.sales_type)">
-                  {{ formatSalesType(transaction.sales_type) }}
+              <td class="sold-column">
+                {{ item.items_sold }}
+              </td>
+              <td class="sales-column">
+                <span class="total-amount">
+                  {{ formatCurrency(item.total_sales) }}
                 </span>
               </td>
-              <td class="total-column">
-                <span class="total-amount">{{ formatCurrency(transaction.total_amount) }}</span>
+              <td class="price-column">
+                {{ formatCurrency(item.selling_price) }}
               </td>
               <td class="actions-column">
                 <div class="action-buttons">
                   <button 
-                  class="btn btn-outline-primary btn-icon-only btn-xs" 
-                  @click="viewTransaction(transaction)"
-                  data-bs-toggle="tooltip"
-                  title="View Details"
-                  :disabled="showTransactionModal || showImportProgressModal"
-                  
-                >
-                  <Eye :size="14" />
-                </button>
+                    class="btn btn-outline-primary btn-sm" 
+                    @click="viewProductDetails(item)"
+                    title="View Product Details"
+                  >
+                    <Eye />
+                  </button>
                 </div>
               </td>
             </tr>
@@ -178,31 +213,51 @@
         </table>
         
         <!-- Empty State -->
-        <div v-if="transactions.length === 0 && !loading" class="empty-state">
-          <i class="bi bi-receipt" style="font-size: 3rem; color: #6b7280;"></i>
-          <p>No transactions found</p>
-          <button class="btn btn-primary" @click="refreshData">
+        <div
+          v-if="salesByItemRows.length === 0 && !salesByItemLoading"
+          class="empty-state"
+        >
+          <i
+            class="bi bi-receipt"
+            style="font-size: 3rem; color: var(--text-tertiary, #6b7280);"
+          ></i>
+          <p>No sales data found for the selected time period</p>
+          <button class="btn btn-primary" @click="loadAllData">
             <i class="bi bi-arrow-clockwise"></i> Refresh Data
           </button>
         </div>
         
-        <!-- Pagination -->
-        <div v-if="showPagination" class="pagination-container">
+        <!-- Pagination for Sales by Item Table -->
+        <div
+          v-if="showSalesByItemPagination"
+          class="pagination-container"
+        >
           <div class="pagination-header">
             <div class="pagination-info-right">
               <span class="pagination-text">
-                Showing {{ ((pagination.current_page - 1) * pagination.page_size) + 1 }} 
-                to {{ Math.min(pagination.current_page * pagination.page_size, pagination.total_records) }} 
-                of {{ pagination.total_records }} transactions
+                Showing
+                {{
+                  ((salesByItemPagination.current_page - 1) *
+                    salesByItemPagination.page_size) + 1
+                }} 
+                to
+                {{
+                  Math.min(
+                    salesByItemPagination.current_page *
+                      salesByItemPagination.page_size,
+                    salesByItemPagination.total_records
+                  )
+                }} 
+                of {{ salesByItemPagination.total_records }} products
               </span>
               
               <div class="page-size-selector">
-                <label for="pageSize">Per page:</label>
+                <label for="salesPageSize">Per page:</label>
                 <select 
-                  id="pageSize"
-                  :value="pagination.page_size" 
-                  @change="changePageSize(Number($event.target.value))"
-                  :disabled="loading"
+                  id="salesPageSize"
+                  :value="salesByItemPagination.page_size" 
+                  @change="changeSalesByItemPageSize(Number($event.target.value))"
+                  :disabled="salesByItemLoading"
                   class="form-select form-select-sm"
                 >
                   <option value="10">10</option>
@@ -214,190 +269,130 @@
             </div>
           </div>
 
-          <nav aria-label="Transaction pagination">
+          <nav aria-label="Sales by item pagination">
             <ul class="pagination pagination-sm justify-content-center">
-              <li class="page-item" :class="{ disabled: !pagination.has_prev || loading }">
+              <li
+                class="page-item"
+                :class="{ disabled: !salesByItemPagination.has_prev || salesByItemLoading }"
+              >
                 <button 
                   class="page-link" 
-                  @click="goToPage(pagination.current_page - 1)"
-                  :disabled="!pagination.has_prev || loading"
+                  @click="goToSalesByItemPage(salesByItemPagination.current_page - 1)"
+                  :disabled="!salesByItemPagination.has_prev || salesByItemLoading"
                   aria-label="Previous page"
                 >
-                  <i class="bi bi-chevron-left"><<</i>
+                  <i class="bi bi-chevron-left">‹</i>
                 </button>
               </li>
 
               <li 
-                v-for="page in getVisiblePages" 
+                v-for="page in getSalesByItemVisiblePages" 
                 :key="page"
                 class="page-item" 
-                :class="{ active: page === pagination.current_page }"
+                :class="{ active: page === salesByItemPagination.current_page }"
               >
                 <button 
                   class="page-link" 
-                  @click="goToPage(page)"
-                  :disabled="loading"
+                  @click="goToSalesByItemPage(page)"
+                  :disabled="salesByItemLoading"
                 >
                   {{ page }}
                 </button>
               </li>
 
-              <li class="page-item" :class="{ disabled: !pagination.has_next || loading }">
+              <li
+                class="page-item"
+                :class="{ disabled: !salesByItemPagination.has_next || salesByItemLoading }"
+              >
                 <button 
                   class="page-link" 
-                  @click="goToPage(pagination.current_page + 1)"
-                  :disabled="!pagination.has_next || loading"
+                  @click="goToSalesByItemPage(salesByItemPagination.current_page + 1)"
+                  :disabled="!salesByItemPagination.has_next || salesByItemLoading"
                   aria-label="Next page"
                 >
-                  <i class="bi bi-chevron-right">>></i>
+                  <i class="bi bi-chevron-right">›</i>
                 </button>
               </li>
             </ul>
           </nav>
-        </div>  
-      </div>
-    </div>
-
-    <!-- ========================================== -->
-    <!-- MODALS -->
-    <!-- ========================================== -->
-    
-    <!-- Import Progress Modal - RENAMED -->
-    <div v-if="showImportProgressModal" class="modal-overlay" @click="closeImportProgressModal">
-      <div class="modal-content" @click.stop>
-        <div class="modal-header">
-          <h3>{{ importStep === 'uploading' ? 'Uploading CSV File' : 'Processing Import' }}</h3>
-          <button class="modal-close" @click="closeImportProgressModal" :disabled="importing">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="progress-section">
-            <div class="progress-info">
-              <span>{{ importStatusText }}</span>
-              <span class="progress-percentage">{{ Math.round(importProgress) }}%</span>
-            </div>
-            <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: importProgress + '%' }"></div>
-            </div>
-          </div>
-          
-          <div v-if="importResult" class="import-results">
-            <h4>Import Results</h4>
-            <div class="result-summary">
-              <div class="result-item success">
-                <span>✅ Successful:</span>
-                <span>{{ importResult.summary?.successful || 0 }}</span>
-              </div>
-              <div class="result-item error" v-if="importResult.summary?.failed > 0">
-                <span>❌ Failed:</span>
-                <span>{{ importResult.summary?.failed || 0 }}</span>
-              </div>
-              <div class="result-item">
-                <span>📊 Success Rate:</span>
-                <span>{{ importResult.summary?.success_rate || 0 }}%</span>
-              </div>
-            </div>
-            
-            <div v-if="importResult.warnings && importResult.warnings.length > 0" class="warnings-section">
-              <h5>⚠️ Warnings</h5>
-              <ul class="warnings-list">
-                <li v-for="warning in importResult.warnings" :key="warning.type">
-                  {{ warning.message }}
-                </li>
-              </ul>
-            </div>
-          </div>
-          
-          <div v-if="importError" class="error-section">
-            <h4>❌ Import Failed</h4>
-            <p class="error-message">{{ importError }}</p>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button v-if="!importing" class="btn btn-secondary" @click="closeImportProgressModal">
-            Close
-          </button>
-          <button v-if="importResult && !importing" class="btn btn-primary" @click="closeImportProgressModal">
-            Done
-          </button>
         </div>
       </div>
     </div>
 
-    <!-- Transaction Details Modal - RENAMED -->
-    <div v-if="showTransactionModal" class="modal-overlay" @click="closeTransactionModal">
+    <!-- Product Details Modal -->
+    <div
+      v-if="showProductModal"
+      class="modal-overlay"
+      @click="closeProductModal"
+    >
       <div class="modal-content" @click.stop>
         <div class="modal-header">
-          <h2>Transaction Details</h2>
-          <button class="modal-close" @click="closeTransactionModal">&times;</button>
+          <h2>Product Details</h2>
+          <button class="modal-close" @click="closeProductModal">
+            &times;
+          </button>
         </div>
         
         <div class="modal-body">
-          <div class="transaction-details" v-if="selectedTransactionData">
+          <div class="product-details" v-if="selectedProductData">
             <div class="detail-section">
-              <h4>Transaction Information</h4>
+              <h4>Product Information</h4>
               <div class="detail-row">
-                <strong>Transaction ID:</strong> 
-                <span class="detail-value">{{ selectedTransactionData._original?._id || 'N/A' }}</span>
+                <strong>Product ID:</strong> 
+                <span class="detail-value">
+                  {{ selectedProductData.id }}
+                </span>
               </div>
               <div class="detail-row">
-                <strong>Transaction Date:</strong> 
-                <span class="detail-value">{{ selectedTransactionData.latest_transaction_date }}</span>
+                <strong>Product Name:</strong> 
+                <span class="detail-value">
+                  {{ selectedProductData.name }}
+                </span>
               </div>
               <div class="detail-row">
-                <strong>Customer ID:</strong> 
-                <span class="detail-value">{{ selectedTransactionData._original?.customer_id || 'N/A' }}</span>
+                <strong>SKU:</strong> 
+                <span class="detail-value">
+                  {{ selectedProductData.sku }}
+                </span>
+              </div>
+              <div class="detail-row">
+                <strong>Category:</strong> 
+                <span class="detail-value">
+                  {{ selectedProductData.category }}
+                </span>
               </div>
             </div>
 
             <div class="detail-section">
-              <h4>Items & Pricing</h4>
+              <h4>Inventory & Sales</h4>
               <div class="detail-row">
-                <strong>Items:</strong> 
-                <span class="detail-value">{{ selectedTransactionData.item_name }}</span>
+                <strong>Stock:</strong> 
+                <span class="detail-value">
+                  {{ selectedProductData.stock }} {{ selectedProductData.unit }}
+                </span>
               </div>
               <div class="detail-row">
-                <strong>Total Quantity:</strong> 
-                <span class="detail-value">{{ selectedTransactionData.total_quantity }}</span>
+                <strong>Items Sold:</strong> 
+                <span class="detail-value">
+                  {{ selectedProductData.items_sold }}
+                </span>
               </div>
               <div class="detail-row">
                 <strong>Unit Price:</strong> 
-                <span class="detail-value">{{ selectedTransactionData.unit_price }}</span>
-              </div>
-              <div class="detail-row">
-                <strong>Total Amount:</strong> 
-                <span class="detail-value total-highlight">{{ selectedTransactionData.total_amount }}</span>
-              </div>
-              
-              <!-- Detailed Item Breakdown -->
-              <div v-if="selectedTransactionData._original?.item_list" class="item-breakdown">
-                <h5>Item Details:</h5>
-                <div v-for="(item, index) in selectedTransactionData._original.item_list" :key="index" class="item-detail">
-                  <div class="item-row">
-                    <span class="item-detail-name">{{ item.item_name }}</span>
-                    <span class="item-detail-info">
-                      {{ item.quantity }} × {{ formatCurrency(item.unit_price) }} = {{ formatCurrency((item.quantity || 0) * (item.unit_price || 0)) }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="detail-section">
-              <h4>Payment & Sales Information</h4>
-              <div class="detail-row">
-                <strong>Payment Method:</strong> 
                 <span class="detail-value">
-                  <span class="badge" :class="getPaymentMethodClass(selectedTransactionData._original?.payment_method)">
-                    {{ formatPaymentMethod(selectedTransactionData._original?.payment_method) }}
-                  </span>
+                  {{ selectedProductData.selling_price }}
                 </span>
               </div>
               <div class="detail-row">
-                <strong>Sales Type:</strong> 
+                <strong>Total Sales:</strong> 
+                <span class="detail-value total-highlight">
+                  {{ selectedProductData.total_sales }}
+                </span>
+              </div>
+              <div class="detail-row">
+                <strong>Taxable:</strong> 
                 <span class="detail-value">
-                  <span class="badge" :class="getSalesTypeClass(selectedTransactionData._original?.sales_type)">
-                    {{ formatSalesType(selectedTransactionData._original?.sales_type) }}
-                  </span>
+                  {{ selectedProductData.is_taxable }}
                 </span>
               </div>
             </div>
@@ -405,17 +400,19 @@
         </div>
         
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="closeTransactionModal">Close</button>
-          <!--<button class="btn btn-primary" @click="editTransaction(selectedTransactionData)">Edit Transaction</button> This is placed for just in case--> 
+          <button class="btn btn-secondary" @click="closeProductModal">
+            Close
+          </button>
         </div>
       </div>
     </div>
   </div>
 </template>
 
+
 <script>
 import BarChart from '@/components/BarChart.vue';
-import SalesAPIService from '@/services/apiReports.js';
+import salesDisplayService from '@/services/apiSalesByItem';
 
 export default {
   name: 'SalesByItem',
@@ -423,32 +420,36 @@ export default {
     BarChart
   },
   
-  // ====================================================================
-  // COMPONENT DATA
-  // ====================================================================
   data() {
     return {
       // Loading states
-      loading: false,
       loadingTopItems: false,
-      importing: false,
-      exporting: false,
+      loadingChart: false,
       
-      // Import modal states
-      showImportProgressModal: false,
-      importProgress: 0,
-      importStep: 'uploading', // 'uploading' or 'processing'
-      importStatusText: 'Preparing upload...',
-      importResult: null,
-      importError: null,
+      // Sales by Item data
+      salesByItemRows: [],
+      allSalesByItemRows: [],
+      salesByItemLoading: false,
+      salesByItemError: null,
       
-      // Transaction view modal states - RENAMED to avoid conflicts
-      showTransactionModal: false,
-      selectedTransactionData: null,
+      // Sales by Item Pagination
+      salesByItemPagination: {
+        current_page: 1,
+        page_size: 10,
+        total_records: 0,
+        total_pages: 0,
+        has_next: false,
+        has_prev: false
+      },
+      
+      // Product Details Modal
+      showProductModal: false,
+      selectedProductData: null,
       
       // Chart and analytics
       selectedFrequency: 'monthly',
-      topItems: [], // Enhanced with more data
+      currentDateRange: null,
+      topItems: [],
       chartData: {
         labels: ['Loading...'],
         datasets: [{
@@ -459,21 +460,9 @@ export default {
           borderWidth: 1
         }]
       },
-      
-      // Transaction data with pagination
-      transactions: [],
-      pagination: {
-        current_page: 1,
-        page_size: 10,
-        total_records: 0,
-        total_pages: 0,
-        has_next: false,
-        has_prev: false
-      },
 
       autoRefreshEnabled: true,
-      autoRefreshInterval: 30000, // 30 seconds
-      baseRefreshInterval: 30000,
+      autoRefreshInterval: 30000,
       autoRefreshTimer: null,
       countdown: 30,
       countdownTimer: null,
@@ -482,31 +471,18 @@ export default {
       connectionLost: false,
       consecutiveErrors: 0,
       lastSuccessfulLoad: null,
-      error: null, // Add this if it doesn't exist
-      
-      // Smart refresh rate tracking
-      recentActivity: [],
-
-
-
+      error: null,
     };
   },
   
-  // ====================================================================
-  // COMPUTED PROPERTIES
-  // ====================================================================
   computed: {
-    isDevelopment() {
-      return process.env.NODE_ENV === 'development';
+    showSalesByItemPagination() {
+      return this.salesByItemPagination.total_pages > 1;
     },
     
-    showPagination() {
-      return this.pagination.total_pages > 1;
-    },
-    
-    getVisiblePages() {
-      const current = this.pagination.current_page;
-      const total = this.pagination.total_pages;
+    getSalesByItemVisiblePages() {
+      const current = this.salesByItemPagination.current_page;
+      const total = this.salesByItemPagination.total_pages;
       const delta = 2;
       
       if (total <= 7) {
@@ -529,42 +505,20 @@ export default {
       }
       
       return pages;
+    },
+
+    dateRangeDisplay() {
+      if (!this.currentDateRange) return 'Select date range';
+      const start = new Date(this.currentDateRange.start_date);
+      const end = new Date(this.currentDateRange.end_date);
+      const opts = { year: 'numeric', month: 'short', day: 'numeric' };
+      return `${start.toLocaleDateString('en-US', opts)} - ${end.toLocaleDateString('en-US', opts)}`;
     }
   },
   
-  // ====================================================================
-  // LIFECYCLE HOOKS
-  // ====================================================================
   async mounted() {
-    console.log("=== Component Mounted ===");
-    console.log("SalesAPIService:", SalesAPIService);
+    await this.loadAllData();
     
-    // Load data sequentially - separate calls for different purposes
-    try {
-      console.log("1. Loading top items list...");
-      await this.getTopItems();
-      console.log("✅ Top items list loaded");
-    } catch (error) {
-      console.error("❌ Top items list failed:", error);
-    }
-    
-    try {
-      console.log("2. Loading chart data...");
-      await this.getTopChartItems();
-      console.log("✅ Chart data loaded");
-    } catch (error) {
-      console.error("❌ Chart data failed:", error);
-    }
-    
-    try {
-      console.log("3. Loading transaction history...");
-      await this.loadTransactionHistory();
-      console.log("✅ Transaction history loaded");
-    } catch (error) {
-      console.error("❌ Transaction history failed:", error);
-    }
-    
-    // Start auto-refresh
     if (this.autoRefreshEnabled) {
       this.startAutoRefresh();
     }
@@ -572,63 +526,59 @@ export default {
 
   beforeUnmount() {
     this.stopAutoRefresh();
-    console.log('🧹 Component cleanup complete');
   },
   
-  // ====================================================================
-  // METHODS
-  // ====================================================================
   methods: {
     // ================================================================
-    // DATA LOADING METHODS
+    // CORE DATA LOADING METHODS
     // ================================================================
     
-    /**
-     * Load top items for the list display only
-     */
+    async loadAllData() {
+      try {
+        await Promise.all([
+          this.getTopItems(),
+          this.getTopChartItems(),
+          this.loadSalesByItemTable()
+        ]);
+      } catch (error) {
+        console.error('Error loading all data:', error);
+      }
+    },
+
     async getTopItems() {
       try {
-        console.log("=== Loading Top Items List Only ===");
         this.loadingTopItems = true;
         
-        if (!SalesAPIService?.getTopItems) {
-          throw new Error("getTopItems method not found in SalesAPIService");
-        }
+        const dateRange = this.calculateDateRange(this.selectedFrequency);
         
-        const response = await SalesAPIService.getTopItems({ limit: 5 });
-        console.log("Raw API Response:", response);
-        
+        const response = await salesDisplayService.getSalesByItem(
+          dateRange.start_date, 
+          dateRange.end_date
+        );
+
         let items = [];
         
-        // Try different response structures
-        if (response?.data?.items && Array.isArray(response.data.items)) {
-          items = response.data.items;
-        } else if (response?.data?.data && Array.isArray(response.data.data)) {
-          items = response.data.data;
-        } else if (Array.isArray(response?.data)) {
-          items = response.data;
-        } else if (Array.isArray(response)) {
+        if (Array.isArray(response)) {
           items = response;
+        } else if (response?.data && Array.isArray(response.data)) {
+          items = response.data;
         }
-        
-        console.log("Extracted items:", items);
-        
+
         if (items && items.length > 0) {
-          this.topItems = items.slice(0, 5).map((item, index) => ({
-            name: item.item_name || item.name || item.product_name || `Item ${index + 1}`,
-            price: this.formatCurrency(
-              item.total_amount || item.total_sales || item.revenue || 
-              item.sales || item.price || item.amount || 0
-            )
+          const sortedItems = items
+            .sort((a, b) => (b.total_sales || 0) - (a.total_sales || 0))
+            .slice(0, 5);
+
+          this.topItems = sortedItems.map((item) => ({
+            name: item.product_name || 'Unknown Product',
+            price: this.formatCurrency(item.total_sales || 0)
           }));
-          console.log("✅ Top items successfully formatted:", this.topItems);
         } else {
           this.topItems = [
             { name: 'No data available', price: '₱0.00' }
           ];
         }
         
-        // ✅ ADD CONNECTION HEALTH TRACKING
         this.connectionLost = false;
         this.consecutiveErrors = 0;
         this.lastSuccessfulLoad = Date.now();
@@ -637,247 +587,245 @@ export default {
       } catch (error) {
         console.error("❌ Error loading top items:", error);
         
-        // ✅ ADD ERROR TRACKING
         this.consecutiveErrors++;
         this.error = `Failed to load top items: ${error.message}`;
-        
+
         if (this.consecutiveErrors >= 3) {
           this.connectionLost = true;
-          console.log('Connection marked as lost after 3 consecutive errors');
         }
-        
+
         this.topItems = [{ name: 'Error loading data', price: '₱0.00' }];
       } finally {
         this.loadingTopItems = false;
       }
     },
 
-    /**
-     * Load chart data with date filtering - FIXED VERSION
-     */
     async getTopChartItems() {
       try {
-        console.log("=== Loading Chart Data Only ===");
-        
-        // Don't set loading for chart specifically, use separate flag
+        this.loadingChart = true;
         const dateRange = this.calculateDateRange(this.selectedFrequency);
-        console.log("Date range for", this.selectedFrequency, ":", dateRange);
         
-        // Try the enhanced chart API first
-        if (SalesAPIService?.getTopChartItems) {
-          const requestParams = {
-            limit: 10,
-            start_date: dateRange.start_date,
-            end_date: dateRange.end_date,
-            frequency: this.selectedFrequency
-          };
-          
-          console.log("Request params for chart:", requestParams);
-          
-          try {
-            const response = await SalesAPIService.getTopChartItems(requestParams);
-            console.log("Chart API Response:", response);
-            
-            let items = [];
-            if (response?.success && response.data) {
-              items = response.data;
-            } else if (Array.isArray(response)) {
-              items = response;
-            }
-            
-            if (items && items.length > 0) {
-              this.updateChartData(items.slice(0, 10));
-              console.log("✅ Chart data updated successfully");
-              
-              // ✅ ADD CONNECTION HEALTH TRACKING
-              this.connectionLost = false;
-              this.consecutiveErrors = 0;
-              this.lastSuccessfulLoad = Date.now();
-              this.error = null;
-              
-              return; // Success, exit early
-            }
-          } catch (chartError) {
-            console.warn("Chart API failed, trying fallback:", chartError.message);
-            // Don't return, fall through to fallback
-          }
-        }
-        
-        // Fallback: Use regular top items API for chart
-        console.log("🔄 Using fallback: regular top items API for chart");
-        if (SalesAPIService?.getTopItems) {
-          try {
-            const response = await SalesAPIService.getTopItems({ limit: 10 });
-            console.log("Fallback API Response:", response);
-            
-            let items = [];
-            if (response?.data?.items && Array.isArray(response.data.items)) {
-              items = response.data.items;
-            } else if (response?.data?.data && Array.isArray(response.data.data)) {
-              items = response.data.data;
-            } else if (Array.isArray(response?.data)) {
-              items = response.data;
-            } else if (Array.isArray(response)) {
-              items = response;
-            }
-            
-            if (items && items.length > 0) {
-              // Map the regular API response to chart format
-              const chartItems = items.map(item => ({
-                item_name: item.item_name || item.name || 'Unknown Item',
-                total_amount: item.total_amount || item.total_sales || item.revenue || 0
-              }));
-              
-              this.updateChartData(chartItems.slice(0, 10));
-              console.log("✅ Fallback chart data loaded successfully");
-              
-              // ✅ ADD CONNECTION HEALTH TRACKING
-              this.connectionLost = false;
-              this.consecutiveErrors = 0;
-              this.lastSuccessfulLoad = Date.now();
-              this.error = null;
-              
-              return;
-            }
-          } catch (fallbackError) {
-            console.error("❌ Fallback also failed:", fallbackError);
-          }
-        }
-        
-        // If we get here, both APIs failed
-        console.warn("Both chart APIs failed, using default chart");
-        
-        // ✅ ADD ERROR TRACKING
-        this.consecutiveErrors++;
-        this.error = 'Failed to load chart data';
-        
-        if (this.consecutiveErrors >= 3) {
-          this.connectionLost = true;
-          console.log('Connection marked as lost after 3 consecutive errors');
-        }
-        
-        this.setDefaultChartData();
-        
-      } catch (error) {
-        console.error("❌ Error in getTopChartItems:", error);
-        
-        // ✅ ADD ERROR TRACKING
-        this.consecutiveErrors++;
-        this.error = `Failed to load chart data: ${error.message}`;
-        
-        if (this.consecutiveErrors >= 3) {
-          this.connectionLost = true;
-          console.log('Connection marked as lost after 3 consecutive errors');
-        }
-        
-        this.setDefaultChartData();
-      }
-    },
+        const response = await salesDisplayService.getSalesByItem(
+          dateRange.start_date, 
+          dateRange.end_date
+        );
 
-    /**
-     * Load transaction history from API
-     */
-    async loadTransactionHistory(page = 1, pageSize = 10) {
-      try {
-        console.log("=== Loading Transaction History ===");
-        this.loading = true;
+        let items = [];
         
-        if (!SalesAPIService.getSalesItemHistory) {
-          throw new Error("getSalesItemHistory method not found in SalesAPIService");
+        if (Array.isArray(response)) {
+          items = response;
+        } else if (response?.data && Array.isArray(response.data)) {
+          items = response.data;
         }
-        
-        const response = await SalesAPIService.getSalesItemHistory({
-          page: page,
-          page_size: pageSize
-        });
-        
-        if (response?.success) {
-          this.transactions = response.data.data || [];
-          this.pagination = response.data.pagination || {
-            current_page: 1,
-            page_size: 10,
-            total_records: 0,
-            total_pages: 0,
-            has_next: false,
-            has_prev: false
-          };
-          
-          // ✅ ADD CONNECTION HEALTH TRACKING
+
+        if (items && items.length > 0) {
+          const sortedItems = items
+            .sort((a, b) => (b.total_sales || 0) - (a.total_sales || 0))
+            .slice(0, 10);
+
+          const chartItems = sortedItems.map(item => ({
+            item_name: item.product_name || 'Unknown Product',
+            total_amount: item.total_sales || 0
+          }));
+
+          this.updateChartData(chartItems);
+
           this.connectionLost = false;
           this.consecutiveErrors = 0;
           this.lastSuccessfulLoad = Date.now();
           this.error = null;
-          
-          console.log("Loaded transactions:", this.transactions.length);
+
         } else {
-          throw new Error(response?.message || 'Failed to load transaction history');
+          this.setDefaultChartData();
         }
+        
       } catch (error) {
-        console.error("Error loading transaction history:", error);
+        console.error("❌ Error in getTopChartItems:", error);
         
-        // ✅ ADD ERROR TRACKING
         this.consecutiveErrors++;
-        this.error = `Failed to load transaction history: ${error.message}`;
-        
+        this.error = `Failed to load chart data: ${error.message}`;
+
         if (this.consecutiveErrors >= 3) {
           this.connectionLost = true;
-          console.log('Connection marked as lost after 3 consecutive errors');
+        }
+
+        this.setDefaultChartData();
+      } finally {
+        this.loadingChart = false;
+      }
+    },
+
+    async loadSalesByItemTable() {
+      try {
+        this.salesByItemLoading = true;
+        this.salesByItemError = null;
+        
+        const dateRange = this.calculateDateRange(this.selectedFrequency);
+        this.currentDateRange = dateRange;
+        
+        if (!this.validateDateRange(dateRange.start_date, dateRange.end_date)) {
+          this.salesByItemError = 'Invalid date range: start date cannot be after end date';
+          this.allSalesByItemRows = [];
+          this.salesByItemRows = [];
+          return;
         }
         
-        this.transactions = [];
+        const response = await salesDisplayService.getSalesByItem(
+          dateRange.start_date, 
+          dateRange.end_date,
+          false
+        );
+
+        let data = [];
+        
+        if (Array.isArray(response)) {
+          data = response;
+        } else if (response?.data && Array.isArray(response.data)) {
+          data = response.data;
+        } else if (response?.results && Array.isArray(response.results)) {
+          data = response.results;
+        } else {
+          console.warn('⚠️ Unexpected API response format:', response);
+          data = [];
+        }
+
+        this.allSalesByItemRows = data
+          .filter(item => item && typeof item === 'object')
+          .sort((a, b) => {
+            const salesA = parseFloat(a.total_sales) || 0;
+            const salesB = parseFloat(b.total_sales) || 0;
+            return salesB - salesA;
+          })
+          .map(item => ({
+            id: item.product_id || item.id || 'N/A',
+            product: item.product_name || item.name || item.product || 'Unknown Product',
+            category: item.category_name || item.category || 'Uncategorized',
+            stock: parseInt(item.stock) || 0,
+            items_sold: parseInt(item.items_sold) || 0,
+            total_sales: parseFloat(item.total_sales) || 0,
+            selling_price: parseFloat(item.selling_price) || 0,
+            unit: item.unit || 'unit',
+            sku: item.sku || 'N/A',
+            is_taxable: Boolean(item.is_taxable)
+          }));
+
+        this.salesByItemPagination.current_page = 1;
+        this.updateSalesByItemPageData();
+
+        this.connectionLost = false;
+        this.consecutiveErrors = 0;
+        this.lastSuccessfulLoad = Date.now();
+        this.error = null;
+
+      } catch (error) {
+        console.error('❌ loadSalesByItemTable error:', error);
+        
+        this.consecutiveErrors++;
+        this.salesByItemError = this.getErrorMessage(error);
+
+        if (this.consecutiveErrors >= 3) {
+          this.connectionLost = true;
+        }
+
+        this.allSalesByItemRows = [];
+        this.salesByItemRows = [];
+        this.salesByItemPagination.current_page = 1;
+        this.updateSalesByItemPageData();
+        
       } finally {
-        this.loading = false;
+        this.salesByItemLoading = false;
       }
     },
 
     // ================================================================
-    // CHART METHODS
+    // DATE FILTERING METHODS - FIXED
     // ================================================================
     
-    /**
-     * Calculate date range based on frequency
-     */
     calculateDateRange(frequency) {
       const now = new Date();
-      const end_date = now.toISOString().split('T')[0];
+      const end_date = this.formatDateForAPI(now);
       let start_date;
       
       switch (frequency) {
         case 'daily':
-          start_date = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000))
-            .toISOString().split('T')[0];
+          // Last 30 days
+          const dailyDate = new Date(now);
+          dailyDate.setDate(dailyDate.getDate() - 30);
+          start_date = this.formatDateForAPI(dailyDate);
           break;
         case 'weekly':
-          start_date = new Date(now.getTime() - (8 * 7 * 24 * 60 * 60 * 1000))
-            .toISOString().split('T')[0];
+          // Last 12 weeks
+          const weeklyDate = new Date(now);
+          weeklyDate.setDate(weeklyDate.getDate() - (12 * 7));
+          start_date = this.formatDateForAPI(weeklyDate);
           break;
         case 'monthly':
-          const monthsAgo = new Date(now);
-          monthsAgo.setMonth(monthsAgo.getMonth() - 12);
-          start_date = monthsAgo.toISOString().split('T')[0];
+          // Last 12 months
+          const monthlyDate = new Date(now);
+          monthlyDate.setMonth(monthlyDate.getMonth() - 12);
+          start_date = this.formatDateForAPI(monthlyDate);
           break;
         case 'yearly':
-          const yearsAgo = new Date(now);
-          yearsAgo.setFullYear(yearsAgo.getFullYear() - 5);
-          start_date = yearsAgo.toISOString().split('T')[0];
+          // Last 3 years
+          const yearlyDate = new Date(now);
+          yearlyDate.setFullYear(yearlyDate.getFullYear() - 3);
+          start_date = this.formatDateForAPI(yearlyDate);
           break;
         default:
+          // Default to last 30 days
           const defaultDate = new Date(now);
-          defaultDate.setMonth(defaultDate.getMonth() - 1);
-          start_date = defaultDate.toISOString().split('T')[0];
+          defaultDate.setDate(defaultDate.getDate() - 30);
+          start_date = this.formatDateForAPI(defaultDate);
       }
       
       return { start_date, end_date };
     },
 
-    /**
-     * Update chart data with API response
-     */
+    formatDateForAPI(date) {
+      if (!(date instanceof Date)) {
+        date = new Date(date);
+      }
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    },
+
+    validateDateRange(startDate, endDate) {
+      if (!startDate || !endDate) return true;
+      
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      
+      return start <= end;
+    },
+
+    getErrorMessage(error) {
+      if (error.response?.status === 400) {
+        return 'Invalid date range or parameters. Please try a different time period.';
+      } else if (error.response?.status === 404) {
+        return 'Sales data not found for the selected period.';
+      } else if (error.response?.status === 500) {
+        return 'Server error. Please try again later.';
+      } else if (error.message?.includes('Network Error') || error.message?.includes('Failed to fetch')) {
+        return 'Network connection failed. Please check your internet connection.';
+      } else {
+        return error.message || 'Failed to load sales data. Please try again.';
+      }
+    },
+
+    // ================================================================
+    // CHART METHODS - FIXED
+    // ================================================================
+    
     updateChartData(items) {
       const colors = this.generateChartColors(items.length);
       
       this.chartData = {
-        labels: items.map(item => item.item_name || 'Unknown Item'),
+        labels: items.map(item => {
+          const name = item.item_name || 'Unknown Item';
+          return name.length > 20 ? name.substring(0, 20) + '...' : name;
+        }),
         datasets: [{
           label: `Sales Amount (${this.selectedFrequency})`,
           data: items.map(item => item.total_amount || 0),
@@ -888,9 +836,6 @@ export default {
       };
     },
 
-    /**
-     * Generate colors for chart items
-     */
     generateChartColors(count) {
       const baseColors = [
         '#ef4444', '#3b82f6', '#eab308', '#22c55e', '#8b5cf6',
@@ -913,9 +858,6 @@ export default {
       return { background, border };
     },
 
-    /**
-     * Set default chart data when no API data available
-     */
     setDefaultChartData() {
       this.chartData = {
         labels: ['No Data Available'],
@@ -929,372 +871,86 @@ export default {
       };
     },
 
-    /**
-     * Handle frequency change - FIXED to not interfere with modals
-     */
     async onFrequencyChange() {
-      console.log("Frequency changed to:", this.selectedFrequency);
-      
-      // IMPORTANT: Don't reload chart if modal is open
-      if (this.showTransactionModal || this.showImportProgressModal) {
-        console.log("Modal is open, deferring chart reload");
+      if (this.showProductModal) {
         return;
       }
-      
-      // Only reload chart data, not top items list
-      await this.getTopChartItems();
+
+      await this.loadAllData();
     },
 
     // ================================================================
     // PAGINATION METHODS
     // ================================================================
     
-    /**
-     * Go to specific page - FIXED to not interfere with modals
-     */
-    async goToPage(page) {
-      if (this.showTransactionModal || this.showImportProgressModal) {
-        console.log("Modal is open, preventing page change");
+    updateSalesByItemPageData() {
+      const startIndex = (this.salesByItemPagination.current_page - 1) * this.salesByItemPagination.page_size;
+      const endIndex = startIndex + this.salesByItemPagination.page_size;
+      
+      this.salesByItemRows = this.allSalesByItemRows.slice(startIndex, endIndex);
+      
+      this.salesByItemPagination.total_records = this.allSalesByItemRows.length;
+      this.salesByItemPagination.total_pages = Math.ceil(this.allSalesByItemRows.length / this.salesByItemPagination.page_size);
+      this.salesByItemPagination.has_prev = this.salesByItemPagination.current_page > 1;
+      this.salesByItemPagination.has_next = this.salesByItemPagination.current_page < this.salesByItemPagination.total_pages;
+    },
+    
+    goToSalesByItemPage(page) {
+      if (this.showProductModal) {
         return;
       }
       
-      if (page >= 1 && page <= this.pagination.total_pages) {
-        await this.loadTransactionHistory(page, this.pagination.page_size);
+      if (page >= 1 && page <= this.salesByItemPagination.total_pages) {
+        this.salesByItemPagination.current_page = page;
+        this.updateSalesByItemPageData();
       }
     },
-    
-    /**
-     * Change page size - FIXED to not interfere with modals
-     */
-    async changePageSize(newPageSize) {
-      if (this.showTransactionModal || this.showImportProgressModal) {
-        console.log("Modal is open, preventing page size change");
+
+    changeSalesByItemPageSize(newPageSize) {
+      if (this.showProductModal) {
         return;
       }
       
-      await this.loadTransactionHistory(1, newPageSize);
-    },
-    
-    /**
-     * Refresh all data - FIXED to not interfere with modals
-     */
-    async refreshData() {
-      if (this.showTransactionModal || this.showImportProgressModal) {
-        console.log("Modal is open, preventing data refresh");
-        return;
-      }
-
-      try {
-        this.error = null; // Clear any previous errors
-        
-        await Promise.all([
-          this.loadTransactionHistory(this.pagination.current_page, this.pagination.page_size),
-          this.getTopItems(),
-          this.getTopChartItems()
-        ]);
-        
-        // Connection health tracking - SUCCESS
-        this.connectionLost = false;
-        this.consecutiveErrors = 0;
-        this.lastSuccessfulLoad = Date.now();
-        
-        console.log('✅ Data refresh completed successfully');
-        
-      } catch (error) {
-        console.error('❌ Error refreshing data:', error);
-        
-        // Handle connection errors
-        this.consecutiveErrors++;
-        this.error = `Failed to refresh data: ${error.message}`;
-        
-        if (this.consecutiveErrors >= 3) {
-          this.connectionLost = true;
-          console.log('Connection marked as lost after 3 consecutive errors');
-        }
-      }
+      this.salesByItemPagination.page_size = newPageSize;
+      this.salesByItemPagination.current_page = 1;
+      this.updateSalesByItemPageData();
     },
 
     // ================================================================
-    // MODAL METHODS - FIXED
+    // MODAL METHODS
     // ================================================================
     
-    /**
-     * View transaction details - FIXED to handle proper data structure
-     */
-    viewTransaction(transaction) {
-      console.log('=== VIEW TRANSACTION DEBUG ===');
-      console.log('1. Transaction received:', transaction);
-      console.log('2. Item list:', transaction.item_list);
-      
+    viewProductDetails(product) {
       try {
-        // FORCE close any other modals first
-        this.showImportProgressModal = false;
-        this.selectedTransactionData = null;
+        this.selectedProductData = {
+          id: product.id,
+          name: product.product,
+          category: product.category,
+          stock: product.stock,
+          unit: product.unit,
+          items_sold: product.items_sold,
+          total_sales: this.formatCurrency(product.total_sales),
+          selling_price: this.formatCurrency(product.selling_price),
+          sku: product.sku || 'N/A',
+          is_taxable: product.is_taxable ? 'Yes' : 'No'
+        };
         
-        // Calculate total quantity and get unit price from item_list
-        let totalQuantity = 0;
-        let unitPrice = 0;
-        let itemNames = [];
-        
-        if (transaction.item_list && Array.isArray(transaction.item_list)) {
-          transaction.item_list.forEach(item => {
-            if (item.quantity) {
-              totalQuantity += parseFloat(item.quantity) || 0;
-            }
-            if (item.unit_price && unitPrice === 0) {
-              // Use the first item's unit price, or you could calculate average
-              unitPrice = parseFloat(item.unit_price) || 0;
-            }
-            if (item.item_name) {
-              itemNames.push(`${item.item_name} (${item.quantity || 0})`);
-            }
-          });
-        }
-        
-        console.log('3. Calculated totalQuantity:', totalQuantity);
-        console.log('4. Calculated unitPrice:', unitPrice);
-        console.log('5. Item names:', itemNames);
-        
-        // Force Vue to update the DOM
-        this.$nextTick(() => {
-          // Set the selected transaction with proper data mapping
-          this.selectedTransactionData = {
-            item_name: itemNames.length > 0 ? itemNames.join(', ') : 'No items',
-            total_amount: this.formatCurrency(transaction.total_amount),
-            total_quantity: totalQuantity || 'N/A',
-            unit_price: unitPrice > 0 ? this.formatCurrency(unitPrice) : 'N/A',
-            latest_transaction_date: this.formatDate(transaction.transaction_date),
-            _original: transaction // Keep original data for reference
-          };
-          
-          console.log('6. Final selectedTransactionData:', this.selectedTransactionData);
-          
-          // Show the modal
-          this.showTransactionModal = true;
-          console.log('7. Modal state set to:', this.showTransactionModal);
-          
-          // Force another update
-          this.$forceUpdate();
-        });
-        
+        this.showProductModal = true;
       } catch (error) {
-        console.error('❌ Error in viewTransaction:', error);
-        this.showError('Failed to display transaction details');
-      }
-    },
-    
-    /**
-     * Close transaction view modal - ENHANCED
-     */
-    closeTransactionModal() {
-      console.log('Closing transaction modal...');
-      this.showTransactionModal = false;
-      this.selectedTransactionData = null;
-      
-      // Force update to ensure DOM changes
-      this.$nextTick(() => {
-        console.log('Transaction modal closed, state:', this.showTransactionModal);
-      });
-    },
-    
-    /**
-     * Edit transaction (placeholder)
-     */
-    editTransaction(transaction) {
-      console.log('Edit transaction called with:', transaction);
-      this.closeTransactionModal();
-      
-      // TODO: Implement edit functionality
-      this.showSuccess('Edit functionality not implemented yet');
-    },
-
-    // ================================================================
-    // IMPORT/EXPORT METHODS
-    // ================================================================
-    
-    /**
-     * Import data using CSV bulk import with progress modal
-     */
-    async importData() {
-      try {
-        const fileInput = document.createElement('input');
-        fileInput.type = 'file';
-        fileInput.accept = '.csv';
-        fileInput.style.display = 'none';
-        
-        fileInput.addEventListener('change', async (event) => {
-          const file = event.target.files[0];
-          if (!file) return;
-          
-          this.showImportProgressModal = true;
-          this.importing = true;
-          this.importProgress = 0;
-          this.importStep = 'uploading';
-          this.importStatusText = 'Preparing upload...';
-          this.importResult = null;
-          this.importError = null;
-          
-          try {
-            const result = await SalesAPIService.bulkImportCSV(file, (progress) => {
-              this.importProgress = progress;
-              this.importStatusText = `Uploading file... ${Math.round(progress)}%`;
-              
-              if (progress === 100) {
-                this.importStep = 'processing';
-                this.importStatusText = 'Processing CSV data...';
-              }
-            });
-            
-            this.importResult = result;
-            this.importProgress = 100;
-            this.importStatusText = 'Import completed successfully!';
-            
-            await this.refreshData();
-            
-          } catch (error) {
-            console.error('Import failed:', error);
-            this.importError = error.message;
-            this.importProgress = 0;
-            this.importStatusText = 'Import failed';
-          } finally {
-            this.importing = false;
-            document.body.removeChild(fileInput);
-          }
-        });
-        
-        document.body.appendChild(fileInput);
-        fileInput.click();
-        
-      } catch (error) {
-        console.error('Error setting up import:', error);
-        this.showError('Failed to start import process');
-      }
-    },
-    
-    /**
-     * Export data to CSV
-     */
-    async exportData() {
-      try {
-        this.exporting = true;
-        
-        const success = await SalesAPIService.exportTransactions({});
-        
-        if (success) {
-          this.showSuccess('Export completed successfully! Check your downloads folder.');
-        } else {
-          throw new Error('Export failed');
-        }
-        
-      } catch (error) {
-        console.error('Export failed:', error);
-        
-        if (error.message.includes('404') || error.message.includes('Not Found')) {
-          this.showError('Export feature is not yet configured on the server. Please contact support.');
-        } else {
-          this.showError(`Export failed: ${error.message}`);
-        }
-      } finally {
-        this.exporting = false;
+        console.error('Error in viewProductDetails:', error);
+        this.showError('Failed to display product details');
       }
     },
 
-    /**
-     * Close import modal
-     */
-    closeImportProgressModal() {
-      if (!this.importing) {
-        this.showImportProgressModal = false;
-        this.importProgress = 0;
-        this.importResult = null;
-        this.importError = null;
-      }
+    closeProductModal() {
+      this.showProductModal = false;
+      this.selectedProductData = null;
     },
 
     // ================================================================
     // FORMATTING METHODS
     // ================================================================
     
-    /**
-     * Format items list for display - FIXED for actual data structure
-     */
-    formatItemsList(itemList) {
-      if (!itemList || !Array.isArray(itemList)) return 'No items';
-      
-      return itemList
-        .filter(item => item && item.item_name)
-        .map(item => {
-          const quantity = item.quantity ? ` (${item.quantity})` : '';
-          return `${item.item_name}${quantity}`;
-        })
-        .join(', ') || 'No items';
-    },
-    
-    /**
-     * Format date for display
-     */
-    formatDate(dateString) {
-      if (!dateString) return 'Unknown';
-      
-      try {
-        const date = new Date(dateString);
-        if (isNaN(date.getTime())) return 'Invalid date';
-        
-        return date.toLocaleString('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-      } catch (error) {
-        console.error('Error formatting date:', error);
-        return 'Invalid date';
-      }
-    },
-    
-    /**
-     * Format payment method for display
-     */
-    formatPaymentMethod(method) {
-      if (!method) return 'Unknown';
-      
-      const methodMap = {
-        'cash': 'Cash',
-        'card': 'Card',
-        'credit_card': 'Credit Card',
-        'debit_card': 'Debit Card',
-        'gcash': 'GCash',
-        'paymaya': 'PayMaya',
-        'bank_transfer': 'Bank Transfer',
-        'online': 'Online Payment'
-      };
-      
-      return methodMap[method.toLowerCase()] || 
-             method.charAt(0).toUpperCase() + method.slice(1).toLowerCase();
-    },
-    
-    /**
-     * Format sales type for display
-     */
-    formatSalesType(type) {
-      if (!type) return 'Unknown';
-      
-      const typeMap = {
-        'dine_in': 'Dine-in',
-        'takeout': 'Takeout',
-        'delivery': 'Delivery',
-        'online': 'Online',
-        'pickup': 'Pickup'
-      };
-      
-      return typeMap[type.toLowerCase()] || 
-             type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
-    },
-    
-    /**
-     * Format currency amount
-     */
     formatCurrency(amount) {
       let numericAmount = amount;
       
@@ -1311,76 +967,55 @@ export default {
         maximumFractionDigits: 2
       })}`;
     },
-    
-    /**
-     * Get CSS class for payment method badge
-     */
-    getPaymentMethodClass(method) {
-      const classMap = {
-        'cash': 'badge-success',
-        'card': 'badge-primary',
-        'credit_card': 'badge-primary',
-        'debit_card': 'badge-info',
-        'gcash': 'badge-warning',
-        'paymaya': 'badge-info',
-        'bank_transfer': 'badge-secondary',
-        'online': 'badge-dark'
-      };
-      
-      return classMap[method?.toLowerCase()] || 'badge-secondary';
-    },
-    
-    /**
-     * Get CSS class for sales type badge
-     */
-    getSalesTypeClass(type) {
-      const classMap = {
-        'dine_in': 'badge-success',
-        'takeout': 'badge-warning',
-        'delivery': 'badge-info',
-        'online': 'badge-primary',
-        'pickup': 'badge-secondary'
-      };
-      
-      return classMap[type?.toLowerCase()] || 'badge-secondary';
-    },
 
     // ================================================================
     // UTILITY METHODS
     // ================================================================
     
-    /**
-     * Show success message
-     */
     showSuccess(message) {
-      console.log('Success:', message);
-      alert(message); // Replace with your notification system
+      alert(message);
     },
-    
-    /**
-     * Show error message
-     */
+
     showError(message) {
       console.error('Error:', message);
-      alert(message); // Replace with your notification system
+      alert(message);
+    },
+
+    async refreshData() {
+      if (this.showProductModal) {
+        return;
+      }
+
+      try {
+        this.error = null;
+        await this.loadAllData();
+        this.connectionLost = false;
+        this.consecutiveErrors = 0;
+        this.lastSuccessfulLoad = Date.now();
+      } catch (error) {
+        console.error('Error refreshing data:', error);
+        this.consecutiveErrors++;
+        this.error = `Failed to refresh data: ${error.message}`;
+
+        if (this.consecutiveErrors >= 3) {
+          this.connectionLost = true;
+        }
+      }
     },
 
     toggleAutoRefresh() {
       if (this.autoRefreshEnabled) {
         this.autoRefreshEnabled = false
         this.stopAutoRefresh()
-        console.log('Auto-refresh disabled by user')
       } else {
         this.autoRefreshEnabled = true
         this.startAutoRefresh()
-        console.log('Auto-refresh enabled by user')
       }
     },
     
     startAutoRefresh() {
-      this.stopAutoRefresh() // Clear any existing timers
+      this.stopAutoRefresh()
       
-      // Start countdown
       this.countdown = this.autoRefreshInterval / 1000
       this.countdownTimer = setInterval(() => {
         this.countdown--
@@ -1389,43 +1024,35 @@ export default {
         }
       }, 1000)
       
-      // Start auto-refresh timer
       this.autoRefreshTimer = setInterval(() => {
-        this.refreshData() // Use your existing refresh method
+        this.refreshData()
       }, this.autoRefreshInterval)
-      
-      console.log(`Auto-refresh started (${this.autoRefreshInterval / 1000}s interval)`)
     },
-    
+
     stopAutoRefresh() {
       if (this.autoRefreshTimer) {
         clearInterval(this.autoRefreshTimer)
         this.autoRefreshTimer = null
       }
-      
+
       if (this.countdownTimer) {
         clearInterval(this.countdownTimer)
         this.countdownTimer = null
       }
-      
-      console.log('Auto-refresh stopped')
     },
 
-    // Emergency reconnect method
     async emergencyReconnect() {
-      console.log('Emergency reconnect initiated')
       this.consecutiveErrors = 0
       this.connectionLost = false
       this.error = null
       await this.refreshData()
-      
+
       if (!this.autoRefreshEnabled) {
         this.autoRefreshEnabled = true
         this.startAutoRefresh()
       }
     },
 
-    // Connection status methods
     getConnectionStatus() {
       if (this.connectionLost) return 'connection-lost'
       if (this.consecutiveErrors > 0) return 'connection-unstable'
@@ -1450,7 +1077,6 @@ export default {
         default: return 'Connecting...'
       }
     }
-
   }
 }
 </script>
@@ -1479,7 +1105,7 @@ export default {
 .divider {
   width: 2px;
   height: 100%;
-  background-color: #e5e7eb;
+  background-color: var(--border-primary);
   justify-self: center;
 }
 
@@ -1488,21 +1114,22 @@ export default {
 /* ====================================================================== */
 .LCL1 {
   display: flex;
-  align-items: baseline;
-  gap: 250px;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.LCL1 h1, .LCL1 h3 {
+.LCL1 h1,
+.LCL1 h3 {
   margin: 0;
 }
 
 .LCL1 h3 {
-  color: grey;
+  color: var(--text-secondary);
   font-size: 20px;
 }
 
 .LCL1 h1 {
-  color: black;
+  color: var(--text-primary);
   font-size: 30px;
   font-weight: bold;
 }
@@ -1518,7 +1145,7 @@ export default {
 }
 
 .LCL2 li {
-  color: black;
+  color: var(--text-primary);
   height: 30px;
   margin-bottom: 20px;
 }
@@ -1527,25 +1154,31 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: black;
+  width: 100%;
   margin-bottom: 8px;
   height: 30px;
   padding: 0 10px;
 }
 
 .item-name {
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 25px;
+  flex: 1;
+  color: var(--text-primary);
 }
 
 .item-price {
   font-weight: bold;
+  white-space: nowrap;
+  font-size: 15px;
+  color: var(--success, #16a34a);
 }
 
 /* ====================================================================== */
 /* CHART SECTION */
 /* ====================================================================== */
 .RC-SBI {
-  color: black;
+  color: var(--text-primary);
 }
 
 .RC-SBI h1 {
@@ -1565,24 +1198,23 @@ export default {
 
 .frequency-dropdown {
   padding: 8px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
-  background-color: white;
+  background-color: var(--surface-primary);
   font-size: 14px;
-  color: #6b7280;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
 .frequency-dropdown:focus {
   outline: none;
-  border-color: #3b82f6;
+  border-color: var(--primary);
 }
 
 .chart-container {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 150px;
   width: 500px;
   height: 100%;
 }
@@ -1598,14 +1230,14 @@ export default {
 
 .chart-loading p {
   margin-top: 10px;
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 /* ====================================================================== */
 /* TRANSACTION SECTION */
 /* ====================================================================== */
 .BottomContainer {
-  color: black;
+  color: var(--text-primary);
   width: 100%;
   margin-top: 40px;
 }
@@ -1616,7 +1248,7 @@ export default {
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 20px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .transaction-header h1 {
@@ -1649,7 +1281,7 @@ export default {
 /* TABLE STYLES */
 /* ====================================================================== */
 .table-container {
-  background: white;
+  background: var(--surface-primary);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   overflow: hidden;
@@ -1661,51 +1293,34 @@ export default {
 }
 
 .table thead th {
-  background-color: #567cdc;
+  background-color: var(--primary);
   font-weight: 600;
-  color: white;
-  border-bottom: 2px solid #e5e7eb;
+  color: #ffffff;
+  border-bottom: 2px solid var(--border-primary);
   padding: 12px;
 }
 
 .table tbody td {
   padding: 12px;
   vertical-align: middle;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--border-secondary, #f3f4f6);
+  color: var(--text-primary);
 }
 
 .table tbody tr:hover {
-  background-color: #f9fafb;
+  background-color: var(--state-hover, #f9fafb);
 }
 
 .id-column {
   font-family: monospace;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-secondary);
   cursor: help;
-}
-
-.items-column {
-  max-width: 200px;
-}
-
-.items-list {
-  display: inline-block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.customer-column {
-  font-family: monospace;
-  font-size: 12px;
-  color: #6b7280;
 }
 
 .total-amount {
   font-weight: bold;
-  color: #059669;
+  color: var(--success, #059669);
 }
 
 .badge {
@@ -1713,15 +1328,33 @@ export default {
   padding: 4px 8px;
   border-radius: 12px;
   font-weight: 500;
-  color: white;
+  color: #ffffff;
 }
 
-.badge-success { background-color: #059669; }
-.badge-primary { background-color: #3b82f6; }
-.badge-info { background-color: #06b6d4; }
-.badge-warning { background-color: #eab308; color: #374151; }
-.badge-secondary { background-color: #6b7280; }
-.badge-dark { background-color: #374151; }
+.badge-success {
+  background-color: #059669;
+}
+
+.badge-primary {
+  background-color: #3b82f6;
+}
+
+.badge-info {
+  background-color: #06b6d4;
+}
+
+.badge-warning {
+  background-color: #eab308;
+  color: #374151;
+}
+
+.badge-secondary {
+  background-color: #6b7280;
+}
+
+.badge-dark {
+  background-color: #374151;
+}
 
 .action-buttons {
   display: flex;
@@ -1739,7 +1372,7 @@ export default {
 }
 
 .action-btn:hover:not(:disabled) {
-  background-color: #f3f4f6;
+  background-color: var(--state-hover, #f3f4f6);
 }
 
 .action-btn:disabled {
@@ -1761,7 +1394,7 @@ export default {
 
 .loading-state p {
   margin-top: 16px;
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .loading-state-small {
@@ -1775,7 +1408,7 @@ export default {
 
 .loading-state-small p {
   margin-top: 8px;
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .empty-state {
@@ -1789,7 +1422,7 @@ export default {
 
 .empty-state p {
   margin: 16px 0;
-  color: #6b7280;
+  color: var(--text-secondary);
   font-size: 16px;
 }
 
@@ -1804,7 +1437,7 @@ export default {
 
 .empty-state-small p {
   margin: 8px 0;
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 /* ====================================================================== */
@@ -1812,8 +1445,8 @@ export default {
 /* ====================================================================== */
 .pagination-container {
   padding: 20px;
-  border-top: 1px solid #e5e7eb;
-  background-color: #f9fafb;
+  border-top: 1px solid var(--border-primary);
+  background-color: var(--surface-secondary, #f9fafb);
 }
 
 .pagination-header {
@@ -1830,7 +1463,7 @@ export default {
 }
 
 .pagination-text {
-  color: #6b7280;
+  color: var(--text-secondary);
   font-size: 14px;
   text-align: right;
 }
@@ -1844,7 +1477,7 @@ export default {
 
 .page-size-selector label {
   font-size: 14px;
-  color: #6b7280;
+  color: var(--text-secondary);
   margin: 0;
   white-space: nowrap;
 }
@@ -1853,9 +1486,11 @@ export default {
   width: auto;
   min-width: 70px;
   padding: 4px 8px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
   font-size: 13px;
+  background: var(--surface-primary);
+  color: var(--text-primary);
 }
 
 .pagination {
@@ -1872,37 +1507,37 @@ export default {
 }
 
 .page-link {
-  color: #6b7280;
-  border: 1px solid #d1d5db;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-primary);
   padding: 6px 12px;
   text-decoration: none;
-  background: white;
+  background: var(--surface-primary);
   cursor: pointer;
   border-radius: 4px;
   font-size: 14px;
 }
 
 .page-link:hover {
-  color: #374151;
-  background-color: #f3f4f6;
-  border-color: #d1d5db;
+  color: var(--text-primary);
+  background-color: var(--state-hover, #f3f4f6);
+  border-color: var(--border-primary);
 }
 
 .page-item.active .page-link {
-  background-color: #3b82f6;
-  border-color: #3b82f6;
-  color: white;
+  background-color: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
 }
 
 .page-item.disabled .page-link {
-  color: #9ca3af;
-  background-color: #f9fafb;
-  border-color: #e5e7eb;
+  color: var(--text-tertiary, #9ca3af);
+  background-color: var(--surface-secondary, #f9fafb);
+  border-color: var(--border-primary);
   cursor: not-allowed;
 }
 
 /* ====================================================================== */
-/* MODAL STYLES - ENHANCED */
+/* MODAL STYLES */
 /* ====================================================================== */
 .modal-overlay {
   position: fixed;
@@ -1911,7 +1546,7 @@ export default {
   right: 0;
   bottom: 0;
   background-color: rgba(0, 0, 0, 0.5);
-  display: flex !important; /* Force display */
+  display: flex !important;
   justify-content: center;
   align-items: center;
   z-index: 9999;
@@ -1920,7 +1555,7 @@ export default {
 }
 
 .modal-content {
-  background: white;
+  background: var(--surface-primary);
   border-radius: 12px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
   max-width: 600px;
@@ -1930,8 +1565,6 @@ export default {
   position: relative;
   z-index: 10000;
   animation: modalFadeIn 0.3s ease-out;
-  
-  /* Ensure modal is always visible when shown */
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: auto !important;
@@ -1953,15 +1586,16 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 20px 24px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border-primary);
   margin: 0;
 }
 
-.modal-header h2, .modal-header h3 {
+.modal-header h2,
+.modal-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #374151;
+  color: var(--text-primary);
 }
 
 .modal-close {
@@ -1969,7 +1603,7 @@ export default {
   border: none;
   font-size: 24px;
   cursor: pointer;
-  color: #6b7280;
+  color: var(--text-secondary);
   padding: 0;
   width: 32px;
   height: 32px;
@@ -1981,7 +1615,7 @@ export default {
 }
 
 .modal-close:hover {
-  background-color: #f3f4f6;
+  background-color: var(--state-hover, #f3f4f6);
 }
 
 .modal-close:disabled {
@@ -1995,7 +1629,7 @@ export default {
 
 .modal-footer {
   padding: 16px 24px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--border-primary);
   display: flex;
   justify-content: flex-end;
   gap: 12px;
@@ -2011,18 +1645,18 @@ export default {
 }
 
 .detail-section {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
   padding: 16px;
-  background-color: #f9fafb;
+  background-color: var(--surface-secondary, #f9fafb);
 }
 
 .detail-section h4 {
   margin: 0 0 16px 0;
   font-size: 16px;
   font-weight: 600;
-  color: #374151;
-  border-bottom: 1px solid #e5e7eb;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-primary);
   padding-bottom: 8px;
 }
 
@@ -2031,7 +1665,7 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 8px 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--border-secondary, #f3f4f6);
 }
 
 .detail-row:last-child {
@@ -2040,66 +1674,25 @@ export default {
 
 .detail-row strong {
   min-width: 140px;
-  color: #374151;
+  color: var(--text-primary);
   font-weight: 500;
 }
 
 .detail-value {
-  color: #6b7280;
+  color: var(--text-secondary);
   text-align: right;
   max-width: 60%;
   word-wrap: break-word;
 }
 
 .detail-value.total-highlight {
-  color: #059669;
+  color: var(--success, #059669);
   font-weight: bold;
   font-size: 16px;
 }
 
-/* Item Breakdown Styles */
-.item-breakdown {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid #e5e7eb;
-}
-
-.item-breakdown h5 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: #374151;
-}
-
-.item-detail {
-  margin-bottom: 8px;
-}
-
-.item-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 8px;
-  background-color: #f9fafb;
-  border-radius: 4px;
-  border-left: 3px solid #3b82f6;
-}
-
-.item-detail-name {
-  font-weight: 500;
-  color: #374151;
-  flex: 1;
-}
-
-.item-detail-info {
-  font-size: 13px;
-  color: #6b7280;
-  font-family: monospace;
-  text-align: right;
-}
-
 /* ====================================================================== */
-/* IMPORT MODAL STYLES */
+/* IMPORT / PROGRESS UTILITIES */
 /* ====================================================================== */
 .progress-section {
   margin-bottom: 24px;
@@ -2114,25 +1707,25 @@ export default {
 
 .progress-info span {
   font-size: 14px;
-  color: #374151;
+  color: var(--text-primary);
 }
 
 .progress-percentage {
   font-weight: 600;
-  color: #3b82f6;
+  color: var(--primary);
 }
 
 .progress-bar {
   width: 100%;
   height: 8px;
-  background-color: #e5e7eb;
+  background-color: var(--border-primary);
   border-radius: 4px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background-color: #3b82f6;
+  background-color: var(--primary);
   border-radius: 4px;
   transition: width 0.3s ease;
   background-image: linear-gradient(
@@ -2158,91 +1751,6 @@ export default {
   }
 }
 
-.import-results {
-  margin-top: 20px;
-}
-
-.import-results h4 {
-  margin: 0 0 16px 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: #374151;
-}
-
-.result-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.result-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-radius: 6px;
-  background-color: #f9fafb;
-  font-size: 14px;
-}
-
-.result-item.success {
-  background-color: #f0fdf4;
-  color: #166534;
-}
-
-.result-item.error {
-  background-color: #fef2f2;
-  color: #dc2626;
-}
-
-.warnings-section {
-  margin-top: 16px;
-}
-
-.warnings-section h5 {
-  margin: 0 0 8px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: #d97706;
-}
-
-.warnings-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.warnings-list li {
-  padding: 8px 12px;
-  background-color: #fffbeb;
-  border-left: 4px solid #f59e0b;
-  margin-bottom: 4px;
-  font-size: 13px;
-  color: #92400e;
-}
-
-.error-section {
-  margin-top: 20px;
-}
-
-.error-section h4 {
-  margin: 0 0 12px 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: #dc2626;
-}
-
-.error-message {
-  padding: 12px;
-  background-color: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-  color: #dc2626;
-  font-size: 14px;
-  margin: 0;
-}
-
 /* ====================================================================== */
 /* BUTTON STYLES */
 /* ====================================================================== */
@@ -2265,35 +1773,35 @@ export default {
 }
 
 .btn-primary {
-  background-color: #3b82f6;
-  color: white;
+  background-color: var(--primary);
+  color: #ffffff;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background-color: #2563eb;
+  background-color: var(--primary-dark, #2563eb);
 }
 
 .btn-secondary {
-  background-color: #6b7280;
-  color: white;
+  background-color: var(--secondary, #6b7280);
+  color: #ffffff;
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background-color: #4b5563;
+  background-color: var(--secondary-dark, #4b5563);
 }
 
 .btn-success {
-  background-color: #10b981;
-  color: white;
+  background-color: var(--success, #10b981);
+  color: #ffffff;
 }
 
 .btn-success:hover:not(:disabled) {
-  background-color: #059669;
+  background-color: var(--success-dark, #059669);
 }
 
 .btn-warning {
   background-color: #f59e0b;
-  color: white;
+  color: #ffffff;
 }
 
 .btn-warning:hover:not(:disabled) {
@@ -2390,16 +1898,16 @@ export default {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #f0fdf4;
+  background: var(--success-soft, #f0fdf4);
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
-  border: 1px solid #bbf7d0;
+  border: 1px solid var(--success-light, #bbf7d0);
   min-width: 280px;
 }
 
 .status-text {
   font-size: 0.875rem;
-  color: #16a34a;
+  color: var(--success-dark, #16a34a);
   font-weight: 500;
   flex: 1;
 }
@@ -2439,12 +1947,6 @@ export default {
   color: #64748b;
 }
 
-.btn-sm {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.8125rem;
-  border-radius: 0.25rem;
-}
-
 .btn-outline-secondary {
   color: #6c757d;
   border: 1px solid #6c757d;
@@ -2475,27 +1977,79 @@ export default {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .auto-refresh-status {
-    flex-direction: column;
-    text-align: center;
-    gap: 0.25rem;
-    min-width: auto;
+  from {
+    transform: rotate(0deg);
   }
-
-  .connection-indicator {
-    order: -1;
-  }
-  
-  .header-actions {
-    flex-wrap: wrap;
-    gap: 0.5rem;
+  to {
+    transform: rotate(360deg);
   }
 }
 
+/* Extra helpers */
+.low-stock {
+  color: #d97706;
+  font-weight: bold;
+}
+
+.critical-stock {
+  color: #dc2626;
+  font-weight: bold;
+  background-color: #fef2f2;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.product-column {
+  font-weight: 500;
+  max-width: 200px;
+}
+
+.product-column span {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  cursor: help;
+}
+
+.category-column .badge {
+  font-size: 11px;
+}
+
+.stock-column,
+.sold-column {
+  text-align: center;
+  font-weight: 500;
+}
+
+.sales-column,
+.price-column {
+  text-align: right;
+  font-weight: bold;
+}
+
+.actions-column {
+  text-align: center;
+}
+
+.actions-column .btn-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.date-range-info {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.date-range-info i {
+  margin-right: 4px;
+}
 </style>

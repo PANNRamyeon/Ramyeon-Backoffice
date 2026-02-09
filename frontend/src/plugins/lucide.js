@@ -1,5 +1,6 @@
 import { 
   Plus, 
+  RotateCcw,
   Download, 
   RefreshCw, 
   Edit, 
@@ -22,12 +23,15 @@ import {
   Filter,
   Settings,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ChevronUp,
+  DollarSign
 } from 'lucide-vue-next'
 
 export default {
   install(app) {
     app.component('Plus', Plus)
+    app.component('RotateCcw', RotateCcw)
     app.component('Download', Download)
     app.component('RefreshCw', RefreshCw)
     app.component('Edit', Edit)
@@ -51,5 +55,7 @@ export default {
     app.component('CheckCircle', CheckCircle)
     app.component('ChevronLeft', ChevronLeft)
     app.component('ChevronRight', ChevronRight)
+    app.component('ChevronUp', ChevronUp)
+    app.component('DollarSign', DollarSign)
   }
 }

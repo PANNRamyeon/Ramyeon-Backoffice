@@ -68,7 +68,6 @@ export default {
   },
   methods: {
     updateChart() {
-      console.log('Updating chart for frequency:', this.selectedFrequency);
       // Here you would typically fetch new data based on selectedFrequency
     },
     highlightCategory(categoryKey) {

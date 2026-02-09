@@ -1,9 +1,15 @@
 import re 
-from bson import ObjectId
 from datetime import datetime
 from ..database import db_manager
 from ..models import Product
 from notifications.services import notification_service
+from .batch_service import BatchService
+import pandas as pd
+import logging
+import csv
+from io import StringIO
+
+logger = logging.getLogger(__name__)
 
 class ProductService:
     def __init__(self):
@@ -12,40 +18,129 @@ class ProductService:
         self.category_collection = self.db.category
         self.supplier_collection = self.db.suppliers
         self.branch_collection = self.db.branches
-    
-    def convert_object_id(self, document):
-        """Convert ObjectId to string for JSON serialization"""
-        if document and '_id' in document:
-            document['_id'] = str(document['_id'])
-        # Convert other ObjectId fields
-        for field in ['category_id', 'supplier_id', 'branch_id']:
-            if document and field in document and isinstance(document[field], ObjectId):
-                document[field] = str(document[field])
-        return document
-    
+        self.batch_service = BatchService()
+        
     def validate_foreign_keys(self, product_data):
-        """Validate that foreign key references exist"""
-        # Validate category_id
+        """Validate that foreign key references exist - using string IDs"""
+        # Validate category_id (string-based lookup)
         if 'category_id' in product_data and product_data['category_id']:
-            if ObjectId.is_valid(product_data['category_id']):
-                category = self.category_collection.find_one({'_id': ObjectId(product_data['category_id'])})
-                if not category:
-                    raise ValueError(f"Category with ID {product_data['category_id']} not found")
+            category = self.category_collection.find_one({'_id': product_data['category_id']})
+            if not category:
+                raise ValueError(f"Category with ID {product_data['category_id']} not found")
         
-        # Validate supplier_id
+        # Validate supplier_id (expecting SUPP-### format)
         if 'supplier_id' in product_data and product_data['supplier_id']:
-            if ObjectId.is_valid(product_data['supplier_id']):
-                supplier = self.supplier_collection.find_one({'_id': ObjectId(product_data['supplier_id'])})
-                if not supplier:
-                    raise ValueError(f"Supplier with ID {product_data['supplier_id']} not found")
+            supplier = self.supplier_collection.find_one({'_id': product_data['supplier_id']})
+            if not supplier:
+                raise ValueError(f"Supplier with ID {product_data['supplier_id']} not found")
         
-        # Validate branch_id
+        # Validate branch_id (string-based lookup)
         if 'branch_id' in product_data and product_data['branch_id']:
-            if ObjectId.is_valid(product_data['branch_id']):
-                branch = self.branch_collection.find_one({'_id': ObjectId(product_data['branch_id'])})
-                if not branch:
-                    raise ValueError(f"Branch with ID {product_data['branch_id']} not found")
+            branch = self.branch_collection.find_one({'_id': product_data['branch_id']})
+            if not branch:
+                raise ValueError(f"Branch with ID {product_data['branch_id']} not found")
     
+    def _send_product_notification(self, action_type, product_name, product_id=None, additional_metadata=None):
+        """Centralized notification helper for product actions"""
+        try:
+            titles = {
+                'created': "New Product Added",
+                'updated': "Product Updated",
+                'stock_updated': "Stock Updated", 
+                'stock_low': "Low Stock Alert",
+                'stock_out': "Out of Stock Alert",
+                'soft_deleted': "Product Deleted",
+                'hard_deleted': "Product Permanently Deleted", 
+                'restored': "Product Restored",
+                'bulk_created': "Bulk Products Created",
+                'bulk_stock_updated': "Bulk Stock Updated",
+                'import_completed': "Product Import Completed"
+            }
+            
+            messages = {
+                'created': f"Product '{product_name}' has been added to the system",
+                'updated': f"Product '{product_name}' has been updated",
+                'stock_updated': f"Stock updated for product '{product_name}'",
+                'stock_low': f"Low stock warning for product '{product_name}'",
+                'stock_out': f"Product '{product_name}' is out of stock",
+                'soft_deleted': f"Product '{product_name}' has been moved to trash",
+                'hard_deleted': f"Product '{product_name}' has been permanently removed",
+                'restored': f"Product '{product_name}' has been restored from trash",
+                'bulk_created': f"Bulk product creation completed",
+                'bulk_stock_updated': f"Bulk stock update completed", 
+                'import_completed': f"Product import completed"
+            }
+            
+            # Use custom message if provided, otherwise use default
+            if additional_metadata and 'custom_message' in additional_metadata:
+                message = additional_metadata['custom_message']
+            else:
+                message = messages.get(action_type, f"Product action '{action_type}' completed for '{product_name}'")
+            
+            # Set priority and notification type based on action
+            if action_type == 'stock_out':
+                priority = "high"
+                notification_type = "alert"
+            elif action_type in ['stock_low', 'hard_deleted']:
+                priority = "medium" 
+                notification_type = "alert"
+            elif action_type in ['soft_deleted', 'bulk_created', 'bulk_stock_updated']:
+                priority = "medium"
+                notification_type = "system"
+            else:
+                priority = "low"
+                notification_type = "system"
+            
+            # Base metadata
+            metadata = {
+                "product_id": str(product_id) if product_id else "",
+                "product_name": product_name,
+                "action_type": f"product_{action_type}"
+            }
+            
+            # Add additional metadata if provided
+            if additional_metadata:
+                # Remove custom_message from metadata since we used it for the message
+                filtered_metadata = {k: v for k, v in additional_metadata.items() if k != 'custom_message'}
+                metadata.update(filtered_metadata)
+            
+            notification_service.create_notification(
+                title=titles.get(action_type, "Product Action"),
+                message=message,
+                priority=priority,
+                notification_type=notification_type,
+                metadata=metadata
+            )
+        except Exception as e:
+            logger.error(f"Failed to send product notification: {e}")
+        
+    def generate_product_id(self):
+        """Generate sequential PROD-##### ID"""
+        try:
+            # Get the highest existing product ID number
+            pipeline = [
+                {'$match': {'_id': {'$regex': r'^PROD-\d{5}$'}}},
+                {'$project': {
+                    'id_number': {
+                        '$toInt': {
+                            '$substr': ['$_id', 5, -1]  # Extract number after "PROD-"
+                        }
+                    }
+                }},
+                {'$sort': {'id_number': -1}},
+                {'$limit': 1}
+            ]
+            
+            result = list(self.product_collection.aggregate(pipeline))
+            next_number = (result[0]['id_number'] + 1) if result else 1
+            
+            return f"PROD-{next_number:05d}"
+        
+        except Exception:
+            # Fallback: count all products + 1
+            count = self.product_collection.count_documents({}) + 1
+            return f"PROD-{count:05d}"
+
     def add_sync_log(self, source='cloud', status='synced', details=None):
         """Helper method to create sync log entries"""
         return {
@@ -55,25 +150,36 @@ class ProductService:
             'details': details or {}
         }
     
+    def _ensure_default_category_assignment(self, product_document):
+        """Auto-assign to 'Uncategorized' > 'General' if no category specified"""
+        if not product_document.get('category_id'):
+            product_document['category_id'] = "UNCTGRY-001"
+            product_document['subcategory_name'] = "General"
+            logger.debug(f"Auto-assigned product to Uncategorized > General")
+        
+        # Ensure subcategory_name is set if category is provided
+        if product_document.get('category_id') and not product_document.get('subcategory_name'):
+            product_document['subcategory_name'] = "General"
+            logger.debug(f"Auto-assigned subcategory to General")
+        
+        return product_document
+
     def update_sync_status(self, product_id, sync_status='pending', source='cloud'):
-        """Update sync status for a product - called when data changes"""
+        """Update sync status for a product - using string IDs"""
         try:
-            if not ObjectId.is_valid(product_id):
-                return False
-            
             sync_log = self.add_sync_log(source=source, status=sync_status)
             
             result = self.product_collection.update_one(
-                {'_id': ObjectId(product_id)},
+                {'_id': product_id},
                 {'$push': {'sync_logs': sync_log}}
             )
             
             return result.modified_count > 0
         
         except Exception as e:
-            print(f"Error updating sync status: {str(e)}")
+            logger.error(f"Error updating sync status: {str(e)}")
             return False
-    
+
     def mark_as_synced(self, product_id, source='cloud'):
         """Mark a product as successfully synced"""
         return self.update_sync_status(product_id, sync_status='synced', source=source)
@@ -81,8 +187,6 @@ class ProductService:
     def get_unsynced_products(self, source='local'):
         """Get products that need to be synced from specified source"""
         try:
-            # Find products where the latest sync log is not 'synced' for the specified source
-            # or where there's no sync log for the specified source
             pipeline = [
                 {
                     '$addFields': {
@@ -110,18 +214,18 @@ class ProductService:
             ]
             
             products = list(self.product_collection.aggregate(pipeline))
-            return [self.convert_object_id(product) for product in products]
+            return products
         
         except Exception as e:
             raise Exception(f"Error getting unsynced products: {str(e)}")
     
     def generate_sku(self, product_name, category_id=None):
-        """Generate a unique SKU for the product"""
+        """Generate a unique SKU for the product - string-based category lookup"""
         try:
             # Get category prefix
             category_prefix = "PROD"
-            if category_id and ObjectId.is_valid(category_id):
-                category = self.category_collection.find_one({'_id': ObjectId(category_id)})
+            if category_id:
+                category = self.category_collection.find_one({'_id': category_id})
                 if category:
                     category_prefix = category.get('category_name', 'PROD')[:4].upper()
             
@@ -159,10 +263,24 @@ class ProductService:
             else:
                 return 0.0
     
+    # ================================================================
+    # CORE PRODUCT CRUD OPERATIONS
+    # ================================================================
+    
     def create_product(self, product_data):
-        """Create a new product - ENHANCED WITH DUPLICATE PREVENTION"""
+        """Create a new product with sequential PROD-##### ID"""
         try:
-            print(f"Creating single product: {product_data.get('product_name', 'Unknown')}")
+            logger.info(f"Creating single product: {product_data.get('product_name', 'Unknown')}")
+            
+            # VALIDATION: If stock is provided, cost_price must also be provided
+            initial_stock = int(product_data.get('stock', 0))
+            if initial_stock > 0:
+                cost_price = product_data.get('cost_price')
+                if cost_price is None or float(cost_price) == 0:
+                    raise ValueError("Cost price is required when initial stock is provided")
+            
+            # Generate sequential product ID
+            product_id = self.generate_product_id()
             
             # Validate foreign keys
             self.validate_foreign_keys(product_data)
@@ -175,8 +293,6 @@ class ProductService:
                 )
             
             # ENHANCED DUPLICATE VALIDATION FOR SINGLE PRODUCT
-            
-            # Check if SKU already exists among non-deleted products
             existing_product = self.product_collection.find_one({
                 'SKU': product_data['SKU'], 
                 'isDeleted': {'$ne': True}
@@ -184,7 +300,6 @@ class ProductService:
             if existing_product:
                 raise ValueError(f"Product with SKU '{product_data['SKU']}' already exists")
             
-            # Check if product name already exists (case-insensitive)
             product_name = product_data.get('product_name', '').strip()
             if product_name:
                 existing_name = self.product_collection.find_one({
@@ -194,74 +309,94 @@ class ProductService:
                 if existing_name:
                     raise ValueError(f"Product with name '{product_name}' already exists")
             
-            # Convert string IDs to ObjectIds
-            for field in ['category_id', 'supplier_id', 'branch_id']:
-                if field in product_data and product_data[field] and ObjectId.is_valid(product_data[field]):
-                    product_data[field] = ObjectId(product_data[field])
-            
-            # Set default values
+            # Set default values - Create clean product document
             current_time = datetime.utcnow()
-            product_data.update({
-                'date_received': product_data.get('date_received', current_time),
+            product_document = {
+                '_id': product_id,
+                'product_name': product_data.get('product_name', ''),
+                'category_id': product_data.get('category_id', ''),
+                'subcategory_name': product_data.get('subcategory_name', ''),
+                'SKU': product_data['SKU'],
+                'unit': product_data.get('unit', ''),
+                'stock': initial_stock,  # Use validated initial_stock
+                'low_stock_threshold': int(product_data.get('low_stock_threshold', 10)),
+                'cost_price': float(product_data.get('cost_price', 0)),
+                'selling_price': float(product_data.get('selling_price', 0)),
                 'status': product_data.get('status', 'active'),
                 'is_taxable': product_data.get('is_taxable', True),
-                'isDeleted': False,  # Initialize as not deleted
+                'date_received': product_data.get('date_received', current_time),
+                'isDeleted': False,
                 'created_at': current_time,
-                'updated_at': current_time
-            })
+                'updated_at': current_time,
+                # Batch-related fields for simplified expiry tracking
+                'total_stock': initial_stock,
+                'oldest_batch_expiry': None,
+                'newest_batch_expiry': None,
+                'expiry_alert': False
+            }
             
-            # Initialize sync logs - mark as needing sync since it's a new record
-            product_data['sync_logs'] = [
+            # Add optional fields if present
+            optional_fields = ['expiry_date', 'barcode', 'description', 'supplier_id', 'branch_id']
+            for field in optional_fields:
+                if field in product_data and product_data[field]:
+                    product_document[field] = product_data[field]
+                
+            image_fields = ['image', 'image_url', 'image_filename', 'image_size', 'image_type', 'image_uploaded_at']
+            for field in image_fields:
+                if field in product_data and product_data[field] is not None:
+                    product_document[field] = product_data[field]
+                        
+            # Initialize sync logs
+            product_document['sync_logs'] = [
                 self.add_sync_log(source='cloud', status='pending', details={'action': 'created'})
             ]
             
-            # Ensure numeric fields are properly typed
-            numeric_fields = ['stock', 'low_stock_threshold', 'cost_price', 'selling_price']
-            for field in numeric_fields:
-                if field in product_data:
-                    try:
-                        if field in ['stock', 'low_stock_threshold']:
-                            product_data[field] = int(product_data[field])
-                        else:
-                            product_data[field] = float(product_data[field])
-                    except (ValueError, TypeError):
-                        product_data[field] = 0
+            # AUTO-ASSIGN TO CATEGORY/SUBCATEGORY - SIMPLIFIED
+            product_document = self._ensure_default_category_assignment(product_document)
             
-            # Insert product
-            result = self.product_collection.insert_one(product_data)
-
-            # Return created product
-            created_product = self.product_collection.find_one({'_id': result.inserted_id})
+            # Insert product directly as dict
+            self.product_collection.insert_one(product_document)
             
-             # Create general notification for new products
-            try:
-                product_name = product_data.get("product_name", product_data.get("SKU", "Unknown Product"))
-                
-                notification_service.create_notification(
-                    title="New Product Added",
-                    message=f"A new product '{product_name}' has been added to the system",
-                    priority="low",
-                    notification_type="system",
-                    metadata={
-                        "product_id": str(result.inserted_id),  # Fixed
-                        "SKU": product_data["SKU"],
-                        "product_name": product_name,  # Fixed
-                        "registration_source": "product_creation",
-                        "action_type": "product_created"
-                    }
-                )
-                
-            except Exception as notification_error:
-                # Log the notification error but don't fail the product creation
-                print(f"Failed to create notification for the new product: {notification_error}")
-                # You can add proper logging here instead of print
+            # CREATE INITIAL BATCH IF STOCK WAS PROVIDED
+            initial_batch = None
+            if initial_stock > 0:
+                try:
+                    initial_batch = self._create_initial_batch_if_needed(product_id, product_data)
+                except Exception as batch_error:
+                    # If batch creation fails, log error but don't fail product creation
+                    logger.error(f"Failed to create initial batch for product {product_id}: {str(batch_error)}")
+                    # Optionally: rollback product creation if batch is critical
+                    # self.product_collection.delete_one({'_id': product_id})
+                    # raise batch_error
+            
+            # Get created product
+            created_product = self.product_collection.find_one({'_id': product_id})
+            
+            # Send notification
+            notification_metadata = {
+                "SKU": product_document["SKU"],
+                "category_id": created_product.get('category_id'),
+                "subcategory_name": created_product.get('subcategory_name'),
+                "initial_stock": initial_stock
+            }
+            
+            if initial_batch:
+                notification_metadata["initial_batch_id"] = initial_batch['_id']
+                notification_metadata["initial_batch_created"] = True
+            
+            self._send_product_notification(
+                'created',
+                product_document.get("product_name", product_document.get("SKU", "Unknown Product")),
+                product_id,
+                notification_metadata
+            )
 
-            return self.convert_object_id(created_product)
+            return created_product
         
         except Exception as e:
             raise Exception(f"Error creating product: {str(e)}")
     
-    def get_all_products(self, filters=None, include_deleted=False):
+    def get_all_products(self, filters=None, include_deleted=False, include_images=True):
         """Get all products with optional filters"""
         try:
             query = {}
@@ -270,13 +405,26 @@ class ProductService:
             if not include_deleted:
                 query['isDeleted'] = {'$ne': True}
             
+            # Define projection to exclude image fields if not needed
+            projection = None
+            if not include_images:
+                projection = {
+                    'image': 0,
+                    'image_url': 0,
+                    'image_filename': 0,
+                    'image_size': 0,
+                    'image_type': 0,
+                    'image_uploaded_at': 0
+                }
+            
             if filters:
                 # Category filter
                 if filters.get('category_id'):
-                    if ObjectId.is_valid(filters['category_id']):
-                        query['category_id'] = ObjectId(filters['category_id'])
-                    else:
-                        query['category_id'] = filters['category_id']
+                    query['category_id'] = filters['category_id']
+                
+                # Subcategory filter
+                if filters.get('subcategory_name'):
+                    query['subcategory_name'] = filters['subcategory_name']
                 
                 # Status filter
                 if filters.get('status'):
@@ -298,26 +446,88 @@ class ProductService:
                         {'_id': search_regex}
                     ]
             
-            products = list(self.product_collection.find(query).sort('product_name', 1))
-            return [self.convert_object_id(product) for product in products]
+            # Apply projection if images should be excluded
+            if projection:
+                products = list(self.product_collection.find(query, projection).sort('product_name', 1))
+            else:
+                products = list(self.product_collection.find(query).sort('product_name', 1))
+            
+            # OPTIMIZED: Fetch all batches in ONE query and group by product_id
+            now = datetime.utcnow()
+            batch_collection = self.db.batches
+            
+            # Get all product IDs
+            product_ids = [p['_id'] for p in products]
+            
+            # Fetch all active batches for ALL products in a single query
+            all_batches = list(batch_collection.find({
+                'product_id': {'$in': product_ids},
+                'status': 'active',
+                'quantity_remaining': {'$gt': 0}
+            }))
+            
+            # Group batches by product_id for fast lookup
+            from collections import defaultdict
+            batches_by_product = defaultdict(list)
+            for batch in all_batches:
+                batches_by_product[batch['product_id']].append(batch)
+            
+            # Now enrich each product (no more database queries in the loop!)
+            for product in products:
+                active_batches = batches_by_product.get(product['_id'], [])
+                
+                # Filter out expired batches (handle both datetime and string dates)
+                non_expired_batches = []
+                for batch in active_batches:
+                    expiry_date = batch.get('expiry_date')
+                    if not expiry_date:
+                        # No expiry date, include the batch
+                        non_expired_batches.append(batch)
+                    else:
+                        # Convert to datetime if it's a string
+                        if isinstance(expiry_date, str):
+                            try:
+                                from dateutil import parser
+                                expiry_date = parser.parse(expiry_date)
+                            except Exception:
+                                # If parsing fails, include the batch to be safe
+                                non_expired_batches.append(batch)
+                                continue
+                        
+                        # Check if not expired
+                        if isinstance(expiry_date, datetime) and expiry_date >= now:
+                            non_expired_batches.append(batch)
+                
+                # Calculate total stock from non-expired batches
+                total_stock = sum(batch['quantity_remaining'] for batch in non_expired_batches)
+                product['total_stock'] = total_stock
+                product['stock'] = total_stock  # Keep both fields in sync
+                
+                # Calculate average cost price from non-expired batches
+                if non_expired_batches:
+                    total_cost = sum(
+                        batch.get('cost_price', 0) * batch['quantity_remaining']
+                        for batch in non_expired_batches
+                    )
+                    product['average_cost_price'] = total_cost / total_stock if total_stock > 0 else 0
+                else:
+                    product['average_cost_price'] = product.get('cost_price', 0)
+            
+            return products
         
         except Exception as e:
             raise Exception(f"Error getting products: {str(e)}")
     
     def get_product_by_id(self, product_id, include_deleted=False):
-        """Get product by ID"""
+        """Get product by string ID"""
         try:
-            if not ObjectId.is_valid(product_id):
-                return None
+            query = {'_id': product_id}
             
-            query = {'_id': ObjectId(product_id)}
-            
-            # By default, exclude deleted products unless specifically requested
             if not include_deleted:
                 query['isDeleted'] = {'$ne': True}
             
             product = self.product_collection.find_one(query)
-            return self.convert_object_id(product) if product else None
+            return product
         
         except Exception as e:
             raise Exception(f"Error getting product: {str(e)}")
@@ -327,22 +537,18 @@ class ProductService:
         try:
             query = {'SKU': sku}
             
-            # By default, exclude deleted products unless specifically requested
             if not include_deleted:
                 query['isDeleted'] = {'$ne': True}
             
             product = self.product_collection.find_one(query)
-            return self.convert_object_id(product) if product else None
+            return product
         
         except Exception as e:
             raise Exception(f"Error getting product by SKU: {str(e)}")
     
     def update_product(self, product_id, product_data):
-        """Update product"""
+        """Update product - SIMPLIFIED without complex category sync"""
         try:
-            if not ObjectId.is_valid(product_id):
-                return None
-            
             # Check if product exists and is not deleted
             existing_product = self.get_product_by_id(product_id, include_deleted=False)
             if not existing_product:
@@ -350,11 +556,6 @@ class ProductService:
             
             # Validate foreign keys if they're being updated
             self.validate_foreign_keys(product_data)
-            
-            # Convert string IDs to ObjectIds
-            for field in ['category_id', 'supplier_id', 'branch_id']:
-                if field in product_data and product_data[field] and ObjectId.is_valid(product_data[field]):
-                    product_data[field] = ObjectId(product_data[field])
             
             # Ensure numeric fields are properly typed
             numeric_fields = ['stock', 'low_stock_threshold', 'cost_price', 'selling_price']
@@ -373,7 +574,7 @@ class ProductService:
             
             # Update product (only non-deleted products)
             result = self.product_collection.update_one(
-                {'_id': ObjectId(product_id), 'isDeleted': {'$ne': True}}, 
+                {'_id': product_id, 'isDeleted': {'$ne': True}}, 
                 {'$set': product_data}
             )
             
@@ -381,44 +582,176 @@ class ProductService:
                 # Mark as needing sync since data was updated
                 self.update_sync_status(product_id, sync_status='pending', source='cloud')
                 
-                updated_product = self.product_collection.find_one({'_id': ObjectId(product_id)})
+                updated_product = self.product_collection.find_one({'_id': product_id})
                 
-                # Create notification for product update
-                try:
-                    product_name = updated_product.get("product_name", updated_product.get("SKU", "Unknown Product"))
-                    
-                    notification_service.create_notification(
-                        title="Product Updated",
-                        message=f"Product '{product_name}' has been updated",
-                        priority="low",
-                        notification_type="system",
-                        metadata={
-                            "product_id": str(product_id),
-                            "SKU": updated_product.get("SKU"),
-                            "product_name": product_name,
-                            "update_source": "product_update",
-                            "action_type": "product_updated",
-                            "updated_fields": list(product_data.keys())
-                        }
-                    )
-                except Exception as notification_error:
-                    print(f"Failed to create notification for updated product: {notification_error}")
+                # Send notification
+                product_name = updated_product.get("product_name", updated_product.get("SKU", "Unknown Product"))
                 
-                return self.convert_object_id(updated_product)
+                notification_metadata = {
+                    "SKU": updated_product.get("SKU"),
+                    "updated_fields": list(product_data.keys()),
+                    "category_id": updated_product.get('category_id'),
+                    "subcategory_name": updated_product.get('subcategory_name')
+                }
+                
+                self._send_product_notification(
+                    'updated',
+                    product_name,
+                    product_id,
+                    notification_metadata
+                )
+                
+                return updated_product
             return None
         
         except Exception as e:
             raise Exception(f"Error updating product: {str(e)}")
+
+    def delete_product(self, product_id, hard_delete=False):
+        """Soft delete or hard delete a product"""
+        try:
+            # Get product details before deletion for notification
+            product_to_delete = self.product_collection.find_one({'_id': product_id})
+            if not product_to_delete:
+                return False
+            
+            if hard_delete:
+                # Hard delete - permanently remove from database
+                result = self.product_collection.delete_one({'_id': product_id})
+                
+                if result.deleted_count > 0:
+                    # Send notification for hard deletion
+                    product_name = product_to_delete.get("product_name", product_to_delete.get("SKU", "Unknown Product"))
+                    
+                    self._send_product_notification(
+                        'hard_deleted',
+                        product_name,
+                        product_id,
+                        {
+                            "SKU": product_to_delete.get("SKU"),
+                            "deletion_type": "permanent",
+                            "deleted_at": datetime.utcnow().isoformat(),
+                            "stock_at_deletion": product_to_delete.get("stock", 0)
+                        }
+                    )
+                    
+                    return True
+                return False
+            else:
+                # Soft delete - mark as deleted with timestamp and reason
+                current_time = datetime.utcnow()
+                
+                # Create deletion log entry
+                deletion_log = {
+                    'deleted_at': current_time,
+                    'deleted_by': 'system',  # This could be user ID in the future
+                    'reason': 'Manual deletion'
+                }
+                
+                # Update product to mark as deleted
+                result = self.product_collection.update_one(
+                    {'_id': product_id, 'isDeleted': {'$ne': True}},
+                    {
+                        '$set': {
+                            'isDeleted': True,
+                            'updated_at': current_time,
+                            'deletion_log': deletion_log
+                        }
+                    }
+                )
+                
+                if result.modified_count > 0:
+                    # Mark as needing sync since product was deleted
+                    self.update_sync_status(product_id, sync_status='pending_deletion', source='cloud')
+                    
+                    # Send notification for soft deletion
+                    product_name = product_to_delete.get("product_name", product_to_delete.get("SKU", "Unknown Product"))
+                    
+                    self._send_product_notification(
+                        'soft_deleted',
+                        product_name,
+                        product_id,
+                        {
+                            "SKU": product_to_delete.get("SKU"),
+                            "deletion_type": "soft",
+                            "deleted_at": current_time.isoformat(),
+                            "deleted_by": deletion_log["deleted_by"],
+                            "deletion_reason": deletion_log["reason"],
+                            "stock_at_deletion": product_to_delete.get("stock", 0),
+                            "can_be_restored": True
+                        }
+                    )
+                    
+                    return True
+                
+                return False
+        
+        except Exception as e:
+            raise Exception(f"Error deleting product: {str(e)}")
+
+    def restore_product(self, product_id):
+        """Restore a soft-deleted product"""
+        try:
+            current_time = datetime.utcnow()
+            
+            # Create restoration log entry
+            restoration_log = {
+                'restored_at': current_time,
+                'restored_by': 'system',  # This could be user ID in the future
+                'reason': 'Manual restoration'
+            }
+            
+            # Update product to restore it
+            result = self.product_collection.update_one(
+                {'_id': product_id, 'isDeleted': True},
+                {
+                    '$set': {
+                        'isDeleted': False,
+                        'updated_at': current_time,
+                        'restoration_log': restoration_log
+                    },
+                    '$unset': {
+                        'deletion_log': 1  # Remove deletion log when restoring
+                    }
+                }
+            )
+            
+            if result.modified_count > 0:
+                # Mark as needing sync since product was restored
+                self.update_sync_status(product_id, sync_status='pending', source='cloud')
+                
+                # Get restored product and send notification
+                restored_product = self.product_collection.find_one({'_id': product_id})
+                product_name = restored_product.get("product_name", restored_product.get("SKU", "Unknown Product"))
+                
+                self._send_product_notification(
+                    'restored',
+                    product_name,
+                    product_id,
+                    {
+                        "SKU": restored_product.get("SKU"),
+                        "restored_at": current_time.isoformat(),
+                        "restored_by": restoration_log["restored_by"]
+                    }
+                )
+                
+                return True
+            
+            return False
+        
+        except Exception as e:
+            raise Exception(f"Error restoring product: {str(e)}")
+
+    # ================================================================
+    # STOCK MANAGEMENT WITH BATCH INTEGRATION
+    # ================================================================
     
     def update_stock(self, product_id, stock_data):
         """Update product stock with various operation types"""
         try:
-            if not ObjectId.is_valid(product_id):
-                return None
-            
             # Get current product to access current stock (only non-deleted)
             current_product = self.product_collection.find_one({
-                '_id': ObjectId(product_id),
+                '_id': product_id,
                 'isDeleted': {'$ne': True}
             })
             if not current_product:
@@ -445,7 +778,7 @@ class ProductService:
             if new_stock < 0:
                 raise ValueError("Stock cannot be negative")
             
-            # Create stock history entry (separate from sync logs)
+            # Create stock history entry
             current_time = datetime.utcnow()
             stock_history_entry = {
                 'timestamp': current_time,
@@ -457,14 +790,15 @@ class ProductService:
                 'performed_by': 'system'  # This could be user ID in the future
             }
             
-            # Update the product (only non-deleted products)
+            # Update the product
             update_data = {
                 'stock': new_stock,
+                'total_stock': new_stock,  # Keep both fields in sync
                 'updated_at': current_time
             }
             
             result = self.product_collection.update_one(
-                {'_id': ObjectId(product_id), 'isDeleted': {'$ne': True}}, 
+                {'_id': product_id, 'isDeleted': {'$ne': True}}, 
                 {
                     '$set': update_data,
                     '$push': {'stock_history': stock_history_entry}
@@ -475,62 +809,53 @@ class ProductService:
                 # Mark as needing sync since stock was updated
                 self.update_sync_status(product_id, sync_status='pending', source='cloud')
                 
-                updated_product = self.product_collection.find_one({'_id': ObjectId(product_id)})
+                updated_product = self.product_collection.find_one({'_id': product_id})
                 
-                # Create notification for stock update
-                try:
-                    product_name = updated_product.get("product_name", updated_product.get("SKU", "Unknown Product"))
-                    low_stock_threshold = updated_product.get('low_stock_threshold', 0)
-                    
-                    # Determine priority based on stock level
-                    priority = "low"
-                    notification_type = "system"
-                    
-                    if new_stock <= low_stock_threshold and new_stock > 0:
-                        priority = "medium"
-                        notification_type = "alert"
-                    elif new_stock == 0:
-                        priority = "high"
-                        notification_type = "alert"
-                    
-                    # Create message based on operation type
-                    if operation_type == 'add':
-                        message = f"Stock added to '{product_name}': +{quantity} units (Total: {new_stock})"
-                    elif operation_type == 'remove':
-                        message = f"Stock removed from '{product_name}': -{quantity} units (Total: {new_stock})"
-                    elif operation_type == 'set':
-                        message = f"Stock set for '{product_name}': {new_stock} units"
-                    
-                    # Add warning if stock is low or out
-                    if new_stock == 0:
-                        message += " - OUT OF STOCK!"
-                    elif new_stock <= low_stock_threshold:
-                        message += " - LOW STOCK WARNING!"
-                    
-                    notification_service.create_notification(
-                        title="Stock Updated",
-                        message=message,
-                        priority=priority,
-                        notification_type=notification_type,
-                        metadata={
-                            "product_id": str(product_id),
-                            "SKU": updated_product.get("SKU"),
-                            "product_name": product_name,
-                            "stock_source": "stock_update",
-                            "action_type": "stock_updated",
-                            "operation_type": operation_type,
-                            "quantity_changed": quantity,
-                            "previous_stock": current_stock,
-                            "new_stock": new_stock,
-                            "reason": reason,
-                            "is_low_stock": new_stock <= low_stock_threshold,
-                            "is_out_of_stock": new_stock == 0
-                        }
-                    )
-                except Exception as notification_error:
-                    print(f"Failed to create notification for stock update: {notification_error}")
+                # Prepare notification data
+                product_name = updated_product.get("product_name", updated_product.get("SKU", "Unknown Product"))
+                low_stock_threshold = updated_product.get('low_stock_threshold', 0)
                 
-                return self.convert_object_id(updated_product)
+                # Determine notification type and create operation-specific message
+                if new_stock == 0:
+                    action_type = 'stock_out'
+                    message_suffix = " - OUT OF STOCK!"
+                elif new_stock <= low_stock_threshold and new_stock > 0:
+                    action_type = 'stock_low' 
+                    message_suffix = " - LOW STOCK WARNING!"
+                else:
+                    action_type = 'stock_updated'
+                    message_suffix = ""
+                
+                # Create operation-specific message
+                if operation_type == 'add':
+                    base_message = f"Stock added to '{product_name}': +{quantity} units (Total: {new_stock})"
+                elif operation_type == 'remove':
+                    base_message = f"Stock removed from '{product_name}': -{quantity} units (Total: {new_stock})"
+                elif operation_type == 'set':
+                    base_message = f"Stock set for '{product_name}': {new_stock} units"
+                
+                custom_message = base_message + message_suffix
+                
+                # Send notification
+                self._send_product_notification(
+                    action_type,
+                    product_name,
+                    product_id,
+                    {
+                        "SKU": updated_product.get("SKU"),
+                        "operation_type": operation_type,
+                        "quantity_changed": quantity,
+                        "previous_stock": current_stock,
+                        "new_stock": new_stock,
+                        "reason": reason,
+                        "is_low_stock": new_stock <= low_stock_threshold,
+                        "is_out_of_stock": new_stock == 0,
+                        "low_stock_threshold": low_stock_threshold,
+                        "custom_message": custom_message
+                    }
+                )
+                
+                return updated_product
             return None
         
         except Exception as e:
@@ -555,48 +880,28 @@ class ProductService:
                     'result': result
                 })
             
-            # Create bulk update notification
-            try:
-                successful_updates = [r for r in results if r['success']]
-                failed_updates = [r for r in results if not r['success']]
-                
-                total_updates = len(stock_updates)
-                successful_count = len(successful_updates)
-                failed_count = len(failed_updates)
-                
-                # Determine priority based on success rate
-                if failed_count == 0:
-                    priority = "low"
-                    notification_type = "system"
-                elif failed_count < successful_count:
-                    priority = "medium"
-                    notification_type = "alert"
-                else:
-                    priority = "high"
-                    notification_type = "alert"
-                
-                # Create summary message
-                if failed_count == 0:
-                    message = f"Bulk stock update completed successfully: {successful_count} products updated"
-                else:
-                    message = f"Bulk stock update completed: {successful_count} successful, {failed_count} failed out of {total_updates} total"
-                
-                notification_service.create_notification(
-                    title="Bulk Stock Update Completed",
-                    message=message,
-                    priority=priority,
-                    notification_type=notification_type,
-                    metadata={
-                        "bulk_update_source": "bulk_stock_update",
-                        "action_type": "bulk_stock_updated",
-                        "total_products": total_updates,
-                        "successful_updates": successful_count,
-                        "failed_updates": failed_count,
-                        "success_rate": round((successful_count / total_updates) * 100, 2) if total_updates > 0 else 0
-                    }
-                )
-            except Exception as notification_error:
-                print(f"Failed to create notification for bulk stock update: {notification_error}")
+            # Send unified notification for bulk stock update
+            successful_count = len([r for r in results if r['success']])
+            failed_count = len([r for r in results if not r['success']])
+            total_updates = len(stock_updates)
+            
+            if failed_count == 0:
+                message = f"Bulk stock update completed successfully: {successful_count} products updated"
+            else:
+                message = f"Bulk stock update completed: {successful_count} successful, {failed_count} failed out of {total_updates} total"
+            
+            self._send_product_notification(
+                'bulk_stock_updated',
+                f"{successful_count} products",
+                None,  # No single product ID for bulk operations
+                {
+                    "total_products": total_updates,
+                    "successful_updates": successful_count,
+                    "failed_updates": failed_count,
+                    "success_rate": round((successful_count / total_updates) * 100, 2) if total_updates > 0 else 0,
+                    "custom_message": message
+                }
+            )
             
             return results
         
@@ -604,21 +909,44 @@ class ProductService:
             raise Exception(f"Error in bulk stock update: {str(e)}")
         
     def adjust_stock_for_sale(self, product_id, quantity_sold):
-        """Reduce stock when a sale is made"""
+        """Reduce stock when a sale is made - now uses FIFO from batches"""
         try:
+            # Process sale using FIFO from batch service
+            batches_used = self.batch_service.process_sale_fifo(product_id, quantity_sold)
+            
+            # Update product stock using existing method
             stock_data = {
                 'operation_type': 'remove',
                 'quantity': quantity_sold,
                 'reason': 'Sale transaction'    
             }
-            return self.update_stock(product_id, stock_data)
-    
+            updated_product = self.update_stock(product_id, stock_data)
+            
+            return {
+                'product': updated_product,
+                'batches_used': batches_used
+            }
+
         except Exception as e:
             raise Exception(f"Error adjusting stock for sale: {str(e)}")
     
-    def restock_product(self, product_id, quantity_received, supplier_info=None):
-        """Add stock when receiving new inventory"""
+    def restock_product(self, product_id, quantity_received, supplier_info=None, batch_info=None):
+        """Add stock when receiving new inventory - now creates batches"""
         try:
+            # Create batch first
+            batch_data = {
+                'product_id': product_id,
+                'quantity_received': quantity_received,
+                'cost_price': batch_info.get('cost_price') if batch_info else 0,
+                'expiry_date': batch_info.get('expiry_date') if batch_info else None,
+                'supplier_id': supplier_info.get('supplier_id') if supplier_info else None,
+                'batch_number': batch_info.get('batch_number') if batch_info else None
+            }
+            
+            # Create the batch (this will automatically update product expiry summary)
+            batch = self.batch_service.create_batch(batch_data)
+            
+            # Update product stock using the existing method
             reason = f"Restock from supplier"
             if supplier_info:
                 reason += f" - {supplier_info.get('name', 'Unknown')}"
@@ -628,181 +956,52 @@ class ProductService:
                 'quantity': quantity_received,
                 'reason': reason
             }
-            return self.update_stock(product_id, stock_data)
-        
+            
+            updated_product = self.update_stock(product_id, stock_data)
+            
+            return {
+                'product': updated_product,
+                'batch': batch
+            }
+            
         except Exception as e:
             raise Exception(f"Error restocking product: {str(e)}")
 
-    def delete_product(self, product_id, hard_delete=False):
-        """Soft delete or hard delete a product"""
+    def get_product_with_batch_summary(self, product_id):
+        """Get product with batch and expiry summary information"""
         try:
-            if not ObjectId.is_valid(product_id):
-                return False
+            product = self.get_product_by_id(product_id)
+            if not product:
+                return None
             
-            # Get product details before deletion for notification
-            product_to_delete = self.product_collection.find_one({'_id': ObjectId(product_id)})
-            if not product_to_delete:
-                return False
+            # Get active batches for this product
+            batches = self.batch_service.get_batches_by_product(product_id, status='active')
             
-            if hard_delete:
-                # Hard delete - permanently remove from database
-                result = self.product_collection.delete_one({'_id': ObjectId(product_id)})
-                
-                if result.deleted_count > 0:
-                    # Create notification for hard deletion
-                    try:
-                        product_name = product_to_delete.get("product_name", product_to_delete.get("SKU", "Unknown Product"))
-                        
-                        notification_service.create_notification(
-                            title="Product Permanently Deleted",
-                            message=f"Product '{product_name}' has been permanently removed from the system",
-                            priority="high",
-                            notification_type="alert",
-                            metadata={
-                                "product_id": str(product_id),
-                                "SKU": product_to_delete.get("SKU"),
-                                "product_name": product_name,
-                                "deletion_source": "product_hard_delete",
-                                "action_type": "product_hard_deleted",
-                                "deletion_type": "permanent",
-                                "deleted_at": datetime.utcnow().isoformat(),
-                                "stock_at_deletion": product_to_delete.get("stock", 0)
-                            }
-                        )
-                    except Exception as notification_error:
-                        print(f"Failed to create notification for hard deleted product: {notification_error}")
-                    
-                    return True
-                return False
-            else:
-                # Soft delete - mark as deleted with timestamp and reason
-                current_time = datetime.utcnow()
-                
-                # Create deletion log entry
-                deletion_log = {
-                    'deleted_at': current_time,
-                    'deleted_by': 'system',  # This could be user ID in the future
-                    'reason': 'Manual deletion'
-                }
-                
-                # Update product to mark as deleted
-                result = self.product_collection.update_one(
-                    {'_id': ObjectId(product_id), 'isDeleted': {'$ne': True}},
-                    {
-                        '$set': {
-                            'isDeleted': True,
-                            'updated_at': current_time,
-                            'deletion_log': deletion_log
-                        }
-                    }
-                )
-                
-                if result.modified_count > 0:
-                    # Mark as needing sync since product was deleted
-                    self.update_sync_status(product_id, sync_status='pending_deletion', source='cloud')
-                    
-                    # Create notification for soft deletion
-                    try:
-                        product_name = product_to_delete.get("product_name", product_to_delete.get("SKU", "Unknown Product"))
-                        
-                        notification_service.create_notification(
-                            title="Product Deleted",
-                            message=f"Product '{product_name}' has been moved to trash and can be restored if needed",
-                            priority="medium",
-                            notification_type="system",
-                            metadata={
-                                "product_id": str(product_id),
-                                "SKU": product_to_delete.get("SKU"),
-                                "product_name": product_name,
-                                "deletion_source": "product_soft_delete",
-                                "action_type": "product_soft_deleted",
-                                "deletion_type": "soft",
-                                "deleted_at": current_time.isoformat(),
-                                "deleted_by": deletion_log["deleted_by"],
-                                "deletion_reason": deletion_log["reason"],
-                                "stock_at_deletion": product_to_delete.get("stock", 0),
-                                "can_be_restored": True
-                            }
-                        )
-                    except Exception as notification_error:
-                        print(f"Failed to create notification for soft deleted product: {notification_error}")
-                    
-                    return True
-                
-                return False
+            product['active_batches'] = batches
+            product['batch_count'] = len(batches)
+            
+            return product
         
         except Exception as e:
-            raise Exception(f"Error deleting product: {str(e)}")
-    
-    def restore_product(self, product_id):
-        """Restore a soft-deleted product"""
+            raise Exception(f"Error getting product with batch summary: {str(e)}")
+
+    def check_expiry_alerts(self, days_ahead=7):
+        """Check for products with expiring batches and return alert summary"""
         try:
-            if not ObjectId.is_valid(product_id):
-                return False
-            
-            current_time = datetime.utcnow()
-            
-            # Create restoration log entry
-            restoration_log = {
-                'restored_at': current_time,
-                'restored_by': 'system',  # This could be user ID in the future
-                'reason': 'Manual restoration'
-            }
-            
-            # Update product to restore it
-            result = self.product_collection.update_one(
-                {'_id': ObjectId(product_id), 'isDeleted': True},
-                {
-                    '$set': {
-                        'isDeleted': False,
-                        'updated_at': current_time,
-                        'restoration_log': restoration_log
-                    },
-                    '$unset': {
-                        'deletion_log': 1  # Remove deletion log when restoring
-                    }
-                }
-            )
-            
-            if result.modified_count > 0:
-                # Mark as needing sync since product was restored
-                self.update_sync_status(product_id, sync_status='pending', source='cloud')
-                
-                # Create notification for product restoration
-                try:
-                    restored_product = self.product_collection.find_one({'_id': ObjectId(product_id)})
-                    product_name = restored_product.get("product_name", restored_product.get("SKU", "Unknown Product"))
-                    
-                    notification_service.create_notification(
-                        title="Product Restored",
-                        message=f"Product '{product_name}' has been successfully restored from trash",
-                        priority="low",
-                        notification_type="system",
-                        metadata={
-                            "product_id": str(product_id),
-                            "SKU": restored_product.get("SKU"),
-                            "product_name": product_name,
-                            "restoration_source": "product_restore",
-                            "action_type": "product_restored",
-                            "restored_at": current_time.isoformat(),
-                            "restored_by": restoration_log["restored_by"]
-                        }
-                    )
-                except Exception as notification_error:
-                    print(f"Failed to create notification for restored product: {notification_error}")
-                
-                return True
-            
-            return False
+            return self.batch_service.check_and_alert_expiring_batches(days_ahead)
         
         except Exception as e:
-            raise Exception(f"Error restoring product: {str(e)}")
+            raise Exception(f"Error checking expiry alerts: {str(e)}")
+
+    # ================================================================
+    # PRODUCT QUERIES AND FILTERING
+    # ================================================================
     
     def get_deleted_products(self):
         """Get all soft-deleted products"""
         try:
             products = list(self.product_collection.find({'isDeleted': True}).sort('deletion_log.deleted_at', -1))
-            return [self.convert_object_id(product) for product in products]
+            return products
         
         except Exception as e:
             raise Exception(f"Error getting deleted products: {str(e)}")
@@ -815,52 +1014,258 @@ class ProductService:
                 'isDeleted': {'$ne': True}
             }
             
-            if branch_id and ObjectId.is_valid(branch_id):
-                query['branch_id'] = ObjectId(branch_id)
+            if branch_id:
+                query['branch_id'] = branch_id
             
             products = list(self.product_collection.find(query))
-            return [self.convert_object_id(product) for product in products]
+            return products
         
         except Exception as e:
             raise Exception(f"Error getting low stock products: {str(e)}")
     
-    def get_products_by_category(self, category_id):
-        """Get products by category (excluding deleted)"""
+    def get_products_by_category(self, category_id, subcategory_name=None):
+        """
+        Returns full product details (with correct stock values)
+        using the same engine as get_all_products().
+        Ensures Category Details and Export show correct data.
+        """
         try:
-            if not ObjectId.is_valid(category_id):
-                return []
-            
-            products = list(self.product_collection.find({
-                'category_id': ObjectId(category_id),
-                'isDeleted': {'$ne': True}
-            }))
-            return [self.convert_object_id(product) for product in products]
-        
+            # Apply filters
+            filters = {"category_id": category_id}
+
+            if subcategory_name:
+                filters["subcategory_name"] = subcategory_name
+
+            # Reuse get_all_products() to ensure full computed product data
+            # Including: stock, total_stock, thresholds, status, etc.
+            full_products = self.get_all_products(filters=filters, include_deleted=False)
+
+            return full_products
+
         except Exception as e:
-            raise Exception(f"Error getting products by category: {str(e)}")
+            raise Exception(f"Error getting full products by category: {str(e)}")
+
+
     
     def get_expiring_products(self, days_ahead=30):
-        """Get products expiring within specified days (excluding deleted)"""
+        """Get products with expiring batches within specified days"""
         try:
             from datetime import timedelta
             
             future_date = datetime.utcnow() + timedelta(days=days_ahead)
             
             query = {
-                'expiry_date': {
+                'oldest_batch_expiry': {
                     '$lte': future_date,
                     '$gte': datetime.utcnow()
                 },
                 'isDeleted': {'$ne': True}
             }
             
-            products = list(self.product_collection.find(query).sort('expiry_date', 1))
-            return [self.convert_object_id(product) for product in products]
+            products = list(self.product_collection.find(query).sort('oldest_batch_expiry', 1))
+            return products
         
         except Exception as e:
             raise Exception(f"Error getting expiring products: {str(e)}")
 
-    # Sync-related methods for future local/cloud synchronization
+    # ================================================================
+    # BULK OPERATIONS
+    # ================================================================
+        
+    def bulk_create_products(self, products_data):
+        """Create multiple products in batch with validation"""
+        try:
+            logger.info(f"Processing {len(products_data)} products for bulk creation")
+            
+            validated_products = []
+            errors = []
+            seen_skus = set()
+            seen_names = set()
+            
+            for i, product_data in enumerate(products_data):
+                try:
+                    logger.debug(f"Processing product {i+1}: {product_data.get('product_name', 'Unknown')}")
+                    
+                    # VALIDATION: If stock is provided, cost_price must also be provided
+                    initial_stock = int(product_data.get('stock', 0))
+                    if initial_stock > 0:
+                        cost_price = product_data.get('cost_price')
+                        if cost_price is None or float(cost_price) == 0:
+                            raise ValueError("Cost price is required when initial stock is provided")
+                    
+                    # Generate sequential product ID for each product
+                    product_id = self.generate_product_id()
+                    product_data['_id'] = product_id
+                    
+                    # Validate foreign keys
+                    self.validate_foreign_keys(product_data)
+                    
+                    # Generate SKU if not provided
+                    if not product_data.get('SKU'):
+                        product_data['SKU'] = self.generate_sku(
+                            product_data.get('product_name', 'Product'),
+                            product_data.get('category_id')
+                        )
+                    
+                    # DUPLICATE VALIDATION
+                    if product_data['SKU'] in seen_skus:
+                        raise ValueError(f"Duplicate SKU in current batch: {product_data['SKU']}")
+                    
+                    existing_sku = self.product_collection.find_one({
+                        'SKU': product_data['SKU'], 
+                        'isDeleted': {'$ne': True}
+                    })
+                    if existing_sku:
+                        raise ValueError(f"Product with SKU '{product_data['SKU']}' already exists in database")
+                    
+                    product_name_lower = product_data.get('product_name', '').strip().lower()
+                    if product_name_lower in seen_names:
+                        raise ValueError(f"Duplicate product name in current batch: {product_data.get('product_name')}")
+                    
+                    if product_name_lower:
+                        existing_name = self.product_collection.find_one({
+                            'product_name': {'$regex': f'^{re.escape(product_data.get("product_name", ""))}$', '$options': 'i'}, 
+                            'isDeleted': {'$ne': True}
+                        })
+                        if existing_name:
+                            raise ValueError(f"Product with name '{product_data.get('product_name')}' already exists in database")
+                    
+                    seen_skus.add(product_data['SKU'])
+                    seen_names.add(product_name_lower)
+                    
+                    # AUTO-ASSIGN CATEGORY FOR BULK PRODUCTS - SIMPLIFIED
+                    product_data = self._ensure_default_category_assignment(product_data)
+                    
+                    # Set default values
+                    current_time = datetime.utcnow()
+                    product_data.update({
+                        'date_received': product_data.get('date_received', current_time),
+                        'status': product_data.get('status', 'active'),
+                        'is_taxable': product_data.get('is_taxable', True),
+                        'isDeleted': False,
+                        'created_at': current_time,
+                        'updated_at': current_time,
+                        'sync_logs': [self.add_sync_log(source='cloud', status='pending', details={'action': 'bulk_created'})],
+                        # Batch-related fields for simplified expiry tracking
+                        'total_stock': initial_stock,
+                        'oldest_batch_expiry': None,
+                        'newest_batch_expiry': None,
+                        'expiry_alert': False
+                    })
+                    
+                    # Handle numeric fields
+                    numeric_fields = ['stock', 'low_stock_threshold', 'cost_price', 'selling_price']
+                    for field in numeric_fields:
+                        if field in product_data:
+                            try:
+                                if field in ['stock', 'low_stock_threshold']:
+                                    product_data[field] = int(product_data[field])
+                                else:
+                                    price_str = str(product_data[field])
+                                    clean_price = price_str.replace('₱', '').replace(',', '').strip()
+                                    product_data[field] = float(clean_price)
+                            except (ValueError, TypeError):
+                                product_data[field] = 0
+                    
+                    validated_products.append(product_data)
+                    logger.debug(f"Product {i+1} validated and ready for creation")
+                    
+                except Exception as e:
+                    logger.error(f"Product {i+1} validation failed: {str(e)}")
+                    errors.append({
+                        'index': i,
+                        'data': product_data,
+                        'error': str(e)
+                    })
+            
+            # Perform bulk insert
+            results = {
+                'successful': [],
+                'failed': errors,
+                'total_processed': len(products_data),
+                'total_successful': 0,
+                'total_failed': len(errors),
+                'batches_created': 0,
+                'batch_creation_errors': []
+            }
+            
+            if validated_products:
+                logger.info(f"Inserting {len(validated_products)} validated products...")
+                
+                insert_result = self.product_collection.insert_many(validated_products, ordered=False)
+                
+                # Get inserted products
+                inserted_products = list(self.product_collection.find({
+                    '_id': {'$in': [product['_id'] for product in validated_products]}
+                }))
+                
+                results['successful'] = inserted_products
+                results['total_successful'] = len(inserted_products)
+                
+                # CREATE INITIAL BATCHES FOR PRODUCTS WITH STOCK
+                logger.info(f"Creating initial batches for products with stock...")
+                for product in inserted_products:
+                    try:
+                        initial_stock = product.get('stock', 0)
+                        if initial_stock > 0:
+                            # Find corresponding product_data to get full details
+                            product_data = next(
+                                (p for p in validated_products if p['_id'] == product['_id']), 
+                                None
+                            )
+                            if product_data:
+                                batch = self._create_initial_batch_if_needed(
+                                    product['_id'], 
+                                    product_data
+                                )
+                                if batch:
+                                    results['batches_created'] += 1
+                                    logger.debug(f"Created batch {batch['_id']} for product {product['_id']}")
+                    except Exception as batch_error:
+                        logger.error(f"Failed to create batch for product {product['_id']}: {str(batch_error)}")
+                        results['batch_creation_errors'].append({
+                            'product_id': product['_id'],
+                            'error': str(batch_error)
+                        })
+                
+                # Send notification for bulk creation
+                total_processed = len(products_data)
+                successful_count = len(inserted_products)
+                failed_count = len(errors)
+                batches_created = results['batches_created']
+                
+                if failed_count == 0 and len(results['batch_creation_errors']) == 0:
+                    action_type = 'bulk_created'
+                    message = f"Bulk product creation completed successfully: {successful_count} products created, {batches_created} initial batches created"
+                else:
+                    action_type = 'bulk_created'
+                    message = f"Bulk product creation completed: {successful_count} products created ({batches_created} batches), {failed_count} failed, {len(results['batch_creation_errors'])} batch errors"
+                
+                self._send_product_notification(
+                    action_type,
+                    f"{successful_count} products",
+                    None,  # No single product ID for bulk operations
+                    {
+                        "total_products": total_processed,
+                        "successful_creations": successful_count,
+                        "failed_creations": failed_count,
+                        "batches_created": batches_created,
+                        "batch_creation_errors": len(results['batch_creation_errors']),
+                        "success_rate": round((successful_count / total_processed) * 100, 2) if total_processed > 0 else 0,
+                        "custom_message": message
+                    }
+                )
+            
+            logger.info(f"Bulk creation completed: {results['total_successful']} successful, {results['total_failed']} failed, {results['batches_created']} batches created")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Bulk create service error: {str(e)}")
+            raise Exception(f"Error in bulk product creation: {str(e)}")
+
+    # ================================================================
+    # SYNC-RELATED METHODS
+    # ================================================================
     
     def prepare_for_sync_to_local(self):
         """Get all products that need to be synced to local database"""
@@ -915,360 +1320,264 @@ class ProductService:
         except Exception as e:
             raise Exception(f"Error preparing sync to local: {str(e)}")
         
-    def bulk_create_products(self, products_data):
-        """Create multiple products in batch with validation - ENHANCED DUPLICATE PREVENTION"""
+    def import_products_from_file(self, file_path, file_type='csv', validate_only=False):
+        """
+        Import products from CSV or Excel file with detailed validation
+        Supplier removed entirely from import
+        """
         try:
-            print("=== BULK CREATE SERVICE DEBUG START ===")
-            print(f"Processing {len(products_data)} products")
-            
-            validated_products = []
-            errors = []
-            seen_skus = set()  # Track SKUs in current batch
-            seen_names = set()  # Track product names in current batch
-            
-            for i, product_data in enumerate(products_data):
-                try:
-                    print(f"Processing product {i+1}: {product_data.get('product_name', 'Unknown')}")
-                    
-                    # Validate foreign keys
-                    self.validate_foreign_keys(product_data)
-                    
-                    # Generate SKU if not provided
-                    if not product_data.get('SKU'):
-                        product_data['SKU'] = self.generate_sku(
-                            product_data.get('product_name', 'Product'),
-                            product_data.get('category_id')
-                        )
-                        print(f"Generated SKU: {product_data['SKU']}")
-                    
-                    # ENHANCED DUPLICATE VALIDATION
-                    
-                    # 1. Check for duplicate SKUs in current batch
-                    if product_data['SKU'] in seen_skus:
-                        raise ValueError(f"Duplicate SKU in current batch: {product_data['SKU']}")
-                    
-                    # 2. Check for duplicate SKUs in database
-                    existing_sku = self.product_collection.find_one({
-                        'SKU': product_data['SKU'], 
-                        'isDeleted': {'$ne': True}
-                    })
-                    if existing_sku:
-                        raise ValueError(f"Product with SKU '{product_data['SKU']}' already exists in database")
-                    
-                    # 3. Check for duplicate product names in current batch
-                    product_name_lower = product_data.get('product_name', '').strip().lower()
-                    if product_name_lower in seen_names:
-                        raise ValueError(f"Duplicate product name in current batch: {product_data.get('product_name')}")
-                    
-                    # 4. Check for duplicate product names in database (case-insensitive)
-                    if product_name_lower:
-                        existing_name = self.product_collection.find_one({
-                            'product_name': {'$regex': f'^{re.escape(product_data.get("product_name", ""))}$', '$options': 'i'}, 
-                            'isDeleted': {'$ne': True}
-                        })
-                        if existing_name:
-                            raise ValueError(f"Product with name '{product_data.get('product_name')}' already exists in database")
-                    
-                    # 5. Check for similar product names (optional - helps prevent near-duplicates)
-                    if product_name_lower:
-                        # Look for very similar names (90% similarity)
-                        similar_products = list(self.product_collection.find({
-                            'isDeleted': {'$ne': True}
-                        }, {'product_name': 1}))
-                        
-                        for similar_product in similar_products:
-                            existing_name = similar_product.get('product_name', '').strip().lower()
-                            if self.calculate_similarity(product_name_lower, existing_name) > 0.9:
-                                raise ValueError(f"Very similar product already exists: '{similar_product.get('product_name')}' vs '{product_data.get('product_name')}'")
-                    
-                    # Track this product's identifiers
-                    seen_skus.add(product_data['SKU'])
-                    seen_names.add(product_name_lower)
-                    
-                    # Convert string IDs to ObjectIds
-                    for field in ['category_id', 'supplier_id', 'branch_id']:
-                        if field in product_data and product_data[field] and ObjectId.is_valid(product_data[field]):
-                            product_data[field] = ObjectId(product_data[field])
-                    
-                    # Set default values
-                    current_time = datetime.utcnow()
-                    product_data.update({
-                        'date_received': product_data.get('date_received', current_time),
-                        'status': product_data.get('status', 'active'),
-                        'is_taxable': product_data.get('is_taxable', True),
-                        'isDeleted': False,
-                        'created_at': current_time,
-                        'updated_at': current_time,
-                        'sync_logs': [self.add_sync_log(source='cloud', status='pending', details={'action': 'bulk_created'})]
-                    })
-                    
-                    # Ensure numeric fields are properly typed
-                    numeric_fields = ['stock', 'low_stock_threshold', 'cost_price', 'selling_price']
-                    for field in numeric_fields:
-                        if field in product_data:
-                            try:
-                                if field in ['stock', 'low_stock_threshold']:
-                                        product_data[field] = int(product_data[field])
-                                else:
-                                        # Handle price fields with currency symbols
-                                        price_str = str(product_data[field])
-                                        # Remove peso symbol, commas, and whitespace
-                                        clean_price = price_str.replace('₱', '').replace(',', '').strip()
-                                        product_data[field] = float(clean_price)
-                            except (ValueError, TypeError):
-                                product_data[field] = 0
-                    
-                    validated_products.append(product_data)
-                    print(f"✅ Product {i+1} validated successfully")
-                    
-                except Exception as e:
-                    print(f"❌ Product {i+1} validation failed: {str(e)}")
-                    errors.append({
-                        'index': i,
-                        'data': product_data,
-                        'error': str(e)
-                    })
-            
-            # Perform bulk insert for validated products
-            results = {
-                'successful': [],
-                'failed': errors,
-                'total_processed': len(products_data),
-                'total_successful': 0,
-                'total_failed': len(errors)
-            }
-            
-            if validated_products:
-                print(f"Inserting {len(validated_products)} validated products...")
-                
-                # Use MongoDB's insert_many for better performance
-                insert_result = self.product_collection.insert_many(validated_products, ordered=False)
-                
-                # Get inserted products
-                inserted_products = list(self.product_collection.find({
-                    '_id': {'$in': insert_result.inserted_ids}
-                }))
-                
-                results['successful'] = [self.convert_object_id(product) for product in inserted_products]
-                results['total_successful'] = len(inserted_products)
-                
-                # Create bulk creation notification
-                try:
-                    total_processed = len(products_data)
-                    successful_count = len(inserted_products)
-                    failed_count = len(errors)
-                    
-                    # Determine priority based on success rate
-                    if failed_count == 0:
-                        priority = "low"
-                        notification_type = "system"
-                    elif failed_count < successful_count:
-                        priority = "medium"
-                        notification_type = "alert"
-                    else:
-                        priority = "high"
-                        notification_type = "alert"
-                    
-                    # Create summary message
-                    if failed_count == 0:
-                        message = f"Bulk product creation completed successfully: {successful_count} products created"
-                    else:
-                        message = f"Bulk product creation completed: {successful_count} successful, {failed_count} failed out of {total_processed} total"
-                    
-                    notification_service.create_notification(
-                        title="Bulk Product Creation Completed",
-                        message=message,
-                        priority=priority,
-                        notification_type=notification_type,
-                        metadata={
-                            "bulk_creation_source": "bulk_product_create",
-                            "action_type": "bulk_products_created",
-                            "total_products": total_processed,
-                            "successful_creations": successful_count,
-                            "failed_creations": failed_count,
-                            "success_rate": round((successful_count / total_processed) * 100, 2) if total_processed > 0 else 0
-                        }
-                    )
-                except Exception as notification_error:
-                    print(f"Failed to create notification for bulk product creation: {notification_error}")
-                
-                print(f"✅ Successfully inserted {len(inserted_products)} products")
-            
-            print("=== BULK CREATE SERVICE DEBUG END ===")
-            return results
-            
-        except Exception as e:
-            print(f"❌ Bulk create service error: {str(e)}")
-            raise Exception(f"Error in bulk product creation: {str(e)}")
-
-        
-    def parse_import_file(self, file_path, file_type='csv'):
-        """Parse CSV or Excel file for product import"""
-        try:
-            import pandas as pd
-            
             # Read file based on type
-            if file_type.lower() == 'csv':
+            if file_type == 'csv':
                 df = pd.read_csv(file_path)
-            elif file_type.lower() in ['xlsx', 'xls']:
+            elif file_type in ['xlsx', 'xls']:
                 df = pd.read_excel(file_path)
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
             
-            # Define expected columns and their mappings
-            column_mapping = {
-                'product_name': ['product_name', 'name', 'product', 'item_name'],
-                'SKU': ['sku', 'SKU', 'product_code', 'code'],
-                'category_id': ['category_id', 'category', 'category_name'],
-                'supplier_id': ['supplier_id', 'supplier', 'supplier_name'],
-                'stock': ['stock', 'quantity', 'qty', 'current_stock'],
-                'low_stock_threshold': ['low_stock_threshold', 'min_stock', 'reorder_level'],
-                'cost_price': ['cost_price', 'cost', 'purchase_price'],
-                'selling_price': ['selling_price', 'price', 'sale_price'],
-                'unit': ['unit', 'unit_of_measure', 'uom'],
-                'expiry_date': ['expiry_date', 'expiration_date', 'exp_date'],
-                'status': ['status', 'active', 'enabled']
-            }
+            # Required + optional columns (supplier removed)
+            required_columns = ['product_name', 'selling_price', 'category_name']
+            optional_columns = ['subcategory_name', 'SKU', 'stock', 'cost_price',
+                                'low_stock_threshold', 'unit', 'status', 'barcode',
+                                'description', 'expiry_date']
             
-            # Normalize column names and map to expected fields
-            products_data = []
-            for _, row in df.iterrows():
-                product_data = {}
+            # Check missing required
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                raise ValueError(
+                    f"Missing required columns: {', '.join(missing_columns)}. "
+                    f"Required columns are: {', '.join(required_columns)}"
+                )
+            
+            validation_errors = []
+            valid_products = []
+            skipped_products = []
+            missing_categories = {}
+            
+            for index, row in df.iterrows():
+                row_num = index + 2
+                errors = []
                 
-                for expected_field, possible_columns in column_mapping.items():
-                    value = None
-                    for col in possible_columns:
-                        if col in df.columns:
-                            value = row[col]
-                            if pd.notna(value):  # Check if not NaN
-                                break
+                # Required fields
+                if pd.isna(row.get('product_name')) or not str(row.get('product_name')).strip():
+                    errors.append(f"Row {row_num}: Product name is required")
+                
+                if pd.isna(row.get('selling_price')) or row.get('selling_price') <= 0:
+                    errors.append(f"Row {row_num}: Selling price must be greater than 0")
+                
+                # Category logic
+                category_name_raw = row.get('category_name', '')
+                category_name = str(category_name_raw).strip() if not pd.isna(category_name_raw) else ''
+                
+                if not category_name:
+                    errors.append(f"Row {row_num}: Category name is required")
+                
+                subcategory_name_raw = row.get('subcategory_name', '')
+                subcategory_name = (
+                    str(subcategory_name_raw).strip()
+                    if not pd.isna(subcategory_name_raw) and str(subcategory_name_raw).strip()
+                    else None
+                )
+                
+                category = None
+                category_id = None
+                
+                if category_name:
+                    category = self.db.category.find_one({
+                        'category_name': category_name,
+                        'isDeleted': False
+                    })
                     
-                    if value is not None and pd.notna(value):
-                        # Handle category/supplier name to ID conversion
-                        if expected_field == 'category_id' and not ObjectId.is_valid(str(value)):
-                            # Look up category by name
-                            category = self.category_collection.find_one({'category_name': {'$regex': f'^{value}$', '$options': 'i'}})
-                            product_data[expected_field] = str(category['_id']) if category else None
-                        elif expected_field == 'supplier_id' and not ObjectId.is_valid(str(value)):
-                            # Look up supplier by name
-                            supplier = self.supplier_collection.find_one({'name': {'$regex': f'^{value}$', '$options': 'i'}})
-                            product_data[expected_field] = str(supplier['_id']) if supplier else None
-                        else:
-                            product_data[expected_field] = value
+                    if not category:
+                        if category_name not in missing_categories:
+                            missing_categories[category_name] = set()
+                        if subcategory_name:
+                            missing_categories[category_name].add(subcategory_name)
+                        errors.append(f"Row {row_num}: Category '{category_name}' not found")
+                    else:
+                        category_id = str(category['_id'])
+                        
+                        # Validate subcategory only if provided
+                        if subcategory_name:
+                            subcategories = category.get('sub_categories', [])
+                            subcat_names = []
+                            for subcat in subcategories:
+                                if isinstance(subcat, dict) and 'name' in subcat:
+                                    subcat_names.append(subcat['name'])
+                                elif isinstance(subcat, str):
+                                    subcat_names.append(subcat)
+                            
+                            if subcategory_name not in subcat_names:
+                                if category_name not in missing_categories:
+                                    missing_categories[category_name] = set()
+                                missing_categories[category_name].add(subcategory_name)
+                                errors.append(
+                                    f"Row {row_num}: Subcategory '{subcategory_name}' not found under category '{category_name}'"
+                                )
                 
-                # Only add if required fields are present
-                if product_data.get('product_name'):
-                    products_data.append(product_data)
+                # Stock/cost/expiry validation
+                stock = row.get('stock', 0)
+                cost_price = row.get('cost_price', 0)
+                expiry_date = row.get('expiry_date')
+                
+                if not pd.isna(stock) and stock > 0:
+                    if pd.isna(cost_price) or cost_price <= 0:
+                        errors.append(f"Row {row_num}: Cost price is required when stock is provided")
+                    
+                    if pd.isna(expiry_date) or not str(expiry_date).strip():
+                        errors.append(f"Row {row_num}: Expiry date is required when stock is provided")
+                
+                # Numeric checks
+                try:
+                    if not pd.isna(row.get('selling_price')):
+                        float(row['selling_price'])
+                except:
+                    errors.append(f"Row {row_num}: Selling price must be a valid number")
+                
+                try:
+                    if not pd.isna(row.get('cost_price')):
+                        float(row['cost_price'])
+                except:
+                    errors.append(f"Row {row_num}: Cost price must be a valid number")
+                
+                try:
+                    if not pd.isna(row.get('stock')):
+                        int(row['stock'])
+                except:
+                    errors.append(f"Row {row_num}: Stock must be a valid integer")
+                
+                try:
+                    if not pd.isna(row.get('low_stock_threshold')):
+                        int(row['low_stock_threshold'])
+                except:
+                    errors.append(f"Row {row_num}: Low stock threshold must be a valid integer")
+                
+                # Add errors and continue
+                if errors:
+                    validation_errors.extend(errors)
+                    continue
+                
+                # Build product data (supplier removed)
+                product_data = {
+                    'product_name': str(row['product_name']).strip(),
+                    'selling_price': float(row['selling_price']),
+                    'category_id': category_id,
+                }
+                
+                if subcategory_name:
+                    product_data['subcategory_name'] = subcategory_name
+                
+                if not pd.isna(row.get('SKU')):
+                    product_data['SKU'] = str(row['SKU']).strip()
+                
+                if not pd.isna(row.get('stock')):
+                    product_data['stock'] = int(row['stock'])
+                
+                if not pd.isna(row.get('cost_price')):
+                    product_data['cost_price'] = float(row['cost_price'])
+                
+                if not pd.isna(row.get('low_stock_threshold')):
+                    product_data['low_stock_threshold'] = int(row['low_stock_threshold'])
+                
+                if not pd.isna(row.get('unit')):
+                    product_data['unit'] = str(row['unit']).strip()
+                
+                if not pd.isna(row.get('status')):
+                    product_data['status'] = str(row['status']).strip()
+                
+                if not pd.isna(row.get('barcode')):
+                    product_data['barcode'] = str(row['barcode']).strip()
+                
+                if not pd.isna(row.get('description')):
+                    product_data['description'] = str(row['description']).strip()
+                
+                if not pd.isna(row.get('expiry_date')):
+                    product_data['expiry_date'] = str(row['expiry_date']).strip()
+                
+                valid_products.append(product_data)
             
-            return {
-                'products_data': products_data,
-                'total_rows': len(df),
-                'valid_products': len(products_data),
-                'columns_found': list(df.columns)
-            }
+            # Missing categories summary
+            missing_categories_list = [
+                {'category_name': cat, 'subcategories': list(subcats)}
+                for cat, subcats in missing_categories.items()
+            ]
             
-        except Exception as e:
-            raise Exception(f"Error parsing import file: {str(e)}")
-        
-    def import_products_from_file(self, file_path, file_type='csv', validate_only=False):
-        """Import products from CSV or Excel file"""
-        try:
-            # Parse the file
-            parse_result = self.parse_import_file(file_path, file_type)
-            
+            # Validation mode
             if validate_only:
-                # Only validate, don't create products
-                validation_errors = []
-                for i, product_data in enumerate(parse_result['products_data']):
-                    try:
-                        self.validate_foreign_keys(product_data)
-                    except Exception as e:
-                        validation_errors.append({
-                            'row': i + 2,  # +2 for header and 0-based index
-                            'error': str(e),
-                            'data': product_data
-                        })
-                
                 return {
-                    'validation_only': True,
-                    'total_rows': parse_result['total_rows'],
-                    'valid_products': parse_result['valid_products'],
-                    'validation_errors': validation_errors,
-                    'columns_found': parse_result['columns_found']
+                    'valid': len(validation_errors) == 0 and len(missing_categories) == 0,
+                    'total_rows': len(df),
+                    'valid_products': len(valid_products),
+                    'errors': validation_errors,
+                    'missing_categories': missing_categories_list,
+                    'message': 'Validation completed' if not validation_errors else 'Validation failed'
                 }
             
-            # Create products in bulk
-            bulk_result = self.bulk_create_products(parse_result['products_data'])
+            # Stop import if validation errors
+            if validation_errors:
+                return {
+                    'success': False,
+                    'total_rows': len(df),
+                    'valid_products': len(valid_products),
+                    'errors': validation_errors,
+                    'missing_categories': missing_categories_list,
+                    'message': f'Import failed: {len(validation_errors)} validation error(s) found'
+                }
             
-            # Create import completion notification
-            try:
-                total_rows = parse_result['total_rows']
-                valid_products = parse_result['valid_products']
-                successful_imports = bulk_result['total_successful']
-                failed_imports = bulk_result['total_failed']
+            # Import process
+            successful = []
+            failed = []
+            
+            for product_data in valid_products:
+                try:
+                    if 'SKU' in product_data:
+                        existing = self.db.products.find_one({
+                            'SKU': product_data['SKU'],
+                            'isDeleted': False
+                        })
+                        if existing:
+                            skipped_products.append({
+                                'product': product_data['product_name'],
+                                'reason': f"SKU {product_data['SKU']} already exists"
+                            })
+                            continue
+                    
+                    new_product = self.create_product(product_data)
+                    successful.append(new_product)
                 
-                # Determine priority based on success rate
-                if failed_imports == 0 and valid_products > 0:
-                    priority = "low"
-                    notification_type = "system"
-                elif failed_imports < successful_imports:
-                    priority = "medium"
-                    notification_type = "alert"
-                else:
-                    priority = "high"
-                    notification_type = "alert"
-                
-                # Create summary message
-                if failed_imports == 0 and valid_products > 0:
-                    message = f"Product import completed successfully: {successful_imports} products imported from {total_rows} rows"
-                elif valid_products == 0:
-                    message = f"Product import failed: No valid products found in {total_rows} rows"
-                else:
-                    message = f"Product import completed: {successful_imports} successful, {failed_imports} failed from {valid_products} valid products"
-                
-                notification_service.create_notification(
-                    title="Product Import Completed",
-                    message=message,
-                    priority=priority,
-                    notification_type=notification_type,
-                    metadata={
-                        "import_source": "file_import",
-                        "action_type": "products_imported",
-                        "file_type": file_type,
-                        "total_rows": total_rows,
-                        "valid_products": valid_products,
-                        "successful_imports": successful_imports,
-                        "failed_imports": failed_imports,
-                        "import_success_rate": round((successful_imports / valid_products) * 100, 2) if valid_products > 0 else 0
-                    }
-                )
-            except Exception as notification_error:
-                print(f"Failed to create notification for product import: {notification_error}")
+                except Exception as e:
+                    failed.append({
+                        'product': product_data.get('product_name', 'Unknown'),
+                        'error': str(e)
+                    })
             
             return {
-                'import_completed': True,
-                'file_info': {
-                    'total_rows': parse_result['total_rows'],
-                    'valid_products': parse_result['valid_products'],
-                    'columns_found': parse_result['columns_found']
-                },
-                'bulk_result': bulk_result
+                'success': True,
+                'total_rows': len(df),
+                'successful': len(successful),
+                'failed': len(failed),
+                'skipped': len(skipped_products),
+                'failed_details': failed,
+                'skipped_details': skipped_products,
+                'missing_categories': missing_categories_list,
+                'message': f'Import completed: {len(successful)} created, {len(failed)} failed, {len(skipped_products)} skipped'
             }
-            
+        
         except Exception as e:
-            raise Exception(f"Error importing products from file: {str(e)}")
-            
+            raise Exception(f"Import failed: {str(e)}")
+
+
     def generate_import_template(self, file_type='csv'):
-        """Generate a template file for product import"""
+        """Generate a template file for product import without supplier column"""
         try:
             import pandas as pd
+            from openpyxl import load_workbook
+            from openpyxl.worksheet.datavalidation import DataValidation
             
-            # Define template columns
             template_data = {
                 'product_name': ['Sample Noodle 1', 'Sample Drink 1'],
                 'SKU': ['NOOD-SAMP-001', 'DRIN-SAMP-001'],
-                'category_id': ['category_name_or_id', 'category_name_or_id'],
-                'supplier_id': ['supplier_name_or_id', 'supplier_name_or_id'],
+                'category_name': ['Noodles', 'Drinks'],
+                'subcategory_name': ['Instant', 'Beverages'],
                 'stock': [100, 50],
                 'low_stock_threshold': [10, 5],
                 'cost_price': [15.00, 25.00],
@@ -1283,9 +1592,53 @@ class ProductService:
             if file_type.lower() == 'csv':
                 template_path = 'product_import_template.csv'
                 df.to_csv(template_path, index=False)
+            
             elif file_type.lower() == 'xlsx':
                 template_path = 'product_import_template.xlsx'
-                df.to_excel(template_path, index=False)
+                df.to_excel(template_path, index=False, engine='openpyxl')
+                
+                wb = load_workbook(template_path)
+                ws = wb.active
+                
+                categories = list(self.db.category.find(
+                    {'isDeleted': False},
+                    {'category_name': 1, 'sub_categories': 1}
+                ))
+                
+                category_names = [cat['category_name'] for cat in categories]
+                
+                # Extract all unique subcategories
+                subcategory_values = set()
+                for cat in categories:
+                    subcats = cat.get('sub_categories', [])
+                    for subcat in subcats:
+                        if isinstance(subcat, dict) and 'name' in subcat:
+                            subcategory_values.add(subcat['name'])
+                        elif isinstance(subcat, str):
+                            subcategory_values.add(subcat)
+                
+                subcategory_list = sorted(list(subcategory_values))
+                
+                # Category dropdown
+                if category_names:
+                    dv = DataValidation(
+                        type="list",
+                        formula1=f'"{",".join(category_names)}"'
+                    )
+                    ws.add_data_validation(dv)
+                    dv.add('C2:C1000')
+                
+                # Subcategory dropdown
+                if subcategory_list:
+                    dv2 = DataValidation(
+                        type="list",
+                        formula1=f'"{",".join(subcategory_list)}"'
+                    )
+                    ws.add_data_validation(dv2)
+                    dv2.add('D2:D1000')
+                
+                wb.save(template_path)
+            
             else:
                 raise ValueError(f"Unsupported template type: {file_type}")
             
@@ -1293,3 +1646,180 @@ class ProductService:
             
         except Exception as e:
             raise Exception(f"Error generating import template: {str(e)}")
+
+        
+    @staticmethod
+    def bulk_delete_products(product_ids, hard_delete=False):
+        deleted_count = 0
+        failed_deletions = []
+        
+        # Create service instance to use existing methods
+        service = ProductService()
+        
+        for product_id in product_ids:
+            try:
+                # Use your existing delete method that already works
+                success = service.delete_product(product_id, hard_delete)
+                if success:
+                    deleted_count += 1
+                else:
+                    failed_deletions.append({
+                        'product_id': product_id,
+                        'error': 'Product not found or delete failed'
+                    })
+            except Exception as e:
+                failed_deletions.append({
+                    'product_id': product_id,
+                    'error': str(e)
+                })
+        
+        return {
+            'deleted_count': deleted_count,
+            'failed_count': len(failed_deletions),
+            'total_requested': len(product_ids),
+            'failed_deletions': failed_deletions,
+            'success': deleted_count > 0
+        }
+    
+# Add this new method to ProductService class
+
+    def _create_initial_batch_if_needed(self, product_id, product_data):
+        """Create initial batch if stock is provided during product creation"""
+        try:
+            initial_stock = int(product_data.get('stock', 0))
+            
+            # Only create batch if stock is provided and > 0
+            if initial_stock > 0:
+                # Validate cost_price is provided when stock is given
+                cost_price = product_data.get('cost_price')
+                if cost_price is None or cost_price == 0:
+                    raise ValueError("Cost price is required when initial stock is provided")
+                
+                # Prepare batch data
+                batch_data = {
+                    'product_id': product_id,
+                    'quantity_received': initial_stock,
+                    'cost_price': float(cost_price),
+                    'expiry_date': product_data.get('expiry_date'),
+                    'supplier_id': product_data.get('supplier_id'),
+                    'date_received': product_data.get('date_received', datetime.utcnow()),
+                    'batch_number': f"INITIAL-{datetime.utcnow().strftime('%Y%m%d')}"
+                }
+                
+                # Create the batch using batch service
+                batch = self.batch_service.create_batch(batch_data)
+                logger.info(f"Created initial batch {batch['_id']} for product {product_id}")
+                
+                return batch
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error creating initial batch: {str(e)}")
+            raise Exception(f"Error creating initial batch: {str(e)}")
+    
+    def export_product_details_csv(self, product_id):
+        """Export a single product and all related batch data (purchases + adjustments) into a CSV"""
+        try:
+            product = self.get_product_by_id(product_id)
+            if not product:
+                raise ValueError(f"Product with ID {product_id} not found")
+
+            from io import StringIO
+            import csv
+
+            # Fetch all batches for this product
+            batches = list(self.db.batches.find({"product_id": product_id}))
+            output = StringIO()
+            writer = csv.writer(output)
+
+            # === PRODUCT DETAILS ===
+            writer.writerow(["=== PRODUCT DETAILS ==="])
+            writer.writerow(["Field", "Value"])
+            for key, value in product.items():
+                writer.writerow([key, value])
+            writer.writerow([])
+
+            # === PURCHASE HISTORY ===
+            writer.writerow(["=== PURCHASE HISTORY ==="])
+            if batches:
+                writer.writerow([
+                    "Batch Number", "Purchase Date", "Expiry Date", "Initial Qty",
+                    "Current Qty", "Unit Cost", "Total Cost", "Status"
+                ])
+                for batch in batches:
+                    total_cost = (
+                        float(batch.get("quantity_received", 0)) *
+                        float(batch.get("cost_price", 0))
+                    )
+                    writer.writerow([
+                        batch.get("batch_number", ""),
+                        batch.get("date_received", ""),
+                        batch.get("expiry_date", ""),
+                        batch.get("quantity_received", ""),
+                        batch.get("quantity_remaining", ""),
+                        batch.get("cost_price", ""),
+                        total_cost,
+                        batch.get("status", "")
+                    ])
+            else:
+                writer.writerow(["No batches found"])
+            writer.writerow([])
+
+            # === STOCK ADJUSTMENTS ===
+            writer.writerow(["=== STOCK ADJUSTMENTS ==="])
+            adjustment_rows = []
+            for batch in batches:
+                usage_history = batch.get("usage_history", [])
+                for usage in usage_history:
+                    adjustment_rows.append({
+                        "timestamp": usage.get("timestamp", ""),
+                        "batch_number": batch.get("batch_number", ""),
+                        "type": usage.get("adjustment_type", usage.get("reason", "")),
+                        "quantity": usage.get("quantity_used", ""),
+                        "remaining_after": usage.get("remaining_after", ""),
+                        "adjusted_by": usage.get("adjusted_by", ""),
+                        "notes": usage.get("notes", "")
+                    })
+
+            if adjustment_rows:
+                writer.writerow([
+                    "Date & Time", "Batch Number", "Type", "Quantity",
+                    "Remaining After", "Adjusted By", "Notes"
+                ])
+                for adj in adjustment_rows:
+                    writer.writerow([
+                        adj["timestamp"],
+                        adj["batch_number"],
+                        adj["type"],
+                        adj["quantity"],
+                        adj["remaining_after"],
+                        adj["adjusted_by"],
+                        adj["notes"]
+                    ])
+            else:
+                writer.writerow(["No adjustments found"])
+            writer.writerow([])
+
+            # === ACTIVE BATCHES ===
+            writer.writerow(["=== ACTIVE BATCHES ==="])
+            if batches:
+                writer.writerow(["Batch ID", "Quantity", "Cost Price", "Expiry Date", "Status"])
+                for batch in batches:
+                    writer.writerow([
+                        batch.get("_id", ""),
+                        batch.get("quantity_remaining", ""),
+                        batch.get("cost_price", ""),
+                        batch.get("expiry_date", ""),
+                        batch.get("status", "")
+                    ])
+            else:
+                writer.writerow(["No active batches found"])
+            writer.writerow([])
+
+            csv_content = output.getvalue()
+            output.close()
+            return csv_content
+
+        except Exception as e:
+            raise Exception(f"Error exporting product details to CSV: {str(e)}")

@@ -17,10 +17,23 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.http import HttpResponse
+from app.kpi_views.customer_product_views import (
+    CustomerProductListView,
+    CustomerProductDetailView,
+    CustomerProductSearchView,
+    CustomerProductByCategoryView,
+    CustomerFeaturedProductsView,
+)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/', include('app.urls')),
     path('api/v1/notifications/', include('notifications.urls')),
+    # Customer product catalogue (public)
+    path('api/v1/customer/products/', CustomerProductListView.as_view(), name='customer-products'),
+    path('api/v1/customer/products/search/', CustomerProductSearchView.as_view(), name='customer-products-search'),
+    path('api/v1/customer/products/featured/', CustomerFeaturedProductsView.as_view(), name='customer-products-featured'),
+    path('api/v1/customer/products/category/<str:category_id>/', CustomerProductByCategoryView.as_view(), name='customer-products-by-category'),
+    path('api/v1/customer/products/<str:product_id>/', CustomerProductDetailView.as_view(), name='customer-product-detail'),
     path('', lambda request: HttpResponse("POS System API is running!")),
 ]

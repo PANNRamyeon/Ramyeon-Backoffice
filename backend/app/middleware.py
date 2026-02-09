@@ -13,7 +13,8 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
             '/api/v1/auth/me/',
             '/api/v1/auth/logout/',
             '/api/v1/users/',  # Protect user management
-            '/api/v1/session-logs/',  # Protect session logs
+            '/api/v1/session-logs/', # Protect session logs
+            '/api/v1/category/',  
         ]
         
         # Define public paths (allowed without authentication)
@@ -23,7 +24,8 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
             '/api/v1/auth/login/',
             '/api/v1/auth/refresh/',
             '/api/v1/auth/verify-token/',
-            '/api/v1/customers/',  # Allow customer registration
+            '/api/v1/customers/',
+            '/api/v1/products/import/template/',
         ]
 
     def process_request(self, request):

@@ -7,8 +7,8 @@
           <div class="logo-placeholder">
               <img src="../assets/Logo_1.png" alt="PANN Logo" class="logo-image" />
           </div>
-          <h2 class="brand-title">POS System</h2>
-          <p class="brand-subtitle">Point of Sale Management</p>
+          <h2 class="brand-title">Back Office</h2>
+          <p class="brand-subtitle">Inventory and User Management</p>
         </div>
 
         <!-- Right Side - Login Form -->
@@ -27,27 +27,34 @@
                   class="form-input"
                   placeholder="Enter your email"
                   required
-                  :disabled="loading"
+                  :disabled="isLoading"
                 />
               </div>
 
               <!-- Password Field -->
               <div class="form-group">
                 <label for="password" class="form-label">Password:</label>
-                <input
-                  id="password"
-                  v-model="loginForm.password"
-                  type="password"
-                  class="form-input"
-                  placeholder="Enter your password"
-                  required
-                  :disabled="loading"
-                />
-              </div>
-
-              <!-- Error Message -->
-              <div v-if="error" class="error-message">
-                {{ error }}
+                <div class="password-input-wrapper">
+                  <input
+                    id="password"
+                    v-model="loginForm.password"
+                    :type="showPassword ? 'text' : 'password'"
+                    class="form-input password-input"
+                    placeholder="Enter your password"
+                    required
+                    :disabled="isLoading"
+                  />
+                  <button
+                    type="button"
+                    class="password-toggle-btn"
+                    @click="togglePasswordVisibility"
+                    :disabled="isLoading"
+                    tabindex="-1"
+                  >
+                    <Eye v-if="showPassword" :size="20" />
+                    <EyeOff v-else :size="20" />
+                  </button>
+                </div>
               </div>
 
               <!-- Success Message -->
@@ -55,13 +62,18 @@
                 {{ successMessage }}
               </div>
 
+              <!-- Failure Message -->
+              <div v-if="error" class="failure-message">
+                {{ error }}
+              </div>
+
               <!-- Login Button -->
               <button
                 type="submit"
                 class="login-button"
-                :disabled="loading"
+                :disabled="isLoading || !loginForm.email || !loginForm.password"
               >
-                {{ loading ? 'Signing In...' : 'Login' }}
+                {{ isLoading ? 'Signing In...' : 'Login' }}
               </button>
             </form>
 
@@ -71,15 +83,6 @@
                 Forgot Password?
               </a>
             </div>
-
-            <!-- Development Helper If database connection is gone, uncomment this pls lods, this will help verify it-->
-            <!--  <div class="dev-helper" v-if="isDev">
-              <p><strong>API URL:</strong> {{ apiBaseUrl }}</p>
-              <p><strong>Environment:</strong> Development</p>
-              <button type="button" @click="testConnection" class="test-button">
-                Test API Connection
-              </button>
-            </div>-->
           </div>
         </div>
       </div>
@@ -87,188 +90,146 @@
   </div>
 </template>
 
-<script>
-import apiService from '../services/api.js'
+<script setup>
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuth } from '@/composables/auth/useAuth.js'
+import { Eye, EyeOff } from 'lucide-vue-next'
 
-export default {
-  name: 'LoginPage',
-  data() {
-    return {
-      loginForm: {
-        email: '',
-        password: ''
-      },
-      loading: false,
-      error: null,
-      successMessage: null,
-      // Use the API service base URL
-      apiBaseUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1',
-      isDev: import.meta.env.DEV
+const router = useRouter()
+
+// Use the auth composable
+const { 
+  login, 
+  user,
+  token,
+  isAuthenticated,
+  isLoading, 
+  error: authError 
+} = useAuth()
+
+// Form data
+const loginForm = ref({
+  email: '',
+  password: ''
+})
+
+const showPassword = ref(false)
+const successMessage = ref(null)
+const localError = ref(null)
+
+// Toggle password visibility
+const togglePasswordVisibility = () => {
+  showPassword.value = !showPassword.value
+}
+
+// Computed - combine local error with auth error
+const error = computed(() => localError.value || authError.value)
+
+// Computed
+const apiBaseUrl = computed(() => import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1')
+const isDev = computed(() => import.meta.env.DEV)
+
+// Clear error when user starts typing
+watch(() => loginForm.value.email, () => {
+  if (localError.value) {
+    localError.value = null
+  }
+})
+
+watch(() => loginForm.value.password, () => {
+  if (localError.value) {
+    localError.value = null
+  }
+})
+
+// Watch for auth errors and sync to local error for better control
+watch(authError, (newError) => {
+  if (newError) {
+    // Format error message to be more user-friendly
+    if (newError.includes('Invalid email') || newError.includes('Invalid password') || newError.includes('email or password')) {
+      localError.value = 'Invalid email or password. Please check your credentials and try again.'
+    } else if (newError.includes('Network') || newError.includes('timeout')) {
+      localError.value = 'Network error. Please check your connection and try again.'
+    } else {
+      localError.value = newError
     }
-  },
-  methods: {
-    async handleLogin() {
-      // Reset state
-      this.error = null
-      this.successMessage = null
-      this.loading = true
+  }
+})
 
-      try {
-        // Validate form
-        if (!this.loginForm.email || !this.loginForm.password) {
-          throw new Error('Please fill in all fields')
-        }
-
-        console.log('Attempting login with API service...')
-        console.log('API Base URL:', this.apiBaseUrl)
-
-        // Use the API service instead of direct fetch
-        const data = await apiService.login(this.loginForm.email, this.loginForm.password)
-        
-        console.log('Login response data:', data)
-
-        // Handle successful login
-        await this.handleLoginSuccess(data)
-
-      } catch (error) {
-        console.error('Login error:', error)
-        this.error = error.message || 'An error occurred during login'
-      } finally {
-        this.loading = false
-      }
-    },
-
-    async handleLoginSuccess(data) {
-      this.successMessage = 'Login successful! Redirecting...'
-      
-      // Store authentication data
-      if (data.access_token || data.token) {
-        localStorage.setItem('authToken', data.access_token || data.token)
-      }
-      
-      if (data.refresh_token) {
-        localStorage.setItem('refreshToken', data.refresh_token)
-      }
-
-      if (data.user) {
-        localStorage.setItem('userData', JSON.stringify(data.user))
-      }
-
-      console.log('Login successful:', data)
-      console.log('Stored token:', localStorage.getItem('authToken'))
-
-      // Navigate to dashboard using Vue Router
-      setTimeout(() => {
-        this.$router.push('/dashboard')
-          .then(() => {
-            console.log('Successfully navigated to dashboard')
-          })
-          .catch((error) => {
-            console.error('Navigation error:', error)
-            // Fallback: try to navigate to home
-            this.$router.push('/home')
-          })
-      }, 1000) // Small delay to show success message
-    },
-
-    async handleLogout() {
-      try {
-        // Use API service for logout
-        await apiService.logout()
-      } catch (error) {
-        console.error('Logout error:', error)
-      } finally {
-        // Clear stored data regardless of API call success
-        localStorage.removeItem('authToken')
-        localStorage.removeItem('refreshToken')
-        localStorage.removeItem('userData')
-        
-        // Reset form
-        this.loginForm = { email: '', password: '' }
-        this.error = null
-        this.successMessage = null
-        
-        // Navigate back to login
-        this.$router.push('/login')
-      }
-    },
-
-    handleForgotPassword() {
-      // Handle forgot password functionality
-      alert('Forgot password functionality would be implemented here')
-    },
-
-    // Development helper method using API service
-    async testConnection() {
-      try {
-        this.error = null
-        this.successMessage = null
-        
-        console.log('Testing connection with API service...')
-        
-        // Use the health check method from API service
-        const data = await apiService.healthCheck()
-        console.log('Health check response:', data)
-        
-        this.successMessage = 'API connection successful!'
-      } catch (error) {
-        console.error('Connection test failed:', error)
-        this.error = `Connection failed: ${error.message}`
-      }
-    },
-
-    // Alternative system status test
-    async testSystemStatus() {
-      try {
-        this.error = null
-        this.successMessage = null
-        
-        console.log('Testing system status...')
-        
-        const data = await apiService.getSystemStatus()
-        console.log('System status response:', data)
-        
-        this.successMessage = 'System status check successful!'
-      } catch (error) {
-        console.error('System status test failed:', error)
-        this.error = `System status failed: ${error.message}`
-      }
-    },
-
-    // Method to check if user is authenticated
-    isAuthenticated() {
-      return !!localStorage.getItem('authToken')
-    },
-
-    // Method to get stored user data
-    getUserData() {
-      const userData = localStorage.getItem('userData')
-      return userData ? JSON.parse(userData) : null
-    },
-
-    // Method to get auth token for API calls
-    getAuthToken() {
-      return localStorage.getItem('authToken')
+// Enhanced login handler with debugging
+const handleLogin = async () => {
+  // Clear previous messages
+  successMessage.value = null
+  localError.value = null
+  
+  try {
+    // Client-side validation
+    if (!loginForm.value.email || !loginForm.value.password) {
+      localError.value = 'Please fill in all fields'
+      return
     }
-  },
 
-  mounted() {
-    // Check if user is already authenticated
-    if (this.isAuthenticated()) {
-      console.log('User already authenticated, redirecting to dashboard')
-      this.$router.push('/dashboard')
+    // Basic email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(loginForm.value.email)) {
+      localError.value = 'Please enter a valid email address'
+      return
     }
-    
-    // Log current configuration for debugging
-    console.log('Login component mounted')
-    console.log('API Base URL:', this.apiBaseUrl)
-    console.log('Environment:', import.meta.env.MODE)
-    console.log('API Service imported successfully:', !!apiService)
+
+    const success = await login(loginForm.value.email, loginForm.value.password)
+
+    if (success) {
+      await handleLoginSuccess()
+    } else {
+      // If login returns false, check if there's an auth error
+      // If not, set a generic error message
+      if (!authError.value) {
+        localError.value = 'Invalid email or password. Please try again.'
+      }
+    }
+  } catch (err) {
+    console.error('LOGIN PAGE: Login exception:', err)
+    // Set error message from exception or use a default
+    localError.value = err.message || 'Invalid email or password. Please try again.'
   }
 }
+
+const handleLoginSuccess = async () => {
+  // Clear any previous errors
+  localError.value = null
+  
+  // Wait a bit more for reactivity to settle
+  await new Promise(resolve => setTimeout(resolve, 100))
+
+  successMessage.value = 'Login successful! Redirecting...'
+
+  // Proceed with redirect even if isAuthenticated is still false
+  // The router guard will handle the final token check
+  setTimeout(() => {
+    router.push('/dashboard')
+      .catch((error) => {
+        console.error('LOGIN PAGE: Navigation error:', error)
+        router.push('/home')
+      })
+  }, 1000)
+}
+
+const handleForgotPassword = () => {
+  router.push('/forgot-password')
+}
+
+// Enhanced onMounted with debugging
+onMounted(() => {
+  // Check if already authenticated
+  if (isAuthenticated.value) {
+    router.push('/dashboard')
+  }
+})
 </script>
 
 <style scoped>
+/* All your existing styles remain exactly the same */
 .login-page {
   min-height: 100vh;
   background-color: #9ca3af;
@@ -411,6 +372,48 @@ export default {
   color: #9ca3af;
 }
 
+/* Password Input Wrapper */
+.password-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.password-input {
+  width: 100%;
+  padding-right: 3rem;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  transition: color 0.2s ease;
+  z-index: 1;
+}
+
+.password-toggle-btn:hover:not(:disabled) {
+  color: #667eea;
+}
+
+.password-toggle-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.password-toggle-btn:focus {
+  outline: none;
+  color: #667eea;
+}
+
 .error-message {
   background-color: #fef2f2;
   border: 1px solid #fecaca;
@@ -425,6 +428,16 @@ export default {
   background-color: #f0fdf4;
   border: 1px solid #bbf7d0;
   color: #16a34a;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.failure-message {
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
   padding: 0.75rem;
   border-radius: 0.5rem;
   font-size: 0.875rem;
@@ -472,31 +485,6 @@ export default {
 .forgot-password:hover {
   color: #764ba2;
   text-decoration: underline;
-}
-
-.dev-helper {
-  margin-top: 2rem;
-  padding: 1rem;
-  background-color: #f8fafc;
-  border-radius: 0.5rem;
-  border: 1px solid #e2e8f0;
-  font-size: 0.75rem;
-  color: #64748b;
-}
-
-.test-button {
-  background-color: #667eea;
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 0.25rem;
-  font-size: 0.75rem;
-  cursor: pointer;
-  margin-top: 0.5rem;
-}
-
-.test-button:hover {
-  background-color: #764ba2;
 }
 
 /* Animation */

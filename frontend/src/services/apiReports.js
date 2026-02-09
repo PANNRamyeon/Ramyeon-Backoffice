@@ -39,7 +39,6 @@ class SalesAPIService {
    */
   async getAllInvoices(params = {}) {
     try {
-      console.log("This API call is getting all sales invoices");
       const response = await api.get('/invoices/', { params });
       return this.handleResponse(response);
     } catch (error) {
@@ -55,7 +54,6 @@ class SalesAPIService {
    */
   async getInvoiceById(invoiceId) {
     try {
-      console.log(`Getting invoice details for ID: ${invoiceId}`);
       const response = await api.get(`/invoices/${invoiceId}/`);
       return this.handleResponse(response);
     } catch (error) {
@@ -71,7 +69,6 @@ class SalesAPIService {
    */
   async createInvoice(invoiceData) {
     try {
-      console.log("Creating new invoice");
       const response = await api.post('/invoices/', invoiceData);
       return this.handleResponse(response);
     } catch (error) {
@@ -88,7 +85,6 @@ class SalesAPIService {
    */
   async updateInvoice(invoiceId, updateData) {
     try {
-      console.log(`Updating invoice: ${invoiceId}`);
       const response = await api.put(`/invoices/${invoiceId}/`, updateData);
       return this.handleResponse(response);
     } catch (error) {
@@ -104,7 +100,6 @@ class SalesAPIService {
    */
   async deleteInvoice(invoiceId) {
     try {
-      console.log(`Deleting invoice: ${invoiceId}`);
       const response = await api.delete(`/invoices/${invoiceId}/`);
       return this.handleResponse(response);
     } catch (error) {
@@ -124,17 +119,15 @@ class SalesAPIService {
    */
   async getTopItems(params = {}) {
     try {
-      console.log("Getting top items");
-      
       const queryParams = {
         limit: params.limit || 5,
         ...params
       };
-      
-      const response = await api.get('reports/top-item/', { 
-        params: queryParams 
+
+      const response = await api.get('reports/top-item/', {
+        params: queryParams
       });
-      
+
       return response.data;
     } catch (error) {
       console.error("Error fetching top items:", error);
@@ -149,17 +142,15 @@ class SalesAPIService {
    */
   async getTopChartItems(params = {}) {
     try {
-      console.log("Getting top chart items with date filtering");
-      
       const queryParams = {
         limit: params.limit || 10,
         ...params
       };
-      
-      const response = await api.get('reports/top-chart-item/', { 
-        params: queryParams 
+
+      const response = await api.get('reports/top-chart-item/', {
+        params: queryParams
       });
-      
+
       return response.data;
     } catch (error) {
       console.error("Error fetching top chart items:", error);
@@ -174,14 +165,12 @@ class SalesAPIService {
    */
   async getSalesItemHistory(params = {}) {
     try {
-      console.log("Getting sales item history");
-      
       const queryParams = {
         page: params.page || 1,
         page_size: params.page_size || 10,
         ...params
       };
-      
+
       const response = await api.get('reports/item-history/', { params: queryParams });
       return this.handleResponse(response);
     } catch (error) {
@@ -201,7 +190,6 @@ class SalesAPIService {
    */
   async getSalesStatistics(params = {}) {
     try {
-      console.log("Getting sales statistics");
       const response = await api.get('/invoices/stats/', { params });
       return this.handleResponse(response);
     } catch (error) {
@@ -217,7 +205,6 @@ class SalesAPIService {
    */
   async getTopSellingItems(params = {}) {
     try {
-      console.log("Getting top selling items");
       const response = await api.get('/invoices/top-items/', { params });
       return this.handleResponse(response);
     } catch (error) {
@@ -233,7 +220,6 @@ class SalesAPIService {
    */
   async getSalesChartData(params = {}) {
     try {
-      console.log("Getting sales chart data");
       const response = await api.get('/invoices/chart-data/', { params });
       return this.handleResponse(response);
     } catch (error) {
@@ -253,7 +239,6 @@ class SalesAPIService {
    */
   async getSalesByPaymentMethod(params = {}) {
     try {
-      console.log("Getting sales by payment method");
       const response = await api.get('/invoices/by-payment-method/', { params });
       return this.handleResponse(response);
     } catch (error) {
@@ -269,11 +254,86 @@ class SalesAPIService {
    */
   async getSalesByType(params = {}) {
     try {
-      console.log("Getting sales by type");
       const response = await api.get('/invoices/by-sales-type/', { params });
       return this.handleResponse(response);
     } catch (error) {
       console.error("Error fetching sales by type:", error);
+      this.handleError(error);
+    }
+  }
+
+  /**
+   * Get sales display by item
+   * @param {Object} params - Query parameters (date_range, item_id, etc.)
+   * @returns {Promise<Object>} Sales display by item data
+   */
+  async getSalesDisplayByItem(params = {}) {
+    try {
+      const response = await api.get('/sales-display/by-item/', { params });
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('Error fetching sales display by item:', error);
+      this.handleError(error);
+    }
+  }
+
+  async getSalesDisplayPosSales(params = {}) {
+    try {
+      const response = await api.get('/sales-display/pos-sales/', { params });
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('Error fetching POS sales:', error);
+      this.handleError(error);
+    }
+  }
+
+  async getSalesDisplayOnlineTransactions(params = {}) {
+    try {
+      const response = await api.get('/sales-display/online-transactions/', { params });
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('Error fetching online transactions:', error);
+      this.handleError(error);
+    }
+  }
+
+  /**
+   * Get recent sales transactions
+   * @param {Object} params - Query parameters (limit, etc.)
+   * @returns {Promise<Object>} Recent sales transactions
+   */
+  async getRecentSales(params = {}) {
+    try {
+      const queryParams = {
+        limit: params.limit || 20,
+        ...params
+      };
+      const response = await api.get('/sales/recent/', { params: queryParams });
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('Error fetching recent sales:', error);
+      this.handleError(error);
+    }
+  }
+
+  /**
+   * Get sales by period (daily, weekly, monthly)
+   * @param {Object} params - Query parameters (start_date, end_date, period: 'daily'|'weekly'|'monthly', source, etc.)
+   * @returns {Promise<Object>} Sales data grouped by period
+   */
+  async getSalesByPeriod(params = {}) {
+    try {
+      if (!params.start_date || !params.end_date) {
+        throw new Error('start_date and end_date are required');
+      }
+      const queryParams = {
+        period: params.period || 'monthly',
+        ...params
+      };
+      const response = await api.get('/sales-report/by-period/', { params: queryParams });
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('Error fetching sales by period:', error);
       this.handleError(error);
     }
   }
@@ -290,28 +350,19 @@ class SalesAPIService {
    */
   async bulkImportCSV(file, onProgress = null) {
     try {
-      console.log("Starting CSV bulk import...");
-      console.log("File details:", {
-        name: file.name,
-        size: file.size,
-        type: file.type
-      });
-      
       // Validate file before upload
       if (!this._validateFileType(file, ['.csv'])) {
         throw new Error('Invalid file type. Please upload a CSV file.');
       }
-      
+
       if (!this._validateFileSize(file, 50)) { // 50MB limit
         throw new Error('File size too large. Please upload a file smaller than 50MB.');
       }
-      
+
       // Create FormData for file upload
       const formData = new FormData();
       formData.append('file', file);
-      
-      console.log("Sending CSV to endpoint: /invoices/bulk-import/");
-      
+
       // Make the API call
       const response = await api.post('/invoices/bulk-import/', formData, {
         headers: {
@@ -325,10 +376,7 @@ class SalesAPIService {
           }
         }
       });
-      
-      console.log("CSV import response:", response);
-      console.log("Import summary:", response.data?.summary);
-      
+
       return this.handleResponse(response);
     } catch (error) {
       console.error("Error in CSV bulk import:", error);
@@ -339,21 +387,21 @@ class SalesAPIService {
         data: error.response?.data,
         url: error.config?.url
       });
-      
+
       // Handle specific error cases
       if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
         throw new Error('Import is taking longer than expected. The file might be too large or the server is busy. Please try with a smaller file or try again later.');
       }
-      
+
       if (error.response?.status === 413) {
         throw new Error('File is too large for the server. Please try a smaller file.');
       }
-      
+
       if (error.response?.status === 400) {
         const errorMsg = error.response?.data?.error || 'Invalid CSV file format or content.';
         throw new Error(errorMsg);
       }
-      
+
       this.handleError(error);
     }
   }
@@ -364,36 +412,33 @@ class SalesAPIService {
    */
   async downloadCSVTemplate() {
     try {
-      console.log("Downloading CSV template...");
-      
       const response = await api.get('/invoices/template/', {
         responseType: 'blob',
         timeout: 60000,
       });
-      
+
       // Create download
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute('download', 'sales_import_template.csv');
-      
+
       // Trigger download
       document.body.appendChild(link);
       link.click();
-      
+
       // Cleanup
       link.remove();
       window.URL.revokeObjectURL(url);
-      
-      console.log("CSV template downloaded successfully");
+
       return true;
     } catch (error) {
       console.error("Error downloading CSV template:", error);
-      
+
       if (error.response?.status === 404) {
         throw new Error('CSV template endpoint not found. Please contact support.');
       }
-      
+
       this.handleError(error);
     }
   }
@@ -405,7 +450,6 @@ class SalesAPIService {
    */
   async getImportHistory(params = {}) {
     try {
-      console.log("Getting import history...");
       const response = await api.get('/invoices/import-history/', { params });
       return this.handleResponse(response);
     } catch (error) {
@@ -425,33 +469,29 @@ class SalesAPIService {
    */
   async exportTransactions(filters = {}) {
     try {
-      console.log("Exporting sales transactions to CSV...");
-      console.log("Export filters:", filters);
-      
       const response = await api.get('/invoices/export/', {
         params: filters,
         responseType: 'blob',
         timeout: 120000, // 2 minutes for large exports
       });
-      
+
       // Create download
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
       const link = document.createElement('a');
       link.href = url;
-      
+
       // Generate filename with timestamp
       const timestamp = this._generateTimestamp();
       link.setAttribute('download', `sales_export_${timestamp}.csv`);
-      
+
       // Trigger download
       document.body.appendChild(link);
       link.click();
-      
+
       // Cleanup
       link.remove();
       window.URL.revokeObjectURL(url);
-      
-      console.log("Sales transactions exported successfully");
+
       return true;
     } catch (error) {
       console.error("Error exporting transactions:", error);

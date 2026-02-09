@@ -1,545 +1,806 @@
 <template>
-  <div v-if="show" class="modal-overlay" @click="handleOverlayClick">
-    <div class="modal-content" @click.stop>
+  <div 
+    v-if="isVisible" 
+    class="modal-backdrop"
+    @click="handleBackdropClick"
+  >
+    <div class="modal-container" @click.stop>
+
       <!-- Modal Header -->
-      <div class="modal-header">
-        <h2 class="modal-title">
-          {{ mode === 'add' ? 'Add New Customer' : mode === 'edit' ? 'Edit Customer' : 'Customer Details' }}
-        </h2>
+      <div class="modal-header d-flex justify-content-between align-items-center">
+        <h3 class="text-primary mb-0 fw-semibold">
+          {{ getModalTitle() }}
+        </h3>
+
         <button 
-          type="button" 
-          class="btn btn-cancel btn-sm btn-icon-only"
+          class="btn-close"
           @click="closeModal"
+          :disabled="isLoading"
         >
-          <X :size="16" />
+          <X :size="20" />
         </button>
       </div>
 
       <!-- Modal Body -->
       <div class="modal-body">
-        <!-- View Mode -->
-        <div v-if="mode === 'view'" class="customer-details">
-          <div class="row mb-2">
-            <div class="col-4 fw-bold detail-label">ID:</div>
-            <div class="col-8 detail-value">{{ customer.customer_id || customer._id }}</div>
+
+        <!-- Error -->
+        <div v-if="error" class="status-error mb-4">
+          <AlertTriangle :size="16" />
+          <span class="text-status-error fw-medium">{{ error }}</span>
+        </div>
+
+        <form @submit.prevent="handleSubmit">
+
+          <!-- USERNAME -->
+          <div class="mb-4">
+            <label class="form-label text-secondary fw-medium mb-2">
+              Username <span class="text-error">*</span>
+            </label>
+
+            <!-- Editable only when creating -->
+            <input
+              v-if="currentMode !== 'view'"
+              v-model="form.username"
+              type="text"
+              class="form-control"
+              placeholder="Enter unique username"
+              required
+              :disabled="isLoading || currentMode !== 'create'"
+            />
+
+            <!-- View mode -->
+            <div v-else class="form-control-plaintext text-primary fw-medium">
+              {{ form.username }}
+            </div>
+
+            <small class="form-text text-tertiary-medium">
+              {{ currentMode === 'create' ? 'Username cannot be changed later' : 'Username cannot be changed' }}
+            </small>
           </div>
-          
-          <div class="row mb-2">
-            <div class="col-4 fw-bold detail-label">Name:</div>
-            <div class="col-8 detail-value">{{ customer.full_name }}</div>
-          </div>
-          
-          <div class="row mb-2">
-            <div class="col-4 fw-bold detail-label">Email:</div>
-            <div class="col-8 detail-value">{{ customer.email }}</div>
-          </div>
-          
-          <div class="row mb-2">
-            <div class="col-4 fw-bold detail-label">Phone:</div>
-            <div class="col-8 detail-value">{{ customer.phone || 'N/A' }}</div>
-          </div>
-          
-          <div class="row mb-2">
-            <div class="col-4 fw-bold detail-label">Address:</div>
-            <div class="col-8 detail-value">{{ formatAddress(customer.delivery_address) }}</div>
-          </div>
-          
-          <div class="row mb-2">
-            <div class="col-4 fw-bold detail-label">Loyalty Points:</div>
-            <div class="col-8">
-              <span class="badge bg-success">{{ customer.loyalty_points || 0 }}</span>
+
+          <!-- FULL NAME -->
+          <div class="mb-4">
+            <label class="form-label text-secondary fw-medium mb-2">
+              Full Name <span v-if="currentMode !== 'view'" class="text-error">*</span>
+            </label>
+
+            <input
+              v-if="currentMode !== 'view'"
+              v-model="form.full_name"
+              type="text"
+              class="form-control"
+              placeholder="Enter customer's full name"
+              required
+              :disabled="isLoading"
+            />
+            <div v-else class="form-control-plaintext text-primary fw-medium">
+              {{ form.full_name || 'Not provided' }}
             </div>
           </div>
-          
-          <div class="row mb-2">
-            <div class="col-4 fw-bold detail-label">Status:</div>
-            <div class="col-8">
-              <span class="badge" :class="customer.status === 'active' ? 'bg-success' : 'bg-secondary'">
-                {{ customer.status || 'active' }}
+
+          <!-- EMAIL -->
+          <div class="mb-4">
+            <label class="form-label text-secondary fw-medium mb-2">
+              Email Address <span v-if="currentMode !== 'view'" class="text-error">*</span>
+            </label>
+
+            <input
+              v-if="currentMode !== 'view'"
+              v-model="form.email"
+              type="email"
+              class="form-control"
+              placeholder="customer@example.com"
+              required
+              :disabled="isLoading"
+            />
+            <div v-else class="form-control-plaintext text-secondary">
+              {{ form.email || 'Not provided' }}
+            </div>
+          </div>
+          <!-- Password (for new customers) -->
+          <div v-if="currentMode === 'create'" class="mb-4">
+            <label class="form-label text-secondary fw-medium mb-2">
+              Password <span class="text-error">*</span>
+            </label>
+
+            <input
+              v-model="form.password"
+              type="password"
+              class="form-control"
+              placeholder="Enter password for customer account"
+              required
+              minlength="6"
+              :disabled="isLoading"
+            />
+
+            <small class="form-text text-tertiary-medium">
+              Minimum 6 characters
+            </small>
+          </div>
+
+
+          <!-- PASSWORD (edit mode with toggle) -->
+          <div v-if="currentMode === 'edit'" class="mb-4">
+            <div class="d-flex justify-content-between mb-2">
+              <label class="form-label text-secondary fw-medium mb-0">
+                Password
+              </label>
+              <button
+                type="button"
+                class="btn btn-sm btn-secondary"
+                @click="togglePasswordChange"
+                :disabled="isLoading"
+              >
+                {{ showPasswordFields ? 'Cancel Password Change' : 'Change Password' }}
+              </button>
+            </div>
+
+            <div v-if="showPasswordFields" class="password-change-section">
+              <div class="mb-3">
+                <input
+                  v-model="form.new_password"
+                  type="password"
+                  class="form-control"
+                  placeholder="Enter new password"
+                  minlength="6"
+                />
+              </div>
+              <div>
+                <input
+                  v-model="form.confirm_password"
+                  type="password"
+                  class="form-control"
+                  placeholder="Confirm new password"
+                  :class="{ 'is-invalid': passwordMismatch }"
+                />
+                <div v-if="passwordMismatch" class="invalid-feedback d-block">
+                  Passwords do not match
+                </div>
+              </div>
+            </div>
+
+            <small v-else class="form-text">
+              Click “Change Password” to update this customer’s password.
+            </small>
+          </div>
+
+          <!-- PHONE -->
+          <div class="mb-4">
+            <label class="form-label text-secondary fw-medium mb-2">Phone Number</label>
+            <input
+              v-if="currentMode !== 'view'"
+              v-model="form.phone"
+              type="tel"
+              class="form-control"
+              placeholder="+1 (555) 123-4567"
+            />
+            <div v-else class="form-control-plaintext text-secondary">
+              {{ form.phone || 'Not provided' }}
+            </div>
+          </div>
+
+          <!-- DELIVERY ADDRESS -->
+          <div class="mb-4">
+            <label class="form-label text-secondary fw-medium mb-2">Delivery Address</label>
+            <div class="row g-2">
+              <div class="col-12">
+                <input
+                  v-model="form.delivery_address.street"
+                  type="text"
+                  class="form-control"
+                  placeholder="Street address"
+                  :disabled="currentMode === 'view'"
+                />
+              </div>
+              <div class="col-6">
+                <input
+                  v-model="form.delivery_address.city"
+                  type="text"
+                  class="form-control"
+                  placeholder="City"
+                  :disabled="currentMode === 'view'"
+                />
+              </div>
+              <div class="col-6">
+                <input
+                  v-model="form.delivery_address.barangay"
+                  type="text"
+                  class="form-control"
+                  placeholder="Barangay"
+                  :disabled="currentMode === 'view'"
+                />
+              </div>
+              <div class="col-6">
+                <input
+                  v-model="form.delivery_address.postal_code"
+                  type="text"
+                  class="form-control"
+                  placeholder="Postal code"
+                  :disabled="currentMode === 'view'"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- LOYALTY POINTS -->
+          <div v-if="currentMode !== 'create'" class="mb-4">
+            <label class="form-label">Loyalty Points</label>
+
+            <input
+              v-if="currentMode === 'edit'"
+              v-model.number="form.loyalty_points"
+              type="number"
+              class="form-control"
+              min="0"
+              placeholder="0"
+            />
+
+            <div v-else class="form-control-plaintext">
+              <span class="badge bg-success text-inverse fw-medium">
+                {{ form.loyalty_points || 0 }} points
               </span>
             </div>
           </div>
-          
-          <div class="row mb-2">
-            <div class="col-4 fw-bold detail-label">Date Created:</div>
-            <div class="col-8 detail-value">{{ formatDate(customer.date_created) }}</div>
-          </div>
-          
-          <div class="row mb-3">
-            <div class="col-4 fw-bold detail-label">Last Updated:</div>
-            <div class="col-8 detail-value">{{ formatDate(customer.last_updated) }}</div>
-          </div>
-        </div>
 
-        <!-- Add/Edit Mode -->
-        <form v-else @submit.prevent="handleSubmit">
-          <div class="mb-3">
-            <label for="username" class="form-label">Username <span class="text-danger">*</span></label>
-            <input 
-              id="username"
-              v-model="form.username" 
-              type="text" 
-              class="form-control"
-              :class="{ 'is-invalid': errors.username }"
-              required 
-              :disabled="formLoading"
-              placeholder="Enter username"
-            />
-            <div v-if="errors.username" class="invalid-feedback">{{ errors.username }}</div>
-          </div>
-          
-          <div class="mb-3">
-            <label for="full_name" class="form-label">Full Name <span class="text-danger">*</span></label>
-            <input 
-              id="full_name"
-              v-model="form.full_name" 
-              type="text" 
-              class="form-control"
-              :class="{ 'is-invalid': errors.full_name }"
-              required 
-              :disabled="formLoading"
-              placeholder="Enter full name"
-            />
-            <div v-if="errors.full_name" class="invalid-feedback">{{ errors.full_name }}</div>
-          </div>
+          <!-- STATUS -->
+          <div v-if="currentMode !== 'create'" class="mb-4">
+            <label>Status</label>
 
-          <div class="mb-3">
-            <label for="email" class="form-label">Email <span class="text-danger">*</span></label>
-            <input 
-              id="email"
-              v-model="form.email" 
-              type="email" 
-              class="form-control"
-              :class="{ 'is-invalid': errors.email }"
-              required 
-              :disabled="formLoading"
-              placeholder="Enter email address"
-            />
-            <div v-if="errors.email" class="invalid-feedback">{{ errors.email }}</div>
-          </div>
+            <select
+              v-if="currentMode === 'edit'"
+              v-model="form.status"
+              class="form-select"
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
 
-          <div class="mb-3">
-            <label for="phone" class="form-label">Phone</label>
-            <input 
-              id="phone"
-              v-model="form.phone" 
-              type="tel" 
-              class="form-control"
-              :class="{ 'is-invalid': errors.phone }"
-              :disabled="formLoading"
-              placeholder="Enter phone number"
-            />
-            <div v-if="errors.phone" class="invalid-feedback">{{ errors.phone }}</div>
-          </div>
-
-          <div class="mb-3">
-            <label for="street" class="form-label">Street Address</label>
-            <input 
-              id="street"
-              v-model="form.delivery_address.street" 
-              type="text" 
-              class="form-control"
-              :class="{ 'is-invalid': errors.street }"
-              :disabled="formLoading"
-              placeholder="Enter street address"
-            />
-            <div v-if="errors.street" class="invalid-feedback">{{ errors.street }}</div>
-          </div>
-
-          <div class="row mb-3">
-            <div class="col-md-6">
-              <label for="city" class="form-label">City</label>
-              <input 
-                id="city"
-                v-model="form.delivery_address.city" 
-                type="text" 
-                class="form-control"
-                :class="{ 'is-invalid': errors.city }"
-                :disabled="formLoading"
-                placeholder="Enter city"
-              />
-              <div v-if="errors.city" class="invalid-feedback">{{ errors.city }}</div>
-            </div>
-
-            <div class="col-md-6">
-              <label for="postal_code" class="form-label">Postal Code</label>
-              <input 
-                id="postal_code"
-                v-model="form.delivery_address.postal_code" 
-                type="text" 
-                class="form-control"
-                :class="{ 'is-invalid': errors.postal_code }"
-                :disabled="formLoading"
-                placeholder="Enter postal code"
-              />
-              <div v-if="errors.postal_code" class="invalid-feedback">{{ errors.postal_code }}</div>
+            <div v-else class="form-control-plaintext">
+              <span class="badge bg-success text-inverse fw-medium">
+                {{ form.status }}
+              </span>
             </div>
           </div>
 
-          <div class="mb-3">
-            <label for="loyalty_points" class="form-label">Loyalty Points</label>
-            <input 
-              id="loyalty_points"
-              v-model.number="form.loyalty_points" 
-              type="number" 
-              class="form-control"
-              :class="{ 'is-invalid': errors.loyalty_points }"
-              min="0"
-              :disabled="formLoading"
-              placeholder="0"
-            />
-            <div v-if="errors.loyalty_points" class="invalid-feedback">{{ errors.loyalty_points }}</div>
-          </div>
-
-          <!-- Error Display -->
-          <div v-if="generalError" class="alert alert-danger">
-            {{ generalError }}
-          </div>
         </form>
       </div>
 
-      <!-- Modal Footer -->
+      <!-- FOOTER -->
       <div class="modal-footer">
-        <div class="d-flex justify-content-end gap-2">
-          <button 
-            type="button" 
-            class="btn btn-cancel" 
-            @click="closeModal" 
-            :disabled="formLoading"
-          >
-            Cancel
-          </button>
-          
-          <!-- View Mode Actions -->
-          <template v-if="mode === 'view'">
-            <button 
-              class="btn btn-edit btn-with-icon" 
-              @click="switchToEditMode"
-              :disabled="loading"
-            >
-              <Edit :size="16" />
-              <span>Edit</span>
-            </button>
-          </template>
-          
-          <!-- Add/Edit Mode Actions -->
-          <template v-else>
-            <button 
-              type="submit" 
-              class="btn btn-save" 
-              @click="handleSubmit"
-              :disabled="formLoading"
-            >
-              {{ formLoading ? 'Saving...' : (mode === 'edit' ? 'Update' : 'Create') }}
-            </button>
-          </template>
-        </div>
+
+        <!-- VIEW MODE → shows Edit button -->
+        <button 
+          v-if="currentMode === 'view'"
+          class="btn btn-edit btn-sm"
+          @click="switchToEditMode"
+        >
+          <Edit :size="16" /> Edit
+        </button>
+
+        <button class="btn btn-cancel" @click="closeModal" :disabled="isLoading">
+          {{ currentMode === 'view' ? 'Close' : 'Cancel' }}
+        </button>
+
+        <button
+          v-if="currentMode !== 'view'"
+          class="btn btn-submit btn-with-icon"
+          @click="handleSubmit"
+          :disabled="isLoading || !isFormValid"
+        >
+          {{ isLoading ? 'Saving...' : (currentMode === 'edit' ? 'Update Customer' : 'Add Customer') }}
+        </button>
+
       </div>
+
     </div>
   </div>
 </template>
 
-<script>
-import { X, Edit } from 'lucide-vue-next'
-import { useCustomers } from '@/composables/ui/customers/useCustomers'
-import { ref, watch, computed } from 'vue'
 
-export default {
-  name: 'AddCustomerModal',
-  components: {
-    X,
-    Edit
+
+<script setup>
+import { ref, computed, watch, nextTick } from 'vue'
+import { X, Edit, AlertTriangle } from 'lucide-vue-next'
+import { useModal } from '@/composables/ui/useModal.js'
+import { useCustomers } from '@/composables/api/useCustomers.js'
+
+// Props
+const props = defineProps({
+  mode: {
+    type: String,
+    default: 'create',
+    validator: (value) => ['create', 'edit', 'view'].includes(value)
   },
-  props: {
-    show: {
-      type: Boolean,
-      default: false
-    },
-    mode: {
-      type: String,
-      default: 'add',
-      validator: value => ['add', 'edit', 'view'].includes(value)
-    },
-    customer: {
-      type: Object,
-      default: () => null
-    }
+  customer: {
+    type: Object,
+    default: null
+  }
+})
+
+// Emits
+const emit = defineEmits(['close', 'success', 'mode-changed'])
+
+// Modal composable
+const { isVisible, isLoading, error, show, hide, setLoading, setError, clearError } = useModal()
+const { createCustomer, updateCustomer } = useCustomers()
+
+// internal mode state (used by template instead of props.mode)
+const currentMode = ref(props.mode)
+
+// form model
+const form = ref({
+  username: '',
+  full_name: '',
+  email: '',
+  phone: '',
+  password: '',
+  new_password: '',
+  confirm_password: '',
+  delivery_address: {
+    street: '',
+    city: '',
+    barangay: '',
+    postal_code: ''
   },
-  emits: ['close', 'edit-mode'],
-  setup(props, { emit }) {
-    // Use the customers composable
-    const {
-      formLoading,
-      formError,
-      saveCustomer,
-      formatAddress,
-      formatDate
-    } = useCustomers()
+  loyalty_points: 0,
+  status: 'active'
+})
 
-    // Local form state
-    const form = ref({
-      username: '',
-      full_name: '',
-      email: '',
-      phone: '',
-      delivery_address: {
-        street: '',
-        city: '',
-        postal_code: ''
-      },
-      loyalty_points: 0
-    })
+// Flags
+const showPasswordFields = ref(false)
 
-    const errors = ref({})
+// Computed
+const passwordMismatch = computed(() => {
+  if (!showPasswordFields.value) return false
+  if (!form.value.new_password || !form.value.confirm_password) return false
+  return form.value.new_password !== form.value.confirm_password
+})
 
-    // Initialize form when modal opens or customer changes
-    const initializeForm = () => {
-      if (props.mode === 'add') {
-        form.value = {
-          username: '',
-          full_name: '',
-          email: '',
-          phone: '',
-          delivery_address: {
-            street: '',
-            city: '',
-            postal_code: ''
-          },
-          loyalty_points: 0
-        }
-      } else if (props.customer && (props.mode === 'edit' || props.mode === 'view')) {
-        form.value = {
-          username: props.customer.username || '',
-          full_name: props.customer.full_name || '',
-          email: props.customer.email || '',
-          phone: props.customer.phone || '',
-          delivery_address: {
-            street: props.customer.delivery_address?.street || '',
-            city: props.customer.delivery_address?.city || '',
-            postal_code: props.customer.delivery_address?.postal_code || ''
-          },
-          loyalty_points: props.customer.loyalty_points || 0
-        }
-      }
-    }
+const isFormValid = computed(() => {
+  const hasRequired = form.value.username.trim() &&
+                      form.value.full_name.trim() &&
+                      form.value.email.trim()
 
-    const clearErrors = () => {
-      errors.value = {}
-    }
+  if (currentMode.value === 'create') {
+    return hasRequired && form.value.password.trim().length >= 6
+  }
 
-    const validateForm = () => {
-      errors.value = {}
-      let isValid = true
+  if (currentMode.value === 'edit' && showPasswordFields.value) {
+    const validPw =
+      form.value.new_password &&
+      form.value.new_password.length >= 6 &&
+      form.value.new_password === form.value.confirm_password
+    return hasRequired && validPw
+  }
 
-      // Required field validations
-      if (!form.value.username?.trim()) {
-        errors.value.username = 'Username is required'
-        isValid = false
-      }
+  return hasRequired
+})
 
-      if (!form.value.full_name?.trim()) {
-        errors.value.full_name = 'Full name is required'
-        isValid = false
-      }
-
-      if (!form.value.email?.trim()) {
-        errors.value.email = 'Email is required'
-        isValid = false
-      } else if (!isValidEmail(form.value.email)) {
-        errors.value.email = 'Please enter a valid email address'
-        isValid = false
-      }
-
-      // Loyalty points validation
-      if (form.value.loyalty_points < 0) {
-        errors.value.loyalty_points = 'Loyalty points cannot be negative'
-        isValid = false
-      }
-
-      return isValid
-    }
-
-    const isValidEmail = (email) => {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-      return emailRegex.test(email)
-    }
-
-    const handleSubmit = async () => {
-      clearErrors()
-      
-      if (!validateForm()) {
-        return
-      }
-
-      try {
-        await saveCustomer({ ...form.value })
-        emit('close')
-      } catch (error) {
-        // Error is handled in the composable
-        console.error('Form submission error:', error)
-      }
-    }
-
-    const switchToEditMode = () => {
-      emit('edit-mode', props.customer)
-    }
-
-    const closeModal = () => {
-      emit('close')
-    }
-
-    const handleOverlayClick = () => {
-      if (!formLoading.value) {
-        closeModal()
-      }
-    }
-
-    // Watch for prop changes
-    watch(() => props.show, (newVal) => {
-      if (newVal) {
-        initializeForm()
-        clearErrors()
-      }
-    })
-
-    watch(() => props.customer, (newVal) => {
-      if (newVal && props.show) {
-        initializeForm()
-      }
-    })
-
-    // Computed property for general error display
-    const generalError = computed(() => formError.value)
-
-    return {
-      form,
-      errors,
-      generalError,
-      formLoading,
-      initializeForm,
-      clearErrors,
-      validateForm,
-      isValidEmail,
-      handleSubmit,
-      switchToEditMode,
-      closeModal,
-      handleOverlayClick,
-      formatAddress,
-      formatDate
-    }
+// Methods
+const getModalTitle = () => {
+  switch (currentMode.value) {
+    case 'view': return 'Customer Details'
+    case 'edit': return 'Edit Customer'
+    default: return 'Add New Customer'
   }
 }
+
+const switchToEditMode = () => {
+  currentMode.value = 'edit'
+  emit('mode-changed', 'edit')
+}
+
+const togglePasswordChange = () => {
+  showPasswordFields.value = !showPasswordFields.value
+  if (!showPasswordFields.value) {
+    form.value.new_password = ''
+    form.value.confirm_password = ''
+  }
+}
+
+const resetForm = () => {
+  form.value = {
+    username: '',
+    full_name: '',
+    email: '',
+    phone: '',
+    password: '',
+    new_password: '',
+    confirm_password: '',
+    delivery_address: {
+      street: '',
+      city: '',
+      barangay: '',
+      postal_code: ''
+    },
+    loyalty_points: 0,
+    status: 'active'
+  }
+  showPasswordFields.value = false
+}
+
+const populateForm = () => {
+  if (!props.customer) return
+
+  form.value = {
+    username: props.customer.username || '',
+    full_name: props.customer.full_name || '',
+    email: props.customer.email || '',
+    phone: props.customer.phone || '',
+    password: '',
+    new_password: '',
+    confirm_password: '',
+    delivery_address: {
+      street: props.customer.delivery_address?.street || '',
+      city: props.customer.delivery_address?.city || '',
+      barangay: props.customer.delivery_address?.barangay || '',
+      postal_code: props.customer.delivery_address?.postal_code || ''
+    },
+    loyalty_points: props.customer.loyalty_points || 0,
+    status: props.customer.status || 'active'
+  }
+}
+
+const openModal = () => {
+  clearError()
+  showPasswordFields.value = false
+  currentMode.value = props.mode
+
+  if (props.mode === 'edit' || props.mode === 'view') {
+    populateForm()
+  } else {
+    resetForm()
+  }
+
+  show()
+}
+
+const closeModal = () => {
+  if (isLoading.value) return
+  showPasswordFields.value = false
+  hide()
+  emit('close')
+}
+
+const handleBackdropClick = () => {
+  if (!isLoading.value) {
+    closeModal()
+  }
+}
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'N/A'
+  try {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  } catch {
+    return 'Invalid Date'
+  }
+}
+
+const handleSubmit = async () => {
+  if (!isFormValid.value || isLoading.value) return;
+
+  setLoading(true);
+  clearError();
+
+  try {
+    const customerData = {
+      username: form.value.username.trim(),
+      full_name: form.value.full_name.trim(),
+      email: form.value.email.trim(),
+      phone: form.value.phone.trim(),
+      delivery_address: form.value.delivery_address
+    };
+
+    if (currentMode.value === 'create') {
+      customerData.password = form.value.password;
+    }
+
+    if (currentMode.value === 'edit') {
+      customerData.loyalty_points = form.value.loyalty_points;
+      customerData.status = form.value.status;
+
+      if (showPasswordFields.value && form.value.new_password) {
+        customerData.password = form.value.new_password;
+      }
+    }
+
+    let result;
+
+    if (currentMode.value === 'edit') {
+      const id = props.customer._id || props.customer.customer_id;
+      result = await updateCustomer(id, customerData);
+    } else {
+      result = await createCustomer(customerData);
+    }
+
+    emit('success', result);
+
+    // 💥 Add a VERY short delay to ensure UI updates before closing
+    setTimeout(() => {
+      closeModal();
+    }, 50);
+
+  } catch (err) {
+    setError(err.message || `Failed to ${currentMode.value === 'edit' ? 'update' : 'create'} customer`);
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+// Watchers
+watch(() => props.customer, () => {
+  if ((props.mode === 'edit' || props.mode === 'view') && props.customer && isVisible.value) {
+    populateForm()
+  }
+})
+
+watch(() => props.mode, (newMode) => {
+  currentMode.value = newMode
+})
+
+// Expose
+defineExpose({
+  openModal,
+  closeModal
+})
 </script>
 
+
 <style scoped>
-/* Modal Styles */
-.modal-overlay {
+/* All existing styles remain the same */
+.modal-backdrop {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
   background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 1050;
   display: flex;
-  justify-content: center;
   align-items: center;
-  z-index: 2000;
+  justify-content: center;
+  padding: 1rem;
+  animation: fadeIn 0.2s ease-out;
 }
 
-.modal-content {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-  max-width: 600px;
-  width: 90%;
+.modal-container {
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border-primary);
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow-2xl);
+  width: 100%;
+  max-width: 500px;
   max-height: 90vh;
-  overflow-y: auto;
+  overflow: hidden;
+  animation: slideUp 0.3s ease-out;
+  position: relative;
 }
 
 .modal-header {
-  padding: 1.5rem 2rem 1rem;
-  border-bottom: 1px solid var(--neutral-light);
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--border-secondary);
+  background-color: var(--surface-primary);
   display: flex;
-  justify-content: between;
+  justify-content: space-between;
   align-items: center;
 }
 
-.modal-title {
-  color: var(--tertiary-dark);
-  font-weight: 600;
-  margin: 0;
-  flex-grow: 1;
-}
-
 .modal-body {
-  padding: 1.5rem 2rem;
+  padding: 1.5rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  background-color: var(--surface-primary);
 }
 
 .modal-footer {
-  padding: 1rem 2rem 1.5rem;
-  border-top: 1px solid var(--neutral-light);
+  padding: 1.5rem;
+  border-top: 1px solid var(--border-secondary);
+  background-color: var(--surface-secondary);
 }
 
-/* Form Styles */
-.form-label {
-  color: var(--tertiary-dark);
-  font-weight: 500;
-  margin-bottom: 0.5rem;
+/* New Password Change Section Styles */
+.password-change-section {
+  padding: 1rem;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 0.5rem;
+  margin-top: 0.5rem;
 }
 
 .form-control:focus,
 .form-select:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 0.25rem rgba(115, 146, 226, 0.25);
+  border-color: var(--border-accent) !important;
+  box-shadow: 0 0 0 0.25rem rgba(160, 123, 227, 0.25) !important;
 }
 
-/* Detail View Styles */
-.customer-details .detail-label {
-  color: var(--tertiary-dark);
+.form-text {
+  font-size: 0.875em;
+  color: var(--text-tertiary-medium);
+  margin-top: 0.25rem;
+  display: block;
 }
 
-.customer-details .detail-value {
-  color: var(--tertiary-medium);
+.form-label {
+  display: block;
 }
 
-/* Button Icon Styles */
-.btn-icon-only {
-  display: inline-flex;
+.is-invalid {
+  border-color: var(--border-error) !important;
+}
+
+.invalid-feedback {
+  display: none;
+  width: 100%;
+  margin-top: 0.25rem;
+  font-size: 0.875em;
+  color: var(--status-error);
+}
+
+.invalid-feedback.d-block {
+  display: block !important;
+}
+
+.address-fields .row {
+  margin: 0;
+}
+
+.address-fields .col-12,
+.address-fields .col-6 {
+  padding: 0 0.25rem;
+}
+
+.spinner-border {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  vertical-align: text-bottom;
+  border: 0.125em solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spinner-border 0.75s linear infinite;
+}
+
+.spinner-border-sm {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-width: 0.125em;
+}
+
+.btn-close {
+  background: none;
+  border: none;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
   align-items: center;
   justify-content: center;
-  aspect-ratio: 1;
-  padding: 0.375rem;
 }
 
-/* Responsive Design */
-@media (max-width: 768px) {
-  .modal-content {
-    width: 95%;
-    max-width: none;
+.btn-close:hover {
+  background-color: var(--state-hover);
+  color: var(--text-secondary);
+}
+
+.btn-close:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0;
+    transform: translateY(1rem) scale(0.95);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes spinner-border {
+  to { transform: rotate(360deg); }
+}
+
+.d-flex { display: flex; }
+.justify-content-between { justify-content: space-between; }
+.justify-content-end { justify-content: flex-end; }
+.align-items-center { align-items: center; }
+.gap-2 { gap: 0.5rem; }
+.gap-3 { gap: 0.75rem; }
+.mb-0 { margin-bottom: 0; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mb-3 { margin-bottom: 0.75rem; }
+.mb-4 { margin-bottom: 1rem; }
+.me-1 { margin-right: 0.25rem; }
+.me-2 { margin-right: 0.5rem; }
+.fw-medium { font-weight: 500; }
+.fw-semibold { font-weight: 600; }
+
+@media (max-width: 640px) {
+  .modal-container {
+    margin: 0.5rem;
+    max-height: 95vh;
   }
   
   .modal-header,
   .modal-body,
   .modal-footer {
-    padding-left: 1rem;
-    padding-right: 1rem;
+    padding: 1rem;
   }
 }
 
-@media (max-width: 576px) {
-  .modal-header,
-  .modal-body,
-  .modal-footer {
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
-  }
-  
-  .modal-header {
-    padding-top: 1rem;
-  }
-  
-  .modal-footer {
-    padding-bottom: 1rem;
-  }
+.form-control-plaintext {
+  display: block;
+  width: 100%;
+  padding: 0.375rem 0;
+  margin-bottom: 0;
+  line-height: 1.5;
+  background-color: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+}
+
+.small {
+  font-size: 0.875rem;
+}
+
+.text-wrap {
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+/* Badge styles */
+.badge {
+  display: inline-block;
+  padding: 0.35em 0.65em;
+  font-size: 0.75em;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  vertical-align: baseline;
+  border-radius: 0.25rem;
+}
+
+.bg-success {
+  background-color: var(--status-success) !important;
+  color: white !important;
+}
+
+.btn-edit {
+  background-color: var(--accent, #6c3ef0);
+  color: #fff;
+  border: none;
+  padding: 0.35rem 0.75rem;
+  border-radius: 0.375rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.btn-edit:hover:not(:disabled) {
+  background-color: #5a32c8;
+}
+
+.btn-edit:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 </style>

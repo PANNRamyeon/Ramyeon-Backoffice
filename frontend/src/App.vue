@@ -1,6 +1,6 @@
 <template>
   <div id="app">
-    <!-- This will show either Login page or the main app based on authentication -->
+    <!-- Renders the current page -->
     <router-view />
   </div>
 </template>
@@ -8,32 +8,32 @@
 <script>
 export default {
   name: 'App',
+
+  // ❌ This block causes redirect loops and breaks refresh behavior
+  // ❌ Also conflicts with router guards
+  // ❌ We hide it but keep it in case you need to reference later
+
+  /*
   mounted() {
-    // Check authentication status when app loads
     this.checkAuthStatus()
   },
   methods: {
     checkAuthStatus() {
-      const token = localStorage.getItem('authToken')  
+      const token = localStorage.getItem('authToken')
       const currentPath = this.$route.path
-      
-      console.log('App mounted - Current path:', currentPath)
-      console.log('App mounted - Has token:', !!token)
-      console.log('App mounted - Token key used:', 'authToken')  // ✅ Update log message
-      
+
       // If no token and not on login page, redirect to login
       if (!token && currentPath !== '/login') {
-        console.log('No auth token, redirecting to login')
         this.$router.push('/login')
       }
-      
+
       // If has token and on login page, redirect to dashboard
       if (token && currentPath === '/login') {
-        console.log('Already authenticated, redirecting to dashboard')
         this.$router.push('/dashboard')
       }
     }
   }
+  */
 }
 </script>
 

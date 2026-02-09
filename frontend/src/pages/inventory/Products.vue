@@ -1,5 +1,5 @@
 <template>
-  <div class="container-fluid pt-2 pb-4 products-page">
+  <div class="container-fluid pt-2 pb-4 products-page surface-secondary">
     <!-- Reports Section -->
     <div class="row mb-3" v-if="!loading">
       <div class="col-6 col-md-3 mb-2">
@@ -8,10 +8,8 @@
           border-color="error"
           border-position="start"
           title="Low Stock"
-          :value="lowStockCount"
+          :value="productStats.lowStock"
           subtitle="Critical Items"
-          clickable
-          @click="showLowStockReport"
         />
       </div>
       <div class="col-6 col-md-3 mb-2">
@@ -22,8 +20,6 @@
           title="Expiring"
           :value="expiringCount"
           subtitle="30 Days"
-          clickable
-          @click="showExpiringReport"
         />
       </div>
       <div class="col-6 col-md-3 mb-2">
@@ -32,7 +28,7 @@
           border-color="success"
           border-position="start"
           title="Total"
-          :value="products.length"
+          :value="productStats.total"
           subtitle="Products"
         />
       </div>
@@ -42,38 +38,34 @@
           border-color="accent"
           border-position="start"
           title="Categories"
-          value="3"
-          subtitle="Active"
+          :value="totalActiveCategories"
+          subtitle="Total"
+          :loading="categoriesLoading"
         />
       </div>
     </div>
 
     <!-- Loading State -->
-    <div v-if="loading && products.length === 0" class="text-center py-5">
+    <div v-if="loading && !hasProducts" class="text-center py-5">
       <div class="spinner-border text-accent" role="status">
         <span class="visually-hidden">Loading...</span>
       </div>
-      <p class="mt-3 text-tertiary">Loading products...</p>
+      <p class="mt-3 text-tertiary-medium">Loading products...</p>
     </div>
 
     <!-- Error State -->
-    <div v-if="error" class="alert alert-danger text-center" role="alert">
+    <div v-if="error" class="status-error text-center" role="alert">
       <p class="mb-3">{{ error }}</p>
-      <button class="btn btn-submit" @click="refreshData">Try Again</button>
-    </div>
-
-    <!-- Success Message -->
-    <div v-if="successMessage" class="alert alert-success text-center" role="alert">
-      {{ successMessage }}
+      <button class="btn btn-submit" @click="handleRefresh">Try Again</button>
     </div>
 
     <!-- Action Bar and Filters -->
-    <div v-if="!loading || products.length > 0" class="action-bar mb-3">
-      <div class="action-controls">
+    <div v-if="!loading || hasProducts" class="action-bar-container mb-3">
+      <div class="action-bar-controls surface-card border-theme">
         <div class="action-row">
           <!-- Left Side: Main Actions -->
-          <div v-if="selectedProducts.length === 0" class="d-flex gap-2">
-            <!-- Add Products Dropdown - FIXED -->
+          <div v-if="selectedProductIds.length === 0" class="d-flex gap-2">
+            <!-- Add Products Dropdown -->
             <div class="dropdown dropdown-container" ref="addDropdown">
               <button 
                 class="btn btn-add btn-sm btn-with-icon-sm dropdown-toggle"
@@ -94,50 +86,46 @@
                     <Plus :size="16" class="text-accent" />
                     <div>
                       <div class="fw-semibold">Single Product</div>
-                      <small class="text-tertiary">Add one product manually</small>
+                      <small class="text-tertiary-medium">Add one product manually</small>
                     </div>
                   </div>
                 </button>
                 
-                <button class="dropdown-item" @click="handleBulkAdd">
-                  <div class="d-flex align-items-center gap-3">
-                    <Package :size="16" class="text-accent" />
-                    <div>
-                      <div class="fw-semibold">Bulk Entry</div>
-                      <small class="text-tertiary">Add multiple products (5-20 items)</small>
-                    </div>
-                  </div>
-                </button>
                 
                 <button class="dropdown-item" @click="handleImport">
                   <div class="d-flex align-items-center gap-3">
                     <FileText :size="16" class="text-accent" />
                     <div>
                       <div class="fw-semibold">Import File</div>
-                      <small class="text-tertiary">Upload CSV/Excel (20+ items)</small>
+                      <small class="text-tertiary-medium">Upload CSV/Excel (20+ items)</small>
                     </div>
                   </div>
                 </button>
               </div>
             </div>
 
-            <button class="btn btn-filter btn-sm" @click="toggleColumnFilter">
-              <Settings :size="14" class="me-1" />
+            <button class="btn btn-filter btn-sm btn-with-icon-sm" @click="toggleColumnFilter">
+              <Settings :size="14" />
               COLUMNS
             </button>
-            <button class="btn btn-export btn-sm" @click="exportData">
-              EXPORT
+            <button 
+              class="btn btn-export btn-sm" 
+              @click="handleExport"
+              :disabled="filteredProducts.length === 0 || exportLoading"
+            >
+              {{ exportLoading ? 'EXPORTING...' : 'EXPORT' }}
             </button>
           </div>
 
           <!-- Selection Actions -->
-          <div v-if="selectedProducts.length > 0" class="d-flex gap-2">
+          <div v-if="selectedProductIds.length > 0" class="d-flex gap-2">
             <button 
               class="btn btn-delete btn-sm btn-with-icon-sm"
-              @click="deleteSelected"
+              @click="handleDeleteSelected"
+              :disabled="bulkDeleteLoading"
             >
               <Trash2 :size="14" />
-              DELETE ({{ selectedProducts.length }})
+              {{ bulkDeleteLoading ? 'DELETING...' : `DELETE (${selectedProductIds.length})` }}
             </button>
           </div>
 
@@ -147,7 +135,7 @@
             <button 
               class="btn btn-filter btn-sm search-toggle"
               @click="toggleSearchMode"
-              :class="{ 'active': searchMode }"
+              :class="{ 'state-active': searchMode }"
             >
               <Search :size="16" />
             </button>
@@ -155,30 +143,33 @@
             <!-- Filter Dropdowns -->
             <template v-if="!searchMode">
               <div class="filter-dropdown">
-                <label class="filter-label">Category</label>
+                <label class="filter-label text-tertiary-medium">Category</label>
                 <select 
-                  class="form-select form-select-sm" 
-                  v-model="categoryFilter" 
-                  @change="applyFilters"
+                  class="form-select form-select-sm input-theme" 
+                  :value="filters.category_id" 
+                  @change="handleCategoryFilter"
                 >
-                  <option value="all">All items</option>
-                  <option value="noodles">Noodles</option>
-                  <option value="drinks">Drinks</option>
-                  <option value="toppings">Toppings</option>
+                  <option value="">All items</option>
+                  <option 
+                    v-for="category in activeCategories" 
+                    :key="category._id" 
+                    :value="category._id"
+                  >
+                    {{ category.category_name }}
+                  </option>
                 </select>
               </div>
 
               <div class="filter-dropdown">
-                <label class="filter-label">Stock alert</label>
+                <label class="filter-label text-tertiary-medium">Stock alert</label>
                 <select 
-                  class="form-select form-select-sm" 
-                  v-model="stockFilter" 
-                  @change="applyFilters"
+                  class="form-select form-select-sm input-theme" 
+                  :value="filters.stock_level" 
+                  @change="handleStockFilter"
                 >
-                  <option value="all">All items</option>
-                  <option value="low-stock">Low Stock</option>
-                  <option value="in-stock">In Stock</option>
-                  <option value="out-of-stock">Out of Stock</option>
+                  <option value="">All items</option>
+                  <option value="low_stock">Low Stock</option>
+                  <option value="out_of_stock">Out of Stock</option>
                 </select>
               </div>
             </template>
@@ -188,15 +179,15 @@
               <div class="position-relative">
                 <input 
                   ref="searchInput"
-                  v-model="searchFilter" 
-                  @input="applyFilters"
+                  :value="filters.search" 
+                  @input="handleSearchInput"
                   type="text" 
-                  class="form-control form-control-sm search-input"
+                  class="form-control form-control-sm search-input input-theme"
                   placeholder="Search products..."
                 />
                 <button 
-                  class="btn btn-sm btn-link position-absolute end-0 top-50 translate-middle-y text-tertiary"
-                  @click="clearSearch"
+                  class="btn btn-sm btn-link position-absolute end-0 top-50 translate-middle-y text-tertiary-medium"
+                  @click="handleClearSearch"
                   style="border: none; padding: 0.25rem;"
                 >
                   <X :size="16" />
@@ -208,10 +199,10 @@
       </div>
     </div>
 
-    <!-- Data Table with fixed overflow -->
+    <!-- Data Table -->
     <div class="table-wrapper">
       <DataTable
-        v-if="!loading || products.length > 0"
+        v-if="!loading || hasProducts"
         :total-items="filteredProducts.length"
         :current-page="currentPage"
         :items-per-page="itemsPerPage"
@@ -223,20 +214,23 @@
               <input 
                 type="checkbox" 
                 class="form-check-input" 
-                @change="selectAll" 
+                @change="handleSelectAll" 
                 :checked="allSelected"
-                :indeterminate="someSelected"
+                :indeterminate.prop="someSelected"
               />
             </th>
-            <th>Item name <ChevronUp :size="14" class="ms-1" /></th>
-            <th v-if="isColumnVisible('sku')" style="width: 100px;">SKU</th>
-            <th v-if="isColumnVisible('category')" style="width: 120px;">Category</th>
-            <th v-if="isColumnVisible('sellingPrice')" style="width: 100px;">Price</th>
-            <th v-if="isColumnVisible('costPrice')" style="width: 100px;">Cost</th>
+            <th>
+              Item name 
+              <ChevronUp :size="14" class="ms-1" />
+            </th>
+            <th v-if="isColumnVisible('sku')" style="width: 200px;">SKU</th>
+            <th v-if="isColumnVisible('category')" style="width: 160px;">Category</th>
+            <th v-if="isColumnVisible('sellingPrice')" style="width: 120px; text-align: right;">Selling Price</th>
+            <th v-if="isColumnVisible('costPrice')" style="width: 120px; text-align: right;">Cost Price</th>
             <th style="width: 80px;">Margin</th>
             <th v-if="isColumnVisible('stock')" style="width: 100px;">In stock</th>
-            <th v-if="isColumnVisible('status')" style="width: 80px;">Status</th>
-            <th v-if="isColumnVisible('expiryDate')" style="width: 110px;">Expiry Date</th>
+            <th v-if="isColumnVisible('status')" style="width: 100px;">Status</th>
+            <th v-if="isColumnVisible('expiryDate')" style="width: 130px;">Expiry Date</th>
             <th style="width: 160px;">Actions</th>
           </tr>
         </template>
@@ -252,7 +246,8 @@
                 type="checkbox" 
                 class="form-check-input"
                 :value="product._id"
-                v-model="selectedProducts"
+                :checked="selectedProductIds.includes(product._id)"
+                @change="handleProductSelect(product._id, $event.target.checked)"
               />
             </td>
             <td>
@@ -260,8 +255,8 @@
                 {{ product.product_name }}
               </div>
             </td>
-            <td v-if="isColumnVisible('sku')" class="text-center">
-              <code class="text-primary px-2 py-1 rounded bg-light">
+            <td v-if="isColumnVisible('sku')" class="text-left">
+              <code class="text-primary surface-tertiary px-2 py-1 rounded">
                 {{ product.SKU || '—' }}
               </code>
             </td>
@@ -270,20 +265,20 @@
                 {{ getCategoryName(product.category_id) }}
               </span>
             </td>
-            <td v-if="isColumnVisible('sellingPrice')" class="text-end fw-medium">
+            <td v-if="isColumnVisible('sellingPrice')" class="text-end fw-medium text-secondary">
               ₱{{ formatPrice(product.selling_price) }}
             </td>
-            <td v-if="isColumnVisible('costPrice')" class="text-end fw-medium">
-              ₱{{ formatPrice(product.cost_price) }}
+            <td v-if="isColumnVisible('costPrice')" class="text-end fw-medium text-secondary">
+              ₱{{ formatPrice(getProductCostPrice(product)) }}
             </td>
             <td class="text-center fw-medium">
-              <span :class="getMarginClass(product.cost_price, product.selling_price)">
-                {{ calculateMargin(product.cost_price, product.selling_price) }}%
+              <span :class="getMarginClass(getProductCostPrice(product), product.selling_price)">
+                {{ calculateMargin(getProductCostPrice(product), product.selling_price) }}%
               </span>
             </td>
             <td v-if="isColumnVisible('stock')" class="text-end">
               <span :class="getStockDisplayClass(product)">
-                {{ product.stock || '—' }}
+                {{ getProductStock(product) || '—' }}
               </span>
             </td>
             <td v-if="isColumnVisible('status')" class="text-center">
@@ -292,8 +287,8 @@
               </span>
             </td>
             <td v-if="isColumnVisible('expiryDate')" class="text-center">
-              <small :class="getExpiryDateClass(product.expiry_date)">
-                {{ formatExpiryDate(product.expiry_date) }}
+              <small :class="getExpiryDateClass(getProductExpiryDate(product))">
+                {{ formatExpiryDate(getProductExpiryDate(product)) }}
               </small>
             </td>
             <td>
@@ -320,17 +315,10 @@
                   <Package :size="12" />
                 </button>
                 <button 
-                  class="btn btn-outline-success btn-icon-only btn-xs action-btn"
-                  @click="toggleProductStatus(product)"
-                  :title="product.status === 'active' ? 'Deactivate' : 'Activate'"
-                  :class="{ 'action-btn-status-inactive': product.status !== 'active' }"
-                >
-                  <component :is="product.status === 'active' ? 'Lock' : 'Unlock'" :size="12" />
-                </button>
-                <button 
                   class="btn btn-outline-danger btn-icon-only btn-xs action-btn action-btn-delete" 
-                  @click="deleteProduct(product)"
+                  @click="handleDeleteProduct(product)"
                   title="Delete"
+                  :disabled="deleteLoading"
                 >
                   <Trash2 :size="12" />
                 </button>
@@ -343,14 +331,14 @@
 
     <!-- Empty State -->
     <div v-if="!loading && filteredProducts.length === 0 && !error" class="text-center py-5">
-      <div class="card">
+      <div class="card-theme">
         <div class="card-body py-5">
-          <Package :size="48" class="text-tertiary mb-3" />
-          <p class="text-tertiary mb-3">
-            {{ products.length === 0 ? 'No products found' : 'No products match the current filters' }}
+          <Package :size="48" class="text-tertiary-medium mb-3" />
+          <p class="text-tertiary-medium mb-3">
+            {{ !hasProducts ? 'No products found' : 'No products match the current filters' }}
           </p>
           <button 
-            v-if="products.length === 0" 
+            v-if="!hasProducts" 
             class="btn btn-add btn-with-icon" 
             @click="handleSingleProduct"
           >
@@ -359,8 +347,8 @@
           </button>
           <button 
             v-else 
-            class="btn btn-refresh btn-with-icon"
-            @click="clearFilters"
+            class="btn btn-filter btn-with-icon"
+            @click="handleClearFilters"
           >
             <RefreshCw :size="16" />
             Clear Filters
@@ -372,7 +360,7 @@
     <!-- Modular Components -->
     <AddProductModal
       ref="addProductModal"
-      :categories="categories"
+      :categories="activeCategories"
       @success="handleProductSuccess"
     />
 
@@ -387,13 +375,6 @@
       @restock="restockProduct"
       @toggle-status="toggleProductStatus"
       @generate-barcode="generateProductBarcode"
-    />
-
-    <ReportsModal
-      ref="reportsModal"
-      @view-product="viewProduct"
-      @edit-product="editProduct"
-      @restock-product="restockProduct"
     />
 
     <ImportModal
@@ -412,46 +393,436 @@
 </template>
 
 <script>
-import { onMounted, onBeforeUnmount } from 'vue'
-import { useProducts } from '../../composables/ui/products/useProducts'
-import AddProductModal from '../../components/products/AddProductModal.vue'
-import StockUpdateModal from '../../components/products/StockUpdateModal.vue'
-import ViewProductModal from '../../components/products/ViewProductModal.vue'
-import ReportsModal from '../../components/products/ReportsModal.vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useProducts } from '@/composables/api/useProducts'
+import { useCategories } from '@/composables/api/useCategories'
+import AddProductModal from '@/components/products/AddProductModal.vue'
+import StockUpdateModal from '@/components/products/StockUpdateModal.vue'
+import ViewProductModal from '@/components/products/ViewProductModal.vue'
 import DataTable from '@/components/common/TableTemplate.vue'
 import CardTemplate from '@/components/common/CardTemplate.vue'
-import ImportModal from '../../components/products/ImportModal.vue'
+import ImportModal from '@/components/products/ImportModal.vue'
 import ColumnFilterModal from '@/components/products/ColumnFilterModal.vue'
-import { 
-  Plus, Search, X, ChevronUp, Package, Trash2,
-  RefreshCw, FileText, Edit, Eye, Lock, Unlock, Settings
-} from 'lucide-vue-next'
 
 export default {
   name: 'Products',
   components: {
-    AddProductModal, StockUpdateModal, ViewProductModal,
-    ColumnFilterModal, ImportModal, ReportsModal,
-    DataTable, CardTemplate,
-    Plus, Search, X, ChevronUp, Package, Trash2,
-    RefreshCw, FileText, Edit, Eye, Lock, Unlock, Settings
+    AddProductModal,
+    StockUpdateModal,
+    ViewProductModal,
+    ColumnFilterModal,
+    ImportModal,
+    DataTable,
+    CardTemplate
   },
   
   setup() {
-    const productsComposable = useProducts()
-    
-    onMounted(() => {
-      productsComposable.initializeProducts()
+    // Use the products composable
+    const {
+      products,
+      filteredProducts,
+      productStats,
+      hasProducts,
+      filters,
+      error,
+      loading,
+      deleteLoading,
+      bulkDeleteLoading,
+      exportLoading,
+      fetchProducts,
+      deleteProduct,
+      bulkDeleteProducts,
+      updateProduct,
+      exportProducts,
+      setFilters,
+      resetFilters,
+      initializeProducts,
+      clearError
+    } = useProducts()
+
+    // Use categories composable
+    const {
+      activeCategories,
+      totalActiveCategories,
+      loading: categoriesLoading,
+      initializeCategories
+    } = useCategories()
+
+    // Local state for UI
+    const searchMode = ref(false)
+    const showAddDropdown = ref(false)
+    const showColumnFilter = ref(false)
+    const selectedProductIds = ref([])
+    const currentPage = ref(1)
+    const itemsPerPage = ref(20)
+    const expiringCount = ref(0)
+    const addDropdown = ref(null)
+    const searchInput = ref(null)
+
+    // Visible columns state
+    const visibleColumns = ref({
+      sku: true,
+      category: true,
+      sellingPrice: true,
+      costPrice: true,
+      stock: true,
+      status: true,
+      expiryDate: true
     })
-    
+
+    // Computed properties for pagination and selection
+    const paginatedProducts = computed(() => {
+      const start = (currentPage.value - 1) * itemsPerPage.value
+      const end = start + itemsPerPage.value
+      return filteredProducts.value.slice(start, end)
+    })
+
+    const allSelected = computed(() => {
+      return paginatedProducts.value.length > 0 && 
+             paginatedProducts.value.every(p => selectedProductIds.value.includes(p._id))
+    })
+
+    const someSelected = computed(() => {
+      return selectedProductIds.value.length > 0 && !allSelected.value
+    })
+
+    const selectedProducts = computed(() => {
+      return products.value.filter(p => selectedProductIds.value.includes(p._id))
+    })
+
+    // Calculate expiring products (updated for batch system)
+    const calculateExpiringCount = () => {
+      const now = new Date()
+      const thirtyDaysFromNow = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000))
+      
+      expiringCount.value = products.value.filter(product => {
+        const expiryDate = getProductExpiryDate(product)
+        if (!expiryDate) return false
+        const expiry = new Date(expiryDate)
+        return expiry <= thirtyDaysFromNow && expiry >= now
+      }).length
+    }
+
+    // Helper functions for batch-aware data
+    const getProductStock = (product) => {
+      return product.total_stock ?? product.stock ?? 0
+    }
+
+    const getProductCostPrice = (product) => {
+      return product.average_cost_price ?? product.cost_price ?? 0
+    }
+
+    const getProductExpiryDate = (product) => {
+      return product.oldest_batch_expiry ?? product.expiry_date
+    }
+
+    // Event handlers
+    const handleRefresh = async () => {
+      clearError()
+      await fetchProducts()
+      calculateExpiringCount()
+    }
+
+    const handleCategoryFilter = (event) => {
+      setFilters({ category_id: event.target.value })
+      currentPage.value = 1
+    }
+
+    const handleStockFilter = (event) => {
+      setFilters({ stock_level: event.target.value })
+      currentPage.value = 1
+    }
+
+    const handleSearchInput = (event) => {
+      setFilters({ search: event.target.value })
+      currentPage.value = 1
+    }
+
+    const handleClearSearch = () => {
+      setFilters({ search: '' })
+      searchMode.value = false
+    }
+
+    const handleClearFilters = () => {
+      resetFilters()
+      searchMode.value = false
+      currentPage.value = 1
+    }
+
+    const handleSelectAll = (event) => {
+      if (event.target.checked) {
+        selectedProductIds.value = [...new Set([
+          ...selectedProductIds.value,
+          ...paginatedProducts.value.map(p => p._id)
+        ])]
+      } else {
+        const currentPageIds = paginatedProducts.value.map(p => p._id)
+        selectedProductIds.value = selectedProductIds.value.filter(id => !currentPageIds.includes(id))
+      }
+    }
+
+    const handleProductSelect = (productId, checked) => {
+      if (checked) {
+        selectedProductIds.value.push(productId)
+      } else {
+        selectedProductIds.value = selectedProductIds.value.filter(id => id !== productId)
+      }
+    }
+
+    const handleDeleteProduct = async (product) => {
+      if (confirm(`Are you sure you want to delete "${product.product_name}"?`)) {
+        try {
+          await deleteProduct(product._id)
+        } catch (error) {
+          console.error('Failed to delete product:', error)
+        }
+      }
+    }
+
+    const handleDeleteSelected = async () => {
+      if (confirm(`Are you sure you want to delete ${selectedProductIds.value.length} products?`)) {
+        try {
+          await bulkDeleteProducts(selectedProductIds.value)
+          selectedProductIds.value = []
+        } catch (error) {
+          console.error('Failed to delete products:', error)
+        }
+      }
+    }
+
+    const handleExport = async () => {
+      try {
+        await exportProducts(filters.value)
+      } catch (error) {
+        console.error('Export failed:', error)
+      }
+    }
+
+    const handlePageChange = (page) => {
+      currentPage.value = page
+    }
+
+    const toggleSearchMode = async () => {
+      searchMode.value = !searchMode.value
+      if (searchMode.value) {
+        await nextTick()
+        if (searchInput.value) {
+          searchInput.value.focus()
+        }
+      }
+    }
+
+    const toggleAddDropdown = () => {
+      showAddDropdown.value = !showAddDropdown.value
+    }
+
+    const closeAddDropdown = () => {
+      showAddDropdown.value = false
+    }
+
+    const toggleColumnFilter = () => {
+      showColumnFilter.value = !showColumnFilter.value
+    }
+
+    // Utility functions
+    const isColumnVisible = (column) => {
+      return visibleColumns.value[column]
+    }
+
+    const getRowClass = (product) => {
+      const stock = getProductStock(product)
+      if (stock === 0) return 'table-danger'
+      if (stock <= (product.low_stock_threshold || 15)) return 'table-warning'
+      return ''
+    }
+
+    const getProductNameClass = (product) => {
+      if (product.status === 'inactive') return 'text-tertiary-medium'
+      return 'text-primary'
+    }
+
+    const getCategoryBadgeClass = (categoryId) => {
+      const category = activeCategories.value.find(c => c._id === categoryId)
+      if (!category) return 'bg-secondary'
+      
+      const colors = ['bg-primary', 'bg-info', 'bg-success', 'bg-warning', 'bg-danger']
+      const index = categoryId ? categoryId.length % colors.length : 0
+      return colors[index]
+    }
+
+    const getCategoryName = (categoryId) => {
+      if (!categoryId) return 'Uncategorized'
+      const category = activeCategories.value.find(c => c._id === categoryId)
+      return category?.category_name || 'Unknown'
+    }
+
+    const getStockDisplayClass = (product) => {
+      const stock = getProductStock(product)
+      if (stock === 0) return 'text-error fw-bold'
+      if (stock <= (product.low_stock_threshold || 15)) return 'text-warning fw-bold'
+      return 'text-success'
+    }
+
+    const getStatusBadgeClass = (status) => {
+      return status === 'active' ? 'badge bg-success text-white' : 'badge bg-secondary text-white'
+    }
+
+    const getStatusText = (status) => {
+      return status === 'active' ? 'Active' : 'Inactive'
+    }
+
+    const getMarginClass = (cost, selling) => {
+      const margin = calculateMargin(cost, selling)
+      if (margin >= 40) return 'text-success'
+      if (margin >= 20) return 'text-warning'
+      return 'text-error'
+    }
+
+    const calculateMargin = (cost, selling) => {
+      if (!cost || !selling || cost >= selling) return 0
+      return Math.round(((selling - cost) / selling) * 100)
+    }
+
+    const formatPrice = (price) => {
+      return parseFloat(price || 0).toFixed(2)
+    }
+
+    const formatExpiryDate = (date) => {
+      if (!date) return '—'
+      return new Date(date).toLocaleDateString()
+    }
+
+    const getExpiryDateClass = (date) => {
+      if (!date) return 'text-tertiary-medium'
+      const now = new Date()
+      const expiry = new Date(date)
+      const diffDays = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24))
+      
+      if (diffDays < 0) return 'text-error'
+      if (diffDays <= 30) return 'text-warning'
+      return 'text-success'
+    }
+
+    const toggleProductStatus = async (product) => {
+      try {
+        const newStatus = product.status === 'active' ? 'inactive' : 'active'
+        await updateProduct(product._id, { status: newStatus })
+      } catch (error) {
+        console.error('Error toggling product status:', error)
+      }
+    }
+
+    const generateProductBarcode = async (product) => {
+      try {
+        const timestamp = Date.now().toString()
+        const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
+        const newBarcode = `${timestamp}${random}`
+
+        await updateProduct(product._id, { barcode: newBarcode })
+      } catch (error) {
+        console.error('Error generating barcode:', error)
+      }
+    }
+
+    // Click outside handler
+    const handleClickOutside = (event) => {
+      if (addDropdown.value && !addDropdown.value.contains(event.target)) {
+        showAddDropdown.value = false
+      }
+    }
+
+    // Initialize on mount
+    onMounted(async () => {
+      document.addEventListener('click', handleClickOutside)
+      await Promise.all([
+        initializeProducts(),
+        initializeCategories()
+      ])
+      calculateExpiringCount()
+    })
+
     onBeforeUnmount(() => {
-      productsComposable.cleanupProducts()
+      document.removeEventListener('click', handleClickOutside)
     })
-    
-    return { ...productsComposable }
+
+    return {
+      // Composable state and methods
+      products,
+      filteredProducts,
+      productStats,
+      hasProducts,
+      filters,
+      error,
+      loading,
+      deleteLoading,
+      bulkDeleteLoading,
+      exportLoading,
+      activeCategories,
+      totalActiveCategories,
+      categoriesLoading,
+      
+      // Local state
+      searchMode,
+      showAddDropdown,
+      showColumnFilter,
+      selectedProductIds,
+      selectedProducts,
+      currentPage,
+      itemsPerPage,
+      expiringCount,
+      visibleColumns,
+      addDropdown,
+      searchInput,
+      
+      // Computed
+      paginatedProducts,
+      allSelected,
+      someSelected,
+      
+      // Helper functions
+      getProductStock,
+      getProductCostPrice,
+      getProductExpiryDate,
+      
+      // Event handlers
+      handleRefresh,
+      handleCategoryFilter,
+      handleStockFilter,
+      handleSearchInput,
+      handleClearSearch,
+      handleClearFilters,
+      handleSelectAll,
+      handleProductSelect,
+      handleDeleteProduct,
+      handleDeleteSelected,
+      handleExport,
+      handlePageChange,
+      toggleSearchMode,
+      toggleAddDropdown,
+      closeAddDropdown,
+      toggleColumnFilter,
+      
+      // Utility functions
+      isColumnVisible,
+      getRowClass,
+      getProductNameClass,
+      getCategoryBadgeClass,
+      getCategoryName,
+      getStockDisplayClass,
+      getStatusBadgeClass,
+      getStatusText,
+      getMarginClass,
+      calculateMargin,
+      formatPrice,
+      formatExpiryDate,
+      getExpiryDateClass,
+      toggleProductStatus,
+      generateProductBarcode
+    }
   },
-  
+
   methods: {
+    // Modal methods
     showAddProductModal() {
       this.$refs.addProductModal?.openAdd?.()
     },
@@ -467,39 +838,30 @@ export default {
     },
     
     viewProduct(product) {
-      this.$refs.viewProductModal?.open?.(product)
+      if (!product || !product._id) {
+        console.error('Cannot view product: missing ID')
+        return
+      }
+
+      try {
+        this.$router.push(`/products/${product._id}`)
+      } catch (error) {
+        console.error('Navigation error:', error)
+      }
     },
-    
+        
     restockProduct(product) {
       this.$refs.stockUpdateModal?.openStock?.(product)
     },
-    
-    async generateProductBarcode(product) {
-      try {
-        await productsApiService.generateBarcode(product._id)
-        this.successMessage = `Barcode generated for "${product.product_name}"`
-        await this.fetchProducts()
-        
-        setTimeout(() => {
-          this.successMessage = null
-        }, 3000)
-      } catch (error) {
-        console.error('Error generating barcode:', error)
-        this.error = `Failed to generate barcode: ${error.message}`
-      }
-    },
-    
-    async showLowStockReport() {
-      await this.$refs.reportsModal?.showLowStockModal?.()
-    },
-    
-    async showExpiringReport() {
-      await this.$refs.reportsModal?.showExpiringModal?.()
-    },
-    
+
     handleSingleProduct(event) {
       event?.stopPropagation()
       this.showAddProductModal()
+      this.closeAddDropdown()
+    },
+
+    handleBulkAdd(event) {
+      event?.stopPropagation()
       this.closeAddDropdown()
     },
     
@@ -518,38 +880,43 @@ export default {
       
       this.closeAddDropdown()
     },
-    
-    selectAll(event) {
-      this.$options.setup().selectAll(event.target.checked)
+
+    handleProductSuccess(result) {
+      // Item added successfully
+    },
+
+    handleStockUpdateSuccess(result) {
+      // Stock updated successfully
+    },
+
+    handleImportSuccess(result) {
+      // Import completed
+    },
+
+    handleImportError(error) {
+      console.error(`Import failed: ${error.message || 'An unexpected error occurred'}`)
+    },
+
+    handleColumnChanges(newColumns) {
+      this.visibleColumns = { ...newColumns }
+      this.showColumnFilter = false
     }
   }
 }
 </script>
 
 <style scoped>
-/* Page Container */
 .products-page {
   min-height: 100vh;
-  background-color: var(--surface-secondary);
-  color: var(--text-secondary);
-  position: relative; /* Establish positioning context */
 }
 
-/* Action Bar */
-.action-bar {
-  background-color: var(--surface-primary);
-  border: 1px solid var(--border-secondary);
-  box-shadow: var(--shadow-sm);
-  border-radius: 0.75rem;
-  /* Remove overflow: hidden to allow dropdown to escape */
+.action-bar-container {
   position: relative;
-  z-index: 100; /* Ensure action bar is above other content */
+  z-index: 100;
 }
 
-.action-controls {
-  background-color: var(--surface-primary);
-  border-bottom: 1px solid var(--border-primary);
-  transition: background-color 0.3s ease, color 0.3s ease;
+.action-bar-controls {
+  border-radius: 0.75rem;
 }
 
 .action-row {
@@ -561,46 +928,28 @@ export default {
   gap: 1rem;
 }
 
-/* Dropdown Container - Ensures dropdown can overflow */
 .dropdown-container {
   position: relative;
-  z-index: 1050; /* Bootstrap's dropdown z-index */
-}
-
-.dropdown {
-  position: relative;
+  z-index: 1050;
 }
 
 .add-dropdown-menu {
   position: absolute;
   top: 100%;
   left: 0;
-  z-index: 1055; /* Higher than Bootstrap's default dropdown z-index */
+  z-index: 1055;
   min-width: 280px;
   margin-top: 0.25rem;
   background-color: var(--surface-elevated);
   border: 1px solid var(--border-primary);
   border-radius: 0.75rem;
-  box-shadow: var(--shadow-xl); /* Enhanced shadow for better visibility */
+  box-shadow: var(--shadow-xl);
   animation: dropdownSlide 0.2s ease;
-  /* Ensure dropdown is not clipped */
-  transform: translateZ(0); /* Create new stacking context */
+  transform: translateZ(0);
 }
 
 .add-dropdown-menu.show {
   display: block;
-}
-
-/* Table Wrapper - Controls overflow separately from action bar */
-.table-wrapper {
-  position: relative;
-  z-index: 1; /* Lower than dropdown */
-}
-
-/* Override table container if needed */
-.table-wrapper :deep(.table-container) {
-  position: relative;
-  z-index: 1;
 }
 
 @keyframes dropdownSlide {
@@ -635,7 +984,6 @@ export default {
   background-color: var(--state-hover);
 }
 
-/* Filters */
 .filter-dropdown {
   min-width: 120px;
 }
@@ -645,21 +993,8 @@ export default {
   font-weight: 500;
   margin-bottom: 0.25rem;
   display: block;
-  color: var(--text-tertiary);
 }
 
-.form-select {
-  background-color: var(--input-bg);
-  border-color: var(--input-border);
-  color: var(--input-text);
-}
-
-.form-select:focus {
-  border-color: var(--border-accent);
-  box-shadow: 0 0 0 0.2rem rgba(160, 123, 227, 0.25);
-}
-
-/* Search */
 .search-container {
   min-width: 300px;
 }
@@ -667,9 +1002,6 @@ export default {
 .search-input {
   padding-right: 2.5rem;
   height: calc(1.5em + 0.75rem + 2px);
-  background-color: var(--input-bg);
-  border-color: var(--input-border);
-  color: var(--input-text);
 }
 
 .search-toggle {
@@ -678,30 +1010,24 @@ export default {
   align-items: center;
   justify-content: center;
   padding: 0 0.75rem;
+  margin-top: 5px;
 }
 
-/* Button States */
-.btn.active {
-  color: var(--text-inverse);
-  background-color: var(--secondary);
-  border-color: var(--secondary);
+.state-active {
+  background-color: var(--state-selected) !important;
+  color: var(--text-accent) !important;
 }
 
-/* Card Styling */
-.card {
-  background-color: var(--surface-primary);
-  border: 1px solid var(--border-secondary);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-md);
+.table-wrapper {
+  position: relative;
+  z-index: 1;
 }
 
-/* Ensure proper stacking context for modals */
-.modal,
-.modal-backdrop {
-  z-index: 1060; /* Higher than dropdown */
+.table-wrapper :deep(.table-container) {
+  position: relative;
+  z-index: 1;
 }
 
-/* Responsive */
 @media (max-width: 768px) {
   .action-row {
     flex-direction: column;
@@ -722,4 +1048,25 @@ export default {
     padding: 0.875rem 1rem;
   }
 }
+
+/* Make search button + filters perfectly aligned */
+.filters-row,
+.search-container,
+.filter-group {
+  display: flex;
+  align-items: center !important; /* forces vertical alignment */
+}
+
+/* Ensure search button container does not stretch */
+.search-container {
+  min-width: unset !important;
+  width: auto !important;
+}
+
+/* Optional: small spacing cleanup */
+.filters-row {
+  gap: 1rem;
+}
+
+
 </style>

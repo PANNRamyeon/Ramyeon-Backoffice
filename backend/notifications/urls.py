@@ -20,6 +20,14 @@ urlpatterns = [
     path('stats/', views.notification_stats, name='stats'),
     
     # ================================================================
+    # EMAIL VERIFICATION ENDPOINTS
+    # ================================================================
+    path('email/verify/', views.verify_email, name='verify_email'),  # Legacy link-based
+    path('email/verify-code/', views.verify_code, name='verify_code'),  # Code-based verification
+    path('email/send-code/', views.send_verification_code, name='send_verification_code'),
+    path('email/resend-verification/', views.resend_verification_email, name='resend_verification'),  # Legacy (now sends code)
+    
+    # ================================================================
     # CREATION ENDPOINTS
     # ================================================================
     path('create/', views.create_notification, name='create'),

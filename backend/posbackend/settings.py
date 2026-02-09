@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-qqitph&i%!t-!yu!q7r@%e*7%re__8#sbtu1m9n0i@#-rd9^t-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -128,9 +128,7 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# MongoDB settings
-MONGODB_URL = "mongodb://localhost:27017"
-MONGODB_NAME = "pos_system"
+
 
 # REST Framework settings
 REST_FRAMEWORK = {

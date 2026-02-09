@@ -15,9 +15,26 @@ ALLOWED_HOSTS = [
 CUSTOM_DOMAINS = config('CUSTOM_DOMAINS', default='', cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
 ALLOWED_HOSTS.extend(CUSTOM_DOMAINS)
 
+# Optionally read ALLOWED_HOSTS from env (comma-separated). If provided, merge with above
+ENV_ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='', cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
+if ENV_ALLOWED_HOSTS:
+    ALLOWED_HOSTS = [h for h in (ALLOWED_HOSTS + ENV_ALLOWED_HOSTS) if h]
+
 # CORS settings for production
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
+    default='',
+    cast=lambda v: [s.strip() for s in v.split(',') if s.strip()]
+)
+
+# If no specific origins are configured, allow all origins (for flexibility)
+# Set CORS_ALLOWED_ORIGINS environment variable to restrict to specific domains
+if not CORS_ALLOWED_ORIGINS:
+    CORS_ALLOW_ALL_ORIGINS = True
+
+# CSRF trusted origins (comma-separated) for HTTPS domains
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS',
     default='',
     cast=lambda v: [s.strip() for s in v.split(',') if s.strip()]
 )
@@ -30,24 +47,8 @@ DATABASES = {
     }
 }
 
-# MongoDB Configuration for Custom API Operations
-USE_MONGODB = config('USE_MONGODB', default=False, cast=bool)
-
-if USE_MONGODB:
-    # MongoDB connection settings for your custom API operations
-    MONGODB_URI = config('MONGODB_URI')
-    MONGODB_DATABASE = config('MONGODB_DATABASE', default='pos_system')
-    
-    MONGODB_SETTINGS = {
-        'host': MONGODB_URI,
-        'database': MONGODB_DATABASE
-    }
-else:
-    # Fallback MongoDB settings (won't be used)
-    MONGODB_SETTINGS = {
-        'host': 'mongodb://localhost:27017',
-        'database': 'pos_system_local'
-    }
+# The application's custom services will use the DynamoDB connection 
+# from app/database.py, which is configured via environment variables.
 
 # Security settings for production
 SECURE_BROWSER_XSS_FILTER = True

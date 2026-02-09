@@ -62,14 +62,9 @@
 </template>
 
 <script>
-import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
 
 export default {
   name: 'DataTable',
-  components: {
-    ChevronLeft,
-    ChevronRight
-  },
 
   props: {
     // Pagination props

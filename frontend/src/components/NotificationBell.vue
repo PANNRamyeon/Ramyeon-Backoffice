@@ -108,7 +108,7 @@
 </template>
 
 <script>
-import apijs from '../services/api'
+import apiNotifications from '../services/apiNotifications'
 export default {
   name: 'NotificationBell',
   data() {
@@ -139,31 +139,15 @@ export default {
     async fetchNotifications() {
       this.loading = true
       try {
-        const response = await fetch('http://localhost:8000/api/v1/notifications/recent', {
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        })
-
-        console.log('Recent notifications API Response status:', response.status)
+        const result = await apiNotifications.getRecent()
         
-        if (response.ok) {
-          const result = await response.json()
-          console.log('Recent notifications response:', result)
-          
-          if (result.success) {
-            this.notifications = result.data || []
-            this.updateUnreadCount()
-          } else {
-            console.error('API returned error:', result.message)
-            this.notifications = []
-          }
+        if (result.success) {
+          this.notifications = result.data || []
+          this.updateUnreadCount()
         } else {
-          console.error('Failed to fetch recent notifications:', response.status, await response.text())
           this.notifications = []
         }
       } catch (error) {
-        console.error('Error fetching recent notifications:', error)
         this.notifications = []
       } finally {
         this.loading = false
@@ -202,24 +186,11 @@ export default {
       notification.isMarkingRead = true;
 
       try {
-        const response = await fetch(
-          `http://localhost:8000/api/notifications/${notificationId}/mark-read/`,
-          {
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-
-        if (response.ok) {
-          notification.is_read = true
-          this.updateUnreadCount()
-        } else {
-          console.error('Failed to mark notification as read:', await response.text())
-        }
+        await apiNotifications.MarkAsRead(notificationId)
+        notification.is_read = true
+        this.updateUnreadCount()
       } catch (error) {
-        console.error('Error marking notification as read:', error)
+        // Error marking notification as read
       } finally {
         // Vue 3 way - direct assignment
         notification.isMarkingRead = false;
@@ -231,31 +202,16 @@ export default {
       
       this.markingAllAsRead = true
       try {
-        const response = await fetch('http://localhost:8000/api/notifications/mark-all-read/', {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json'
-          }
+        await apiNotifications.MarkAllAsRead()
+        
+        // Update all notifications to read status
+        this.notifications.forEach(notification => {
+          notification.is_read = true
         })
-
-        if (response.ok) {
-          const result = await response.json()
-          console.log('Mark all as read response:', result)
-          
-          // Update all notifications to read status
-          this.notifications.forEach(notification => {
-            notification.is_read = true
-          })
-          
-          // Update counts
-          this.unreadCount = 0
-          
-        } else {
-          console.error('Failed to mark all as read:', await response.text())
-          await this.fallbackMarkAllAsRead()
-        }
+        
+        // Update counts
+        this.unreadCount = 0
       } catch (error) {
-        console.error('Error marking all notifications as read:', error)
         await this.fallbackMarkAllAsRead()
       } finally {
         this.markingAllAsRead = false

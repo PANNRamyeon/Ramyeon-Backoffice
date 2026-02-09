@@ -34,12 +34,10 @@ class LogsCache {
     
     if (cached && this.isValidCache(cached.timestamp)) {
       this.stats.hits++
-      console.log(`📦 Cache HIT for page ${page}`)
       return cached.data
     }
     
     this.stats.misses++
-    console.log(`❌ Cache MISS for page ${page}`)
     return null
   }
 
@@ -59,7 +57,6 @@ class LogsCache {
     })
     
     this.updateMemoryStats()
-    console.log(`💾 Cached page ${page} (${data.logs?.length || 0} logs)`)
   }
 
   // CRITICAL OPTIMIZATION: Incremental log management
@@ -70,7 +67,6 @@ class LogsCache {
     // CRITICAL: Limit memory usage
     if (this.incrementalCache.length > this.MAX_LOGS_IN_MEMORY) {
       this.incrementalCache = this.incrementalCache.slice(0, this.MAX_LOGS_IN_MEMORY)
-      console.log(`🧹 Trimmed incremental cache to ${this.MAX_LOGS_IN_MEMORY} logs`)
     }
     
     // Invalidate related page caches since new data arrived
@@ -90,7 +86,6 @@ class LogsCache {
     
     if (cached && this.isValidCache(cached.timestamp)) {
       this.stats.hits++
-      console.log(`🔍 Search cache HIT for: "${query}"`)
       return cached.data
     }
     
@@ -113,7 +108,6 @@ class LogsCache {
       options: { ...options }
     })
     
-    console.log(`🔍 Cached search: "${query}" (${data.logs?.length || 0} results)`)
   }
 
   // CRITICAL: Memory management methods
@@ -130,7 +124,6 @@ class LogsCache {
     
     if (oldestKey) {
       this.pageCache.delete(oldestKey)
-      console.log(`🗑️ Evicted oldest page cache: ${oldestKey}`)
     }
   }
 
@@ -147,7 +140,6 @@ class LogsCache {
     
     if (oldestKey) {
       this.searchCache.delete(oldestKey)
-      console.log(`🗑️ Evicted oldest search cache: ${oldestKey}`)
     }
   }
 
@@ -185,8 +177,6 @@ class LogsCache {
     
     this.updateMemoryStats()
     this.lastCleanup = now
-    
-    console.log(`🧹 Cache cleanup completed. Stats:`, this.getStats())
   }
 
   // Utility methods
@@ -213,12 +203,10 @@ class LogsCache {
 
   invalidatePageCaches() {
     this.pageCache.clear()
-    console.log(`🗑️ Invalidated all page caches due to new data`)
   }
 
   invalidateSearchCaches() {
     this.searchCache.clear()
-    console.log(`🗑️ Invalidated all search caches`)
   }
 
   updateMemoryStats() {
@@ -252,7 +240,6 @@ class LogsCache {
     this.searchCache.clear()
     this.incrementalCache = []
     this.stats = { hits: 0, misses: 0, memoryUsage: 0 }
-    console.log(`🗑️ Complete cache clear performed`)
   }
 
   // Get cache status for debugging

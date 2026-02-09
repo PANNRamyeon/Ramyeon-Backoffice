@@ -342,7 +342,7 @@ import BarcodeScanner from '../../components/products/BarcodeScanner.vue'
 import NotificationModal from '../../components/common/NotificationModal.vue'
 import SaveAsDraftModal from '../../components/common/SaveAsDraftModal.vue'
 import { useSaveAsDraftModal } from '../../composables/ui/useSaveAsDraftModal.js'
-import { useProducts } from '../../composables/ui/products/useProducts.js'
+import { useProducts } from '../../composables/api/useProducts.js'
 
 export default {
   name: 'ProductBulkEntry',
@@ -482,7 +482,6 @@ export default {
 
   watch: {
     shouldShowDraftContent(newValue) {
-      console.log('Draft content should show:', newValue)
     }
   },
 
@@ -607,9 +606,6 @@ export default {
 
     // CRITICAL FIX: Enhanced saveProducts with product_history initialization
     async saveProducts() {
-      console.log('=== SAVE PRODUCTS CALLED ===')
-      console.log('Valid products:', this.hasValidProducts)
-      console.log('Products to save:', this.bulkProducts.filter(product => this.isProductValid(product)))
       
       if (!this.hasValidProducts) {
         this.showError('Please add at least one valid product')
@@ -680,7 +676,6 @@ export default {
         })
         
         // Enhanced validation with history check
-        console.log('=== FINAL VALIDATION BEFORE API ===')
         const hasInvalidData = productsData.some((product, index) => {
           const nameInvalid = !product.product_name || 
                             typeof product.product_name !== 'string' || 
@@ -712,14 +707,10 @@ export default {
           this.bulkLoading = false
           return
         }
-        
-        console.log('Sending products data with history:', productsData)
-        
+
         // Use the fixed bulkCreateProducts method
         const result = await productsApiService.bulkCreateProducts(productsData)
-        
-        console.log('Full API Response:', result)
-        
+
         // Parse response based on new API structure
         let successfulCount = 0
         let failedCount = 0
@@ -747,21 +738,16 @@ export default {
             successfulCount = validProducts.length
           }
         }
-        
-        console.log('Final counts - Success:', successfulCount, 'Failed:', failedCount)
-        
+
         // OPTIMIZATION: Use handleProductSuccess from useProducts for consistency
         if (successfulCount > 0) {
-          console.log('✅ Triggering success notification...')
           
           this.currentDraftData = null
-          
+
           // Reset table
-          console.log('🔄 Resetting table after successful product creation...')
           this.bulkProducts = []
           this.nextId = 1
           this.addNewRow()
-          console.log('✅ Table reset complete')
           
           // Use useProducts success handler for consistency
           this.handleProductSuccess({
@@ -781,23 +767,21 @@ export default {
           
           // Show the modal
           this.showNotificationModal = true
-          
+
         } else {
-          console.error('❌ No products were created successfully')
           this.showError('Failed to create products. Please check your data and try again.')
         }
-        
+
         // Handle failures
         if (failedCount > 0) {
-          console.warn('⚠️ Some products failed to create')
           setTimeout(() => {
             this.showError(`${failedCount} products failed to create. Check console for details.`)
           }, 100)
         }
-        
+
       } catch (error) {
-        console.error('💥 Error saving products:', error)
-        console.error('💥 Error details:', error.response?.data)
+        console.error('Error saving products:', error)
+        console.error('Error details:', error.response?.data)
         
         let errorMessage = 'Failed to save products'
         
@@ -992,8 +976,6 @@ export default {
       this.addNewRow()
       this.clearMessages()
       this.showNotificationModal = false
-      
-      console.log('Table reset, new products array:', this.bulkProducts)
     },
 
     handleNotificationRetry() {

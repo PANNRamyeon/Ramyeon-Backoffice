@@ -71,12 +71,11 @@ export const apiHelpers = {
 
 // Listen for online/offline events
 window.addEventListener('online', () => {
-  console.log('Back online - syncing offline requests');
   apiHelpers.syncOfflineRequests();
 });
 
 window.addEventListener('offline', () => {
-  console.log('Gone offline - requests will be queued');
+  // Requests will be queued
 });
 
 export default apiHelpers;

@@ -45,18 +45,34 @@
 
     <!-- User Profile Section -->
     <div class="user-profile" v-if="!isCollapsed">
-      <div class="profile-card">
+      <router-link 
+        to="/profile" 
+        class="profile-card"
+        :class="{ 'active': isActiveRoute('/profile') }"
+      >
         <div class="profile-avatar">
           <User :size="20" class="text-accent" />
         </div>
         <div class="profile-info">
-          <span class="profile-name">My Profile</span>
-          <small class="profile-role">Administrator</small>
+          <span class="profile-name">{{ userName }}</span>
+          <small class="profile-role">{{ userRole }}</small>
         </div>
-        <button class="btn btn-icon-only btn-xs profile-settings">
-          <Settings :size="14" />
-        </button>
-      </div>
+        <div class="nav-indicator" v-if="isActiveRoute('/profile')"></div>
+      </router-link>
+    </div>
+    
+    <!-- User Profile Section - Collapsed -->
+    <div class="user-profile" v-else>
+      <router-link 
+        to="/profile" 
+        class="profile-card profile-card-collapsed"
+        :class="{ 'active': isActiveRoute('/profile') }"
+        title="My Profile"
+      >
+        <div class="profile-avatar">
+          <User :size="20" class="text-accent" />
+        </div>
+      </router-link>
     </div>
 
     <!-- Navigation Menu -->
@@ -79,8 +95,10 @@
         <li class="nav-item">
           <button 
             class="nav-link nav-button"
-            :class="{ 'active': showInventorySubmenu }"
+            :class="{ 'active': showInventorySubmenu || isInventoryRoute() }"
             @click="toggleInventorySubmenu"
+            @mouseenter="handleInventoryHover(true)"
+            @mouseleave="handleInventoryHover(false)"
           >
             <Package :size="18" class="nav-icon" />
             <span class="nav-text" v-if="!isCollapsed">Inventory</span>
@@ -93,26 +111,47 @@
           </button>
           
           <!-- Inventory Submenu -->
-          <ul class="nav-submenu" v-if="showInventorySubmenu && !isCollapsed">
+          <transition name="fade-slide">
+            <ul 
+              class="nav-submenu"
+              v-if="shouldShowInventorySubmenu"
+              :class="{ 'submenu-floating': isCollapsed }"
+              @mouseenter="handleInventoryHover(true)"
+              @mouseleave="handleInventoryHover(false)"
+              :style="collapsedSubmenuStyle"
+            >
             <li class="nav-subitem">
-              <router-link to="/products" class="nav-sublink">
+              <router-link 
+                to="/products" 
+                class="nav-sublink"
+                :class="{ 'active-sub': isActiveRoute('/products') }"
+              >
                 <Box :size="16" class="nav-subicon" />
                 Products
               </router-link>
             </li>
             <li class="nav-subitem">
-              <router-link to="/categories" class="nav-sublink">
+              <router-link 
+                to="/categories" 
+                class="nav-sublink"
+                :class="{ 'active-sub': isActiveRoute('/categories') }"
+              >
                 <FolderOpen :size="16" class="nav-subicon" />
                 Categories
               </router-link>
             </li>
             <li class="nav-subitem">
-              <router-link to="/logs" class="nav-sublink">
+              <router-link 
+                to="/logs" 
+                class="nav-sublink"
+                :class="{ 'active-sub': isActiveRoute('/logs') }"
+              >
                 <FileText :size="16" class="nav-subicon" />
                 Logs
               </router-link>
             </li>
-          </ul>
+            </ul>
+          </transition>
         </li>
 
         <!-- Suppliers -->
@@ -158,8 +197,10 @@
         <li class="nav-item">
           <button 
             class="nav-link nav-button"
-            :class="{ 'active': showReportsSubmenu }"
+            :class="{ 'active': showReportsSubmenu || isReportsRoute() }"
             @click="toggleReportsSubmenu"
+            @mouseenter="handleReportsHover(true)"
+            @mouseleave="handleReportsHover(false)"
           >
             <BarChart3 :size="18" class="nav-icon" />
             <span class="nav-text" v-if="!isCollapsed">Reports</span>
@@ -172,20 +213,37 @@
           </button>
           
           <!-- Reports Submenu -->
-          <ul class="nav-submenu" v-if="showReportsSubmenu && !isCollapsed">
+          <transition name="fade-slide">
+            <ul 
+              class="nav-submenu" 
+              v-if="shouldShowReportsSubmenu"
+              :class="{ 'submenu-floating': isCollapsed }"
+              @mouseenter="handleReportsHover(true)"
+              @mouseleave="handleReportsHover(false)"
+              :style="collapsedSubmenuStyle"
+            >
             <li class="nav-subitem">
-              <router-link to="/salesbyitem" class="nav-sublink">
+              <router-link 
+                to="/salesbyitem" 
+                class="nav-sublink"
+                :class="{ 'active-sub': isActiveRoute('/salesbyitem') }"
+              >
                 <TrendingUp :size="16" class="nav-subicon" />
                 Sales By Items
               </router-link>
             </li>
             <li class="nav-subitem">
-              <router-link to="/salesbycategory" class="nav-sublink">
+              <router-link 
+                to="/salesbycategory" 
+                class="nav-sublink"
+                :class="{ 'active-sub': isActiveRoute('/salesbycategory') }"
+              >
                 <PieChart :size="16" class="nav-subicon" />
                 Sales By Categories
               </router-link>
             </li>
-          </ul>
+            </ul>
+          </transition>
         </li>
 
         <!-- Customers -->
@@ -231,6 +289,7 @@
 
 <script>
 import apiService from '../services/api.js'
+import { useAuth } from '@/composables/auth/useAuth.js'
 import { 
   LayoutDashboard,
   Package,
@@ -251,6 +310,9 @@ import {
   FolderOpen,
   FileText
 } from 'lucide-vue-next'
+
+const inventoryRoutePrefixes = ['/inventory', '/products', '/categories', '/logs']
+const reportsRoutePrefixes = ['/salesbyitem', '/salesbycategory', '/reports']
 
 export default {
   name: 'ModernSidebar',
@@ -274,12 +336,56 @@ export default {
     FolderOpen,
     FileText
   },
+  setup() {
+    const { user } = useAuth()
+    return { user }
+  },
   data() {
     return {
       isCollapsed: false,
       showInventorySubmenu: false,
       showReportsSubmenu: false,
+      inventoryHover: false,
+      reportsHover: false,
       isLoggingOut: false
+    }
+  },
+  computed: {
+    userRole() {
+      if (this.user) {
+        const userData = this.user.user_data || this.user
+        return userData?.role || 'Administrator'
+      }
+      return 'Administrator'
+    },
+    userName() {
+      if (this.user) {
+        const userData = this.user.user_data || this.user
+        return userData?.full_name || userData?.name || 'My Profile'
+      }
+      return 'My Profile'
+    },
+    shouldShowInventorySubmenu() {
+      if (this.isCollapsed) {
+        return this.inventoryHover
+      }
+      return this.showInventorySubmenu
+    },
+    shouldShowReportsSubmenu() {
+      if (this.isCollapsed) {
+        return this.reportsHover
+      }
+      return this.showReportsSubmenu
+    },
+    collapsedSubmenuStyle() {
+      if (!this.isCollapsed) {
+        return {}
+      }
+      return {
+        position: 'absolute',
+        left: '70px',
+        top: '0'
+      }
     }
   },
   methods: {
@@ -290,15 +396,42 @@ export default {
     },
     
     toggleInventorySubmenu() {
+      if (this.isCollapsed) return
       this.showInventorySubmenu = !this.showInventorySubmenu
     },
     
     toggleReportsSubmenu() {
+      if (this.isCollapsed) return
       this.showReportsSubmenu = !this.showReportsSubmenu
     },
     
     isActiveRoute(route) {
       return this.$route.path.startsWith(route)
+    },
+
+    isInventoryRoute() {
+      return inventoryRoutePrefixes.some(prefix => this.$route.path.startsWith(prefix))
+    },
+
+    isReportsRoute() {
+      return reportsRoutePrefixes.some(prefix => this.$route.path.startsWith(prefix))
+    },
+
+    handleInventoryHover(state) {
+      if (this.isCollapsed) {
+        this.inventoryHover = state
+      }
+    },
+
+    handleReportsHover(state) {
+      if (this.isCollapsed) {
+        this.reportsHover = state
+      }
+    },
+
+    syncSubmenusWithRoute() {
+      this.showInventorySubmenu = this.isInventoryRoute()
+      this.showReportsSubmenu = this.isReportsRoute()
     },
     
     async handleLogout() {
@@ -308,7 +441,6 @@ export default {
         
         try {
           await this.callLogoutAPI()
-          console.log('Logout API call successful')
         } catch (error) {
           console.error('Logout API error:', error)
           // Continue with local logout even if API fails
@@ -320,18 +452,15 @@ export default {
     
     async callLogoutAPI() {
       const token = this.getStoredToken()
-      
+
       if (!token) {
         console.warn('No token found for logout')
         return
       }
-      
-      console.log('Calling logout API using apiService...')
-      
+
       try {
         // ✅ Use the API service (same pattern as login)
         const result = await apiService.logout()
-        console.log('Logout successful via apiService:', result)
         return result
       } catch (error) {
         console.error('API service logout error:', error)
@@ -340,41 +469,31 @@ export default {
     },
     
     getStoredToken() {
-      // Debug: Log all localStorage keys to see what's actually stored
-      console.log('All localStorage keys:', Object.keys(localStorage))
-      console.log('All sessionStorage keys:', Object.keys(sessionStorage))
-      
       // Try different possible token storage keys (reordered to match login)
       const possibleKeys = [
         'authToken',        // Login.vue uses this
         'access_token',
-        'auth_token', 
+        'auth_token',
         'token',
         'accessToken',
         'jwt_token',
         'bearer_token',
         'user_token'
       ]
-      
+
       for (const key of possibleKeys) {
         const token = localStorage.getItem(key) || sessionStorage.getItem(key)
         if (token) {
-          console.log(`Found token with key: ${key}`, token.substring(0, 20) + '...')
           return token
         }
       }
-      
-      console.log('No token found in any storage location')
+
       return null
     },
     
     performLocalLogout() {
-      console.log('Performing local logout...')
-      
       // Clear ALL localStorage and sessionStorage to be absolutely sure
-      console.log('Before clearing - localStorage length:', localStorage.length)
-      console.log('Before clearing - sessionStorage length:', sessionStorage.length)
-      
+
       // Method 1: Clear specific auth keys
       const authKeys = [
         'access_token', 'refresh_token', 'auth_token', 'token',
@@ -383,46 +502,33 @@ export default {
         'user_data', 'user_info', 'user', 'userData', 'userInfo',
         'isAuthenticated', 'isLoggedIn', 'authState'
       ]
-      
+
       authKeys.forEach(key => {
-        const hadLocal = localStorage.getItem(key) !== null
-        const hadSession = sessionStorage.getItem(key) !== null
-        
         localStorage.removeItem(key)
         sessionStorage.removeItem(key)
-        
-        if (hadLocal || hadSession) {
-          console.log(`Cleared key: ${key}`)
-        }
       })
-      
+
       // Method 2: Nuclear option - clear everything (comment out if too aggressive)
       // localStorage.clear()
       // sessionStorage.clear()
-      
-      console.log('After clearing - localStorage length:', localStorage.length)
-      console.log('After clearing - sessionStorage length:', sessionStorage.length)
-      
+
       // Clear any global state if using Vuex/Pinia
       if (this.$store && this.$store.dispatch) {
         try {
           this.$store.dispatch('auth/logout')
           this.$store.dispatch('auth/clearAuth')
           this.$store.dispatch('user/logout')
-          console.log('Cleared store state')
         } catch (e) {
-          console.log('No auth store found or dispatch failed:', e.message)
+          // No auth store found or dispatch failed
         }
       }
-      
+
       // Reset component state
       this.isLoggingOut = false
-      
+
       // Use Vue router for smooth navigation
-      console.log('Redirecting to login...')
       this.$router.push('/login').catch(err => {
         // Handle navigation failures (e.g., already on login page)
-        console.log('Navigation to login:', err.message)
       })
     },
     
@@ -451,12 +557,19 @@ export default {
       // Emit initial state to parent
       this.$emit('sidebar-toggled', this.isCollapsed)
     }
+    this.syncSubmenusWithRoute()
   },
   
   watch: {
     isCollapsed(newValue) {
       // Save collapsed state to localStorage
       localStorage.setItem('sidebar-collapsed', JSON.stringify(newValue))
+    },
+    '$route.path': {
+      immediate: true,
+      handler() {
+        this.syncSubmenusWithRoute()
+      }
     }
   }
 }
@@ -607,10 +720,27 @@ export default {
   background-color: var(--surface-secondary);
   border: 1px solid var(--border-primary);
   transition: all 0.3s ease;
+  text-decoration: none;
+  cursor: pointer;
+  position: relative;
 }
 
 .profile-card:hover {
   background-color: var(--state-hover);
+  transform: translateX(2px);
+  border-color: var(--border-accent);
+}
+
+.profile-card.active {
+  color: var(--text-inverse);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  background: linear-gradient(135deg, var(--secondary), var(--secondary-dark));
+  border-color: var(--secondary-dark);
+}
+
+.profile-card-collapsed {
+  justify-content: center;
+  padding: 0.75rem;
 }
 
 .profile-avatar {
@@ -665,8 +795,12 @@ export default {
   flex: 1;
   padding: 1rem 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: visible;
 }
+.sidebar-container.collapsed .sidebar-nav {
+  overflow: visible;
+}
+
 
 .nav-list {
   list-style: none;
@@ -779,6 +913,13 @@ export default {
   color: var(--text-accent);
 }
 
+.nav-sublink.active-sub {
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+  font-weight: 600;
+  border: 1px solid var(--border-accent);
+}
+
 .nav-subicon {
   flex-shrink: 0;
 }
@@ -859,20 +1000,45 @@ export default {
    RESPONSIVE DESIGN
    ========================================================================== */
 
-@media (max-width: 768px) {
-  .sidebar-container {
-    transform: translateX(-100%);
-  }
-  
-  .sidebar-container.mobile-open {
-    transform: translateX(0);
-  }
-  
-  .sidebar-container.collapsed {
-    width: 280px;
-  }
+.submenu-floating {
+  position: absolute;
+  left: 36px;
+  top: 0;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--border-primary);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  z-index: 10000;
+  min-width: 180px;
 }
 
+.sidebar-container.collapsed .nav-item {
+  position: relative;
+}
+
+.sidebar-container.collapsed .submenu-floating {
+  display: block;
+}
+
+.sidebar-container.collapsed .nav-submenu {
+  display: none;
+}
+
+.sidebar-container.collapsed .nav-submenu.submenu-floating {
+  display: block;
+}
+
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fade-slide-enter-from,
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(5px);
+}
 /* ==========================================================================
    SCROLLBAR STYLING - SEMANTIC
    ========================================================================== */
