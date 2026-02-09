@@ -165,28 +165,6 @@ class Product(Model):
     
     # ============= INDEXES FOR COMMON QUERIES =============
     
-    class CategoryIndex(GlobalSecondaryIndex):
-        """GSI for querying by category"""
-        class Meta:
-            index_name = 'ProductCategoryIndex'
-            read_capacity_units = 3
-            write_capacity_units = 2
-            projection = AllProjection()
-        
-        pk = UnicodeAttribute(hash_key=True)  # Will be set to 'products'
-        category_id = UnicodeAttribute(range_key=True)
-    
-    class StatusIndex(GlobalSecondaryIndex):
-        """GSI for querying by status"""
-        class Meta:
-            index_name = 'ProductStatusIndex'
-            read_capacity_units = 3
-            write_capacity_units = 2
-            projection = AllProjection()
-        
-        pk = UnicodeAttribute(hash_key=True)  # Will be set to 'products'
-        status = UnicodeAttribute(range_key=True)
-    
     class SKUIndex(GlobalSecondaryIndex):
         """GSI for fast SKU lookups (critical for POS)"""
         class Meta:
@@ -198,22 +176,7 @@ class Product(Model):
         pk = UnicodeAttribute(hash_key=True)  # Will be set to 'products'
         SKU = UnicodeAttribute(range_key=True)
     
-    class BarcodeIndex(GlobalSecondaryIndex):
-        """GSI for fast barcode scans (critical for POS)"""
-        class Meta:
-            index_name = 'ProductBarcodeIndex'
-            read_capacity_units = 5  # Higher for frequent POS scans
-            write_capacity_units = 3
-            projection = AllProjection()
-        
-        pk = UnicodeAttribute(hash_key=True)  # Will be set to 'products'
-        barcode = UnicodeAttribute(range_key=True)
-    
-    # Index instances
-    category_index = CategoryIndex()
-    status_index = StatusIndex()
     sku_index = SKUIndex()
-    barcode_index = BarcodeIndex()
     
     # ============= CLASS METHODS =============
     
@@ -384,14 +347,15 @@ class Product(Model):
             Product or None if not found
         """
         try:
-            # Query the barcode index
-            for product in cls.barcode_index.query(
+            # Query the products partition (scan with filter)
+            condition = cls.barcode == barcode
+            if not include_deleted:
+                condition = condition & (cls.isDeleted == False)
+            
+            for product in cls.query(
                 "products",
-                cls.barcode == barcode,
-                limit=1
+                filter_condition=condition
             ):
-                if not include_deleted and product.isDeleted:
-                    continue
                 return product
             return None
         except Exception as e:
@@ -441,10 +405,8 @@ class Product(Model):
             list: List of products in the category
         """
         try:
-            return list(cls.category_index.query(
+            return list(cls.query(
                 "products",
-                cls.category_id == category_id,
-                filter_condition=(cls.isDeleted == False) & (cls.status == status)
             ))
         except Exception as e:
             logger.error(f"Error querying products by category: {str(e)}")
@@ -463,14 +425,13 @@ class Product(Model):
             list: List of products with the given status
         """
         try:
-            filter_condition = None
+            condition = cls.status == status
             if not include_deleted:
-                filter_condition = cls.isDeleted == False
+                condition = condition & (cls.isDeleted == False)
             
-            return list(cls.status_index.query(
+            return list(cls.query(
                 "products",
-                cls.status == status,
-                filter_condition=filter_condition
+                filter_condition=condition
             ))
         except Exception as e:
             logger.error(f"Error querying products by status: {str(e)}")
