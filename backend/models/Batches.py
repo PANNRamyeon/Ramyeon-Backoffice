@@ -1,3 +1,4 @@
+# app/models/Batch.py
 """
 Batch Model - Following ERD Specification with Optimistic Locking
 PK = "batches", SK = "BATCH-#####"
@@ -5,14 +6,15 @@ Single Table Design using RamyeonCornerDB
 """
 from pynamodb.models import Model
 from pynamodb.attributes import (
-    UnicodeAttribute, NumberAttribute,
+    UnicodeAttribute, NumberAttribute, BooleanAttribute,
     ListAttribute, MapAttribute, UTCDateTimeAttribute
 )
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
 from pynamodb.exceptions import UpdateError
-from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,7 +43,7 @@ class UsageHistoryItem(MapAttribute):
     timestamp = UTCDateTimeAttribute()
     quantity_used = NumberAttribute()
     reason = UnicodeAttribute()
-    remaining_after = UnicodeAttribute()
+    remaining_after = NumberAttribute()  # Changed to NumberAttribute
     adjustment_type = UnicodeAttribute()
     adjusted_by = UnicodeAttribute()
     approved_by = UnicodeAttribute(null=True)
@@ -74,24 +76,33 @@ class StatusExpiryIndex(GlobalSecondaryIndex):
     expiry_date = UTCDateTimeAttribute(range_key=True)
 
 
+class ProductStatusIndex(GlobalSecondaryIndex):
+    """GSI for querying batches by product_id and status"""
+    class Meta:
+        index_name = 'batch-product-status-index'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+    
+    product_id = UnicodeAttribute(hash_key=True)
+    status = UnicodeAttribute(range_key=True)
+
+
 # ============= MAIN BATCH MODEL =============
 class Batch(Model):
     """
-    BATCH MODEL - Following ERD Specification with Optimistic Locking
+    BATCH MODEL - Updated with missing fields and enhanced integration
     
-    Features:
-    1. Fully automatic status updates based on quantity and expiry
+    Enhanced Features:
+    1. Automatic status updates based on quantity and expiry
     2. Optimistic locking using updated_at timestamp
     3. Essential GSIs for common queries
+    4. Integration with Product and Supplier models
     """
     
     class Meta:
         table_name = DYNAMO_TABLE_NAME  # RamyeonCornerDB
         region = AWS_REGION
-        
-        #if DYNAMODB_LOCAL:
-         #   host = DYNAMODB_LOCAL_HOST
-        
         read_capacity_units = 5
         write_capacity_units = 10
     
@@ -102,6 +113,7 @@ class Batch(Model):
     # ============= GSI DEFINITIONS =============
     product_id_index = ProductIdIndex()
     status_expiry_index = StatusExpiryIndex()
+    product_status_index = ProductStatusIndex()
     
     # ============= BATCH IDENTIFICATION =============
     product_id = UnicodeAttribute()
@@ -115,20 +127,25 @@ class Batch(Model):
     cost_price = NumberAttribute()
     
     # ============= DATE INFORMATION =============
-    expiry_date = UTCDateTimeAttribute()
-    date_received = UTCDateTimeAttribute()
+    expiry_date = UTCDateTimeAttribute(null=True)
+    expected_delivery_date = UTCDateTimeAttribute(null=True)  # Added missing field
+    date_received = UTCDateTimeAttribute(null=True)
     
     # ============= SUPPLIER INFORMATION =============
-    supplier_id = UnicodeAttribute()
+    supplier_id = UnicodeAttribute(null=True)
     
     # ============= STATUS AND METADATA =============
     status = UnicodeAttribute(default="pending")  # Initial status
     created_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
     updated_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    notes = UnicodeAttribute(null=True)  # Added missing field
     
     # ============= NESTED ARRAYS =============
     sync_logs = ListAttribute(of=SyncLogItem, default=list)
     usage_history = ListAttribute(of=UsageHistoryItem, default=list)
+    
+    # ============= OPTIMISTIC LOCKING =============
+    version = NumberAttribute(default=1)  # For optimistic locking
     
     # ============= CLASS METHODS =============
     
@@ -205,6 +222,22 @@ class Batch(Model):
             return []
     
     @classmethod
+    def get_by_product_and_status(cls, product_id: str, status: str, limit: int = 100) -> list:
+        """
+        Get batches by product_id and status using GSI
+        """
+        try:
+            return list(cls.product_status_index.query(
+                product_id,
+                cls.status == status,
+                limit=limit,
+                scan_index_forward=True
+            ))
+        except Exception as e:
+            logger.error(f"Error querying batches for product {product_id} with status {status}: {str(e)}")
+            return []
+    
+    @classmethod
     def get_by_status(cls, status: str, limit: int = 100) -> list:
         """
         Get batches by status using GSI
@@ -252,27 +285,38 @@ class Batch(Model):
             return []
     
     @classmethod
-    def get_low_stock_batches(cls, threshold_percentage: float = 0.1) -> list:
+    def get_active_non_expired_batches(cls, product_id: str = None) -> list:
         """
-        Get batches with low stock (less than threshold percentage)
-        Note: This requires scanning, but for low-frequency alerts it's acceptable
+        Get active, non-expired batches (optionally filtered by product_id)
         """
         try:
-            low_stock_batches = []
+            batches = []
+            now = datetime.utcnow()
             
-            # Query active and low_stock batches
-            for status in ["active", "low_stock"]:
-                batches = cls.get_by_status(status, limit=1000)
-                for batch in batches:
-                    if batch.quantity_received > 0:
-                        remaining_percentage = batch.quantity_remaining / batch.quantity_received
-                        if remaining_percentage < threshold_percentage:
-                            low_stock_batches.append(batch)
+            if product_id:
+                # Get batches for specific product
+                product_batches = cls.get_by_product_and_status(product_id, "active", limit=100)
+                for batch in product_batches:
+                    # Check if not expired
+                    if batch.expiry_date and batch.expiry_date < now:
+                        continue
+                    if batch.quantity_remaining <= 0:
+                        continue
+                    batches.append(batch)
+            else:
+                # Get all active batches
+                active_batches = cls.get_by_status("active", limit=1000)
+                for batch in active_batches:
+                    if batch.expiry_date and batch.expiry_date < now:
+                        continue
+                    if batch.quantity_remaining <= 0:
+                        continue
+                    batches.append(batch)
             
-            return low_stock_batches
+            return batches
             
         except Exception as e:
-            logger.error(f"Error getting low stock batches: {str(e)}")
+            logger.error(f"Error getting active non-expired batches: {str(e)}")
             return []
     
     @classmethod
@@ -295,29 +339,9 @@ class Batch(Model):
                        retry_count: int = 3) -> 'Batch':
         """
         Update batch quantity with optimistic locking and automatic status updates
-        
-        Args:
-            quantity_change: Positive for additions, negative for deductions
-            reason: Reason for adjustment
-            adjusted_by: User/System that made adjustment
-            adjustment_type: addition or deduction
-            source: manual, pos, api, etc.
-            notes: Additional notes
-            approved_by: User who approved (if required)
-            retry_count: Number of retry attempts on optimistic lock failure
-        
-        Returns:
-            Batch: Updated batch instance
-        
-        Raises:
-            ValueError: If insufficient quantity for deduction
-            UpdateError: If optimistic lock fails after retries
         """
         for attempt in range(retry_count):
             try:
-                # Capture current timestamp for optimistic locking
-                original_updated_at = self.updated_at
-                
                 # For deductions, check sufficient quantity
                 if quantity_change < 0 and abs(quantity_change) > self.quantity_remaining:
                     raise ValueError(
@@ -334,7 +358,7 @@ class Batch(Model):
                     timestamp=datetime.utcnow(),
                     quantity_used=quantity_used,
                     reason=reason,
-                    remaining_after=str(new_quantity),
+                    remaining_after=new_quantity,
                     adjustment_type=adjustment_type,
                     adjusted_by=adjusted_by,
                     approved_by=approved_by,
@@ -342,16 +366,18 @@ class Batch(Model):
                     source=source
                 )
                 
-                # Update batch attributes
+                # Update with optimistic locking
+                current_version = self.version
                 self.quantity_remaining = new_quantity
                 self.usage_history.append(history_item)
                 self.updated_at = datetime.utcnow()
+                self.version = current_version + 1
                 
                 # Automatically update status based on new state
                 self._calculate_and_set_status()
                 
                 # Save with optimistic locking condition
-                condition = (Batch.pk == self.pk) & (Batch.sk == self.sk) & (Batch.updated_at == original_updated_at)
+                condition = (Batch.version == current_version)
                 self.save(condition=condition)
                 
                 logger.info(f"Batch {self.sk} quantity updated: {self.quantity_remaining}")
@@ -370,22 +396,6 @@ class Batch(Model):
             except Exception as e:
                 logger.error(f"Error updating quantity for batch {self.sk}: {str(e)}")
                 raise
-    
-    def adjust_quantity(self, new_quantity: int, reason: str,
-                       adjusted_by: str, source: str = "manual",
-                       notes: Optional[str] = None) -> 'Batch':
-        """
-        Set quantity to a specific value (absolute adjustment)
-        """
-        quantity_change = new_quantity - self.quantity_remaining
-        return self.update_quantity(
-            quantity_change=quantity_change,
-            reason=reason,
-            adjusted_by=adjusted_by,
-            adjustment_type="adjustment",
-            source=source,
-            notes=notes
-        )
     
     def consume_quantity(self, quantity: int, reason: str,
                         adjusted_by: str, source: str = "sale",
@@ -423,10 +433,7 @@ class Batch(Model):
         Add a synchronization log entry
         """
         try:
-            # Capture current timestamp for optimistic locking
-            original_updated_at = self.updated_at
-            
-            # Convert details dicts to SyncLogDetailItem objects
+            # Convert details dicts to SyncLogDetailItem
             detail_items = []
             if details:
                 for detail in details:
@@ -440,11 +447,13 @@ class Batch(Model):
                 details=detail_items
             )
             
+            current_version = self.version
             self.sync_logs.append(sync_log)
             self.updated_at = datetime.utcnow()
+            self.version = current_version + 1
             
             # Save with optimistic locking
-            condition = (Batch.pk == self.pk) & (Batch.sk == self.sk) & (Batch.updated_at == original_updated_at)
+            condition = (Batch.version == current_version)
             self.save(condition=condition)
             
             logger.info(f"Sync log added to batch {self.sk}: {action} - {status}")
@@ -460,7 +469,6 @@ class Batch(Model):
     def _calculate_and_set_status(self):
         """
         Fully automatic status calculation based on quantity and expiry date
-        This is called after every quantity change
         """
         now = datetime.utcnow()
         
@@ -590,25 +598,57 @@ class Batch(Model):
                 "quantity_remaining": self.quantity_remaining,
                 "cost_price": float(self.cost_price) if self.cost_price else None,
                 "expiry_date": self.expiry_date.isoformat() if self.expiry_date else None,
+                "expected_delivery_date": self.expected_delivery_date.isoformat() if self.expected_delivery_date else None,
                 "date_received": self.date_received.isoformat() if self.date_received else None,
                 "supplier_id": self.supplier_id,
                 "status": self.status,
+                "notes": self.notes,
                 "status_info": self.get_status_info(),
                 "created_at": self.created_at.isoformat() if self.created_at else None,
                 "updated_at": self.updated_at.isoformat() if self.updated_at else None,
                 "is_expired": self.is_expired(),
                 "days_until_expiry": self.days_until_expiry(),
                 "sync_logs_count": len(self.sync_logs),
-                "usage_history_count": len(self.usage_history)
+                "usage_history_count": len(self.usage_history),
+                "version": self.version
             }
         except Exception as e:
             logger.error(f"Error converting batch to dict: {str(e)}")
+            return {}
+    
+    def to_simple_dict(self) -> Dict[str, Any]:
+        """
+        Simplified dictionary for listings
+        """
+        try:
+            return {
+                "batch_id": self.sk,
+                "batch_number": self.batch_number,
+                "product_id": self.product_id,
+                "quantity_remaining": self.quantity_remaining,
+                "expiry_date": self.expiry_date.isoformat() if self.expiry_date else None,
+                "status": self.status,
+                "cost_price": float(self.cost_price) if self.cost_price else None,
+                "days_until_expiry": self.days_until_expiry()
+            }
+        except Exception as e:
+            logger.error(f"Error converting batch to simple dict: {str(e)}")
             return {}
     
     def save(self, condition=None, **kwargs):
         """Override save to handle optimistic locking"""
         self.updated_at = datetime.utcnow()
         return super().save(condition=condition, **kwargs)
+    
+    def refresh(self):
+        """Reload the batch from database"""
+        try:
+            refreshed = self.get("batches", self.sk)
+            for attribute_name in self.attribute_values:
+                setattr(self, attribute_name, getattr(refreshed, attribute_name))
+        except Exception as e:
+            logger.error(f"Error refreshing batch {self.sk}: {str(e)}")
+            raise
 
 
 # ============= BATCH MANAGER WITH AUTO STATUS UPDATES =============
@@ -632,11 +672,12 @@ class BatchManager:
                     if batch.is_expired() and batch.status != "expired":
                         try:
                             # Update status to expired
-                            original_updated_at = batch.updated_at
+                            current_version = batch.version
                             batch.status = "expired"
                             batch.updated_at = datetime.utcnow()
+                            batch.version = current_version + 1
                             
-                            condition = (Batch.pk == batch.pk) & (Batch.sk == batch.sk) & (Batch.updated_at == original_updated_at)
+                            condition = (Batch.version == current_version)
                             batch.save(condition=condition)
                             
                             updated_batches.append({
@@ -673,14 +714,7 @@ class BatchManager:
         """
         try:
             # Get all non-exhausted, non-expired batches for the product
-            batches = Batch.get_by_product_id(product_id, limit=100)
-            
-            valid_batches = [
-                b for b in batches 
-                if b.status in ["active", "low_stock", "expiring_soon"]
-                and not b.is_expired()
-                and b.quantity_remaining > 0
-            ]
+            valid_batches = Batch.get_active_non_expired_batches(product_id)
             
             if not valid_batches:
                 return {
@@ -733,3 +767,43 @@ class BatchManager:
                 "can_fulfill": False,
                 "message": f"Error: {str(e)}"
             }
+    
+    @staticmethod
+    def get_expiry_summary(product_id: str) -> Dict:
+        """
+        Get expiry summary for a product's batches
+        """
+        try:
+            batches = Batch.get_by_product_id(product_id, limit=100)
+            
+            active_batches = []
+            expiring_soon_batches = []
+            expired_batches = []
+            
+            now = datetime.utcnow()
+            thirty_days_from_now = now + timedelta(days=30)
+            
+            for batch in batches:
+                if batch.is_expired():
+                    expired_batches.append(batch)
+                elif batch.expiry_date and batch.expiry_date <= thirty_days_from_now:
+                    expiring_soon_batches.append(batch)
+                elif batch.status in ["active", "low_stock"]:
+                    active_batches.append(batch)
+            
+            return {
+                "product_id": product_id,
+                "total_batches": len(batches),
+                "active_batches": len(active_batches),
+                "expiring_soon_batches": len(expiring_soon_batches),
+                "expired_batches": len(expired_batches),
+                "total_stock": sum(b.quantity_remaining for b in batches if b.status != "expired"),
+                "active_stock": sum(b.quantity_remaining for b in active_batches),
+                "expiring_soon_stock": sum(b.quantity_remaining for b in expiring_soon_batches),
+                "oldest_expiry": min([b.expiry_date for b in active_batches if b.expiry_date], default=None),
+                "expiry_alert": len(expiring_soon_batches) > 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting expiry summary for product {product_id}: {str(e)}")
+            return {}

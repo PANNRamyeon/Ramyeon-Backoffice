@@ -26,6 +26,18 @@ class UserIdTimestampIndex(GlobalSecondaryIndex):
         write_capacity_units = 5
 
 
+class TargetTypeIdIndex(GlobalSecondaryIndex):
+    """
+    GSI for querying audit logs by target_type and target_id
+    Hash Key: target_type, Range Key: target_id
+    """
+    class Meta:
+        index_name = 'audit-target-type-id-index'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+
+
 # ============= MAIN AUDIT LOG MODEL =============
 class AuditLog(Model):
     """
@@ -56,8 +68,9 @@ class AuditLog(Model):
     pk = UnicodeAttribute(hash_key=True)   # Partition Key: "audit_logs"
     sk = UnicodeAttribute(range_key=True)  # Sort Key: "AUD-00001" (generated)
     
-    # ============= GSI DEFINITION =============
+    # ============= GSI DEFINITIONS =============
     user_id_index = UserIdTimestampIndex()
+    target_index = TargetTypeIdIndex()
     
     # ============= ERD FIELDS (WITH MODIFICATION) =============
     user_id = UnicodeAttribute(null=True)
@@ -71,6 +84,11 @@ class AuditLog(Model):
     target_id = UnicodeAttribute(null=True)
     target_name = UnicodeAttribute(null=True)
     action = UnicodeAttribute(null=True)  # create, update, delete, login, export, etc.
+    
+    # ============= ADDED FIELDS FOR SERVICE COMPATIBILITY =============
+    changes = UnicodeAttribute(null=True)       # JSON string for change tracking
+    metadata = UnicodeAttribute(null=True)      # JSON string for additional data
+    description = UnicodeAttribute(null=True)   # For AuditEvents convenience
     
     # ============= CLASS METHODS =============
     
@@ -167,6 +185,26 @@ class AuditLog(Model):
             return []
     
     @classmethod
+    def get_by_target(cls, target_type: str, target_id: str,
+                     limit: int = 50, reverse: bool = True) -> list:
+        """
+        Get audit logs for a specific target using GSI
+        """
+        try:
+            query_result = cls.target_index.query(
+                target_type,
+                cls.target_id == target_id,
+                limit=limit,
+                scan_index_forward=not reverse
+            )
+            
+            return list(query_result)
+            
+        except Exception as e:
+            logger.error(f"Error querying audit logs for target {target_type}/{target_id}: {str(e)}")
+            return []
+    
+    @classmethod
     def get_all_logs(cls, limit: int = 1000, reverse: bool = True) -> list:
         """
         Get all audit logs (paginated)
@@ -207,7 +245,10 @@ class AuditLog(Model):
                 'target_type': self.target_type,
                 'target_id': self.target_id,
                 'target_name': self.target_name,
-                'action': self.action
+                'action': self.action,
+                'changes': self.changes,
+                'metadata': self.metadata,
+                'description': self.description
             }
         except Exception as e:
             logger.error(f"Error converting audit log to dict: {str(e)}")
@@ -218,7 +259,9 @@ class AuditLog(Model):
 def log_audit_event(action: str, user_id: str = None, username: str = None,
                    target_type: str = None, target_id: str = None,
                    target_name: str = None, status: str = "success",
-                   source: str = "system", branch_id: str = None) -> AuditLog | None:
+                   source: str = "system", branch_id: str = None,
+                   description: str = None, changes: str = None, 
+                   metadata: str = None) -> 'AuditLog | None':
     """
     Simplified function to create audit trail entries
     """
@@ -232,7 +275,10 @@ def log_audit_event(action: str, user_id: str = None, username: str = None,
             target_name=target_name,
             status=status,
             source=source,
-            branch_id=branch_id
+            branch_id=branch_id,
+            description=description,
+            changes=changes,
+            metadata=metadata
         )
     except Exception as e:
         logger.error(f"Failed to log audit event: {str(e)}")
@@ -245,8 +291,14 @@ class AuditEvents:
     
     @staticmethod
     def user_login(user_id: str, username: str, status: str = "success", 
-                  ip_address: str = None, user_agent: str = None) -> AuditLog | None:
+                  ip_address: str = None, user_agent: str = None) -> 'AuditLog | None':
         """Log user login attempt"""
+        metadata = {}
+        if ip_address:
+            metadata['ip_address'] = ip_address
+        if user_agent:
+            metadata['user_agent'] = user_agent
+            
         return log_audit_event(
             action="login",
             user_id=user_id,
@@ -256,12 +308,13 @@ class AuditEvents:
             target_name=username,
             status=status,
             source="web",
-            description=f"User login {status}"
+            description=f"User login {status}",
+            metadata=str(metadata) if metadata else None
         )
     
     @staticmethod
     def create_entity(target_type: str, target_id: str, target_name: str,
-                     user_id: str = None, username: str = None) -> AuditLog | None:
+                     user_id: str = None, username: str = None) -> 'AuditLog | None':
         """Log creation of an entity"""
         return log_audit_event(
             action="create",
@@ -276,7 +329,7 @@ class AuditEvents:
     
     @staticmethod
     def update_entity(target_type: str, target_id: str, target_name: str,
-                     user_id: str = None, username: str = None) -> AuditLog | None:
+                     user_id: str = None, username: str = None) -> 'AuditLog | None':
         """Log update of an entity"""
         return log_audit_event(
             action="update",
@@ -291,7 +344,7 @@ class AuditEvents:
     
     @staticmethod
     def delete_entity(target_type: str, target_id: str, target_name: str,
-                     user_id: str = None, username: str = None) -> AuditLog | None:
+                     user_id: str = None, username: str = None) -> 'AuditLog | None':
         """Log deletion of an entity"""
         return log_audit_event(
             action="delete",

@@ -29,6 +29,7 @@ LOCAL_APPS = [
     'reports',
     'kpi',  # Added based on your folder structure
     'promotions',  # Added based on your folder structure
+    'models',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
