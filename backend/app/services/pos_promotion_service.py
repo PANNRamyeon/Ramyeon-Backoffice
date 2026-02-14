@@ -155,11 +155,14 @@ class POSPromotionService:
         target_ids = promotion.get('target_ids', [])
         
         for item in cart_items:
-            product = self.product_service.get_product_by_id(item['product_id'])
-            if not product or not product.get('success'):
+            try:
+                product = self.product_service.get_product_by_id(item['product_id'])
+                if not product:   # Product not found or deleted
+                    continue
+            except Exception:
+                # Skip item if product lookup fails
                 continue
             
-            product_data = product['product']
             is_eligible = False
             
             if target_type == 'all':
@@ -168,13 +171,13 @@ class POSPromotionService:
                 is_eligible = item['product_id'] in target_ids
             elif target_type == 'categories':
                 # Check if product's category matches
-                product_category = product_data.get('category_id')
+                product_category = product.category_id
                 is_eligible = product_category in target_ids
             
             if is_eligible:
                 eligible.append({
                     'product_id': item['product_id'],
-                    'product_name': product_data.get('product_name', 'Unknown'),
+                    'product_name': product.product_name,
                     'quantity': item['quantity'],
                     'unit_price': item['unit_price'],
                     'subtotal': item['quantity'] * item['unit_price']

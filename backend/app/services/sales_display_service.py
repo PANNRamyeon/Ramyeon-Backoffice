@@ -1,228 +1,301 @@
-from ..database import db_manager 
-from ..models import SalesLog
-import bcrypt
-from notifications.services import notification_service
-from .pos.SalesService import SalesService
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional, Union
 
-class SalesDisplayService():
+# PynamoDB models – import using the exact module paths from your project
+from ...models.Batches import Batch
+from ...models.Categories import Category
+from ...models.Product import Product
+from ...models.Sales import Sale
+
+logger = logging.getLogger(__name__)
+
+
+class SalesDisplayService:
+    """
+    Sales Display Service – uses DynamoDB models (PynamoDB).
+    Provides sales reporting and aggregation by item with date filtering.
+    """
+
     def __init__(self):
-        self.db = db_manager.get_database()  
-        self.sales_collection = self.db.sales  
-        self.online_transactions_collection = self.db.online_transactions 
+        # No database manager – models encapsulate table access
+        pass
 
-    def get_sales_by_item_with_date_filter(self, start_date=None, end_date=None, include_voided=False):
+    # -------------------------------------------------------------------------
+    # Helper methods for fetching reference data
+    # -------------------------------------------------------------------------
+
+    def _fetch_all_products(self) -> List[Dict[str, Any]]:
+        """Return all products as dictionaries."""
+        try:
+            products = []
+            # Use query on the primary key "products" to get all products efficiently
+            for p in Product.query("products"):
+                products.append(p.to_dict())
+            return products
+        except Exception as e:
+            logger.error(f"Error fetching products: {e}")
+            return []
+
+    def _fetch_all_categories(self) -> List[Dict[str, Any]]:
+        """Return all categories as dictionaries."""
+        try:
+            categories = []
+            for c in Category.query("categories"):
+                categories.append(c.to_dict())
+            return categories
+        except Exception as e:
+            logger.error(f"Error fetching categories: {e}")
+            return []
+
+    def _fetch_all_batches(self) -> List[Dict[str, Any]]:
+        """Return all batches as dictionaries."""
+        try:
+            batches = []
+            for b in Batch.query("batches"):
+                batches.append(b.to_dict())
+            return batches
+        except Exception as e:
+            logger.error(f"Error fetching batches: {e}")
+            return []
+
+    # -------------------------------------------------------------------------
+    # Core reporting methods
+    # -------------------------------------------------------------------------
+
+    def get_sales_by_item_with_date_filter(
+        self,
+        start_date: Optional[Union[str, datetime]] = None,
+        end_date: Optional[Union[str, datetime]] = None,
+        include_voided: bool = False
+    ) -> List[Dict[str, Any]]:
         """
-        Get sales by item with proper date filtering using transaction_date
-        Includes option to filter out voided transactions
+        Get sales by item with proper date filtering using transaction_date.
+        Includes option to filter out voided transactions.
         """
         try:
-            # Build query filter
-            query_filter = {}
-            
-            # Date filtering
+            # Build date range condition for the GSI
+            range_condition = None
             if start_date or end_date:
-                date_filter = {}
-                if start_date:
-                    # Convert string to datetime if needed
-                    if isinstance(start_date, str):
-                        start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                    date_filter['$gte'] = start_date
-                if end_date:
-                    if isinstance(end_date, str):
-                        end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-                    # Include entire end date by setting to end of day
+                if isinstance(start_date, str):
+                    start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                if isinstance(end_date, str):
+                    end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+
+                # For the GSI we need a condition on transaction_date
+                if start_date and end_date:
+                    # Include entire end date
                     end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-                    date_filter['$lte'] = end_date
-                
-                if date_filter:
-                    query_filter['transaction_date'] = date_filter
-            
-            # Exclude voided transactions unless specifically included
-            if not include_voided:
-                query_filter['status'] = {'$ne': 'voided'}
-            
-            print(f"🔍 Query filter: {query_filter}")
-            
-            # Fetch sales data with the filter
-            sales = list(self.sales_collection.find(query_filter))
-            print(f"📊 Found {len(sales)} sales records")
-            
-            # Process products, categories, batches (keep your existing logic)
-            products = self.fetch_all_products()
-            categories = self.fetch_all_categories()
-            batches = self.fetch_all_batches()
+                    range_condition = (Sale.transaction_date >= start_date) & (Sale.transaction_date <= end_date)
+                elif start_date:
+                    range_condition = Sale.transaction_date >= start_date
+                elif end_date:
+                    end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    range_condition = Sale.transaction_date <= end_date
+
+            # Fetch sales using the DateIndex GSI
+            sales = []
+            if range_condition:
+                # Query the GSI with fixed partition key 'sales'
+                for sale in Sale.date_index.query("sales", range_key_condition=range_condition):
+                    if not include_voided and sale.is_voided:
+                        continue
+                    sales.append(sale)
+            else:
+                # No date filter – scan all sales (potentially expensive)
+                for sale in Sale.query("sales"):
+                    if not include_voided and sale.is_voided:
+                        continue
+                    sales.append(sale)
+
+            logger.info(f"Found {len(sales)} sales records")
+
+            # Fetch reference data
+            products = self._fetch_all_products()
+            categories = self._fetch_all_categories()
+            batches = self._fetch_all_batches()
 
             # Map category_id -> category_name
             category_id_to_name = {}
             for cat in categories:
-                category_id_to_name[cat.get('category_id') or cat.get('_id')] = cat.get('name') or cat.get('category_name')
+                cat_id = cat.get('category_id') or cat.get('id')
+                cat_name = cat.get('name') or cat.get('category_name')
+                if cat_id:
+                    category_id_to_name[cat_id] = cat_name
 
-            # Group batches by product_id and sum quantity_remaining
-            product_id_to_stock_remaining = defaultdict(int)
+            # Sum remaining stock per product from batches
+            product_stock = defaultdict(int)
             for batch in batches:
-                product_id = batch.get('product_id')
-                qty_remaining = batch.get('quantity_remaining', 0)
-                if product_id:
-                    product_id_to_stock_remaining[product_id] += qty_remaining
+                pid = batch.get('product_id')
+                qty = batch.get('quantity_remaining', 0)
+                if pid:
+                    product_stock[pid] += qty
 
-            # Aggregate sales items for the filtered period
-            product_id_to_sold_qty = defaultdict(int)
-            product_id_to_total_sales = defaultdict(float)
+            # Aggregate sold quantities and revenue per product
+            sold_qty = defaultdict(int)
+            sold_total = defaultdict(float)
 
-            def accumulate_items(container):
-                for doc in container:
-                    # Skip voided transactions unless included
-                    if not include_voided and doc.get('status') == 'voided':
+            for sale in sales:
+                for item in sale.items or []:
+                    pid = item.get('product_id')
+                    if not pid:
                         continue
-                    
-                    for item in doc.get('items', []):
-                        pid = item.get('product_id')
-                        if not pid:
-                            continue
-                        product_id_to_sold_qty[pid] += item.get('quantity', 0)
-                        product_id_to_total_sales[pid] += item.get('subtotal', 0.0)
+                    sold_qty[pid] += item.get('quantity', 0)
+                    sold_total[pid] += item.get('subtotal', 0.0)
 
-            accumulate_items(sales)
-
-            # Build display list per product
+            # Build display rows
             display_rows = []
-            for p in products:
-                product_id = p.get('product_id') or p.get('_id')
-                category_name = category_id_to_name.get(p.get('category_id'))
-                
+            for prod in products:
+                pid = prod.get('product_id') or prod.get('id')
+                cat_name = category_id_to_name.get(prod.get('category_id'))
+
                 display_rows.append({
-                    'product_id': product_id,
-                    'product_name': p.get('product_name'),
-                    'category_name': category_name,
-                    'sku': p.get('sku') or p.get('SKU') or p.get('Sku'),
-                    'unit': p.get('unit'),
-                    'stock': product_id_to_stock_remaining.get(product_id, 0),
-                    'items_sold': product_id_to_sold_qty.get(product_id, 0),
-                    'total_sales': round(product_id_to_total_sales.get(product_id, 0.0), 2),
-                    'selling_price': p.get('selling_price'),
-                    'is_taxable': p.get('is_taxable'),
+                    'product_id': pid,
+                    'product_name': prod.get('product_name'),
+                    'category_name': cat_name,
+                    'sku': prod.get('sku') or prod.get('SKU') or prod.get('Sku'),
+                    'unit': prod.get('unit'),
+                    'stock': product_stock.get(pid, 0),
+                    'items_sold': sold_qty.get(pid, 0),
+                    'total_sales': round(sold_total.get(pid, 0.0), 2),
+                    'selling_price': prod.get('selling_price'),
+                    'is_taxable': prod.get('is_taxable'),
                 })
 
-            # Sort by total_sales desc by default
+            # Sort by total sales descending
             display_rows.sort(key=lambda r: r['total_sales'], reverse=True)
-            
-            print(f"🎯 Final result: {len(display_rows)} products with sales data")
+
+            logger.info(f"Returning {len(display_rows)} product sales rows")
             return display_rows
 
         except Exception as e:
-            print(f"❌ Error in get_sales_by_item_with_date_filter: {str(e)}")
-            raise e
+            logger.error(f"Error in get_sales_by_item_with_date_filter: {e}")
+            raise
 
-    def get_sales_summary_by_date_range(self, start_date, end_date):
+    def get_sales_summary_by_date_range(
+        self,
+        start_date: Union[str, datetime],
+        end_date: Union[str, datetime]
+    ) -> Dict[str, Any]:
         """
-        Get summary statistics for a date range
+        Get summary statistics for a date range.
         """
         try:
-            query_filter = {
-                'transaction_date': {
-                    '$gte': datetime.fromisoformat(start_date.replace('Z', '+00:00')),
-                    '$lte': datetime.fromisoformat(end_date.replace('Z', '+00:00')).replace(hour=23, minute=59, second=59, microsecond=999999)
-                },
-                'status': {'$ne': 'voided'}
-            }
-            
-            sales = list(self.sales_collection.find(query_filter))
-            
+            # Parse dates
+            if isinstance(start_date, str):
+                start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            if isinstance(end_date, str):
+                end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+            # Query sales in the date range (exclude voided)
+            range_condition = (Sale.transaction_date >= start_date) & (Sale.transaction_date <= end_date)
+            sales = []
+            for sale in Sale.date_index.query("sales", range_key_condition=range_condition):
+                if not sale.is_voided:
+                    sales.append(sale)
+
             summary = {
                 'total_sales_count': len(sales),
-                'total_revenue': 0,
+                'total_revenue': 0.0,
                 'total_items_sold': 0,
-                'average_transaction_value': 0,
+                'average_transaction_value': 0.0,
                 'voided_transactions': 0
             }
-            
-            for sale in sales:
-                summary['total_revenue'] += sale.get('total_amount', 0)
-                for item in sale.get('items', []):
-                    summary['total_items_sold'] += item.get('quantity', 0)
-            
-            if summary['total_sales_count'] > 0:
-                summary['average_transaction_value'] = round(summary['total_revenue'] / summary['total_sales_count'], 2)
-            
-            # Count voided transactions in the period
-            voided_query = {
-                'transaction_date': query_filter['transaction_date'],
-                'status': 'voided'
-            }
-            voided_count = self.sales_collection.count_documents(voided_query)
-            summary['voided_transactions'] = voided_count
-            
-            return summary
-            
-        except Exception as e:
-            print(f"❌ Error in get_sales_summary_by_date_range: {str(e)}")
-            raise e
 
-    # Keep your existing methods but update them to use transaction_date
-    def top_selling_items(self, start_date=None, end_date=None, limit=10):
-        """Updated to use transaction_date and exclude voided by default"""
-        try:
-            query_filter = {'status': {'$ne': 'voided'}}
-            
-            if start_date or end_date:
-                date_filter = {}
-                if start_date:
-                    if isinstance(start_date, str):
-                        start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                    date_filter['$gte'] = start_date
-                if end_date:
-                    if isinstance(end_date, str):
-                        end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-                    end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-                    date_filter['$lte'] = end_date
-                
-                if date_filter:
-                    query_filter['transaction_date'] = date_filter
-            
-            sales = list(self.sales_collection.find(query_filter))
-            online_transactions = list(self.online_transactions_collection.find(query_filter))
-            
-            # Rest of your existing logic...
-            item_totals = defaultdict(lambda: {"product_name": "", "total_quantity": 0, "total_sales": 0.0})
-            for sale in sales + online_transactions:
-                for item in sale.get("items", []):
-                    pid = item["product_id"]
-                    item_totals[pid]["product_name"] = item.get("product_name", "")
-                    item_totals[pid]["total_quantity"] += item.get("quantity", 0)
-                    item_totals[pid]["total_sales"] += item.get("subtotal", 0)
-            
-            result = sorted([
-                {"product_id": pid, **data}
-                for pid, data in item_totals.items()
-            ], key=lambda x: x["total_sales"], reverse=True)
-            return result[:limit]
-            
+            for sale in sales:
+                summary['total_revenue'] += sale.total_amount or 0.0
+                for item in sale.items or []:
+                    summary['total_items_sold'] += item.get('quantity', 0)
+
+            if summary['total_sales_count'] > 0:
+                summary['average_transaction_value'] = round(
+                    summary['total_revenue'] / summary['total_sales_count'], 2
+                )
+
+            # Count voided transactions separately
+            voided_count = 0
+            for sale in Sale.date_index.query("sales", range_key_condition=range_condition):
+                if sale.is_voided:
+                    voided_count += 1
+            summary['voided_transactions'] = voided_count
+
+            return summary
+
         except Exception as e:
-            print(f"❌ Error in top_selling_items: {str(e)}")
+            logger.error(f"Error in get_sales_summary_by_date_range: {e}")
+            raise
+
+    def top_selling_items(
+        self,
+        start_date: Optional[Union[str, datetime]] = None,
+        end_date: Optional[Union[str, datetime]] = None,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Return top selling items (by revenue) within an optional date range.
+        Excludes voided transactions by default.
+        """
+        try:
+            # Build date condition if provided
+            range_condition = None
+            if start_date or end_date:
+                if isinstance(start_date, str):
+                    start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                if isinstance(end_date, str):
+                    end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                if start_date and end_date:
+                    end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    range_condition = (Sale.transaction_date >= start_date) & (Sale.transaction_date <= end_date)
+                elif start_date:
+                    range_condition = Sale.transaction_date >= start_date
+                elif end_date:
+                    end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    range_condition = Sale.transaction_date <= end_date
+
+            # Fetch sales (using index if possible)
+            sales = []
+            if range_condition:
+                for sale in Sale.date_index.query("sales", range_key_condition=range_condition):
+                    if not sale.is_voided:
+                        sales.append(sale)
+            else:
+                for sale in Sale.query("sales"):
+                    if not sale.is_voided:
+                        sales.append(sale)
+
+            # Aggregate item totals
+            item_totals = defaultdict(lambda: {"product_name": "", "total_quantity": 0, "total_sales": 0.0})
+            for sale in sales:
+                for item in sale.items or []:
+                    pid = item.get('product_id')
+                    if not pid:
+                        continue
+                    item_totals[pid]["product_name"] = item.get('product_name', "")
+                    item_totals[pid]["total_quantity"] += item.get('quantity', 0)
+                    item_totals[pid]["total_sales"] += item.get('subtotal', 0.0)
+
+            # Sort and limit
+            result = sorted(
+                [{"product_id": pid, **data} for pid, data in item_totals.items()],
+                key=lambda x: x["total_sales"],
+                reverse=True
+            )
+            return result[:limit]
+
+        except Exception as e:
+            logger.error(f"Error in top_selling_items: {e}")
             return []
 
-    # Keep your existing helper methods
-    def fetch_all_products(self):
-        products = list(self.db.products.find({}))
-        for p in products:
-            p['_id'] = str(p['_id'])
-        return products
+    # -------------------------------------------------------------------------
+    # Legacy method – kept for compatibility
+    # -------------------------------------------------------------------------
 
-    def fetch_all_categories(self):
-        categories = list(self.db.category.find({}))
-        for c in categories:
-            c['_id'] = str(c['_id'])
-        return categories
-
-    def fetch_all_batches(self):
-        batches = list(self.db.batches.find({}))
-        for b in batches:
-            b['_id'] = str(b['_id'])
-        return batches
-
-    # You can deprecate the old build_sales_by_item_display or update it to use the new method
-    def build_sales_by_item_display(self, start_date=None, end_date=None):
-        """Legacy method - now uses the new implementation"""
+    def build_sales_by_item_display(
+        self,
+        start_date: Optional[Union[str, datetime]] = None,
+        end_date: Optional[Union[str, datetime]] = None
+    ) -> List[Dict[str, Any]]:
+        """Legacy method – now uses the new implementation."""
         return self.get_sales_by_item_with_date_filter(start_date, end_date)
