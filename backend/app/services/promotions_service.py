@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Any
 import logging
 
 # Import the PynamoDB model and manager
-from ...models.Promotions import (
+from ..models.Promotions import (
     Promotion,
     PromotionManager,
     DiscountConfigItem,

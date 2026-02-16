@@ -1,4 +1,13 @@
 # notifications/admin.py
+
+"""
+Django Admin is not used for this app.
+
+The Notification model is a PynamoDB (DynamoDB) model,
+not a Django ORM model, so it cannot be registered here.
+"""
+
+"""
 from django.contrib import admin
 from .models import Notification
 
@@ -33,3 +42,4 @@ class NotificationAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('recipient')
+        """

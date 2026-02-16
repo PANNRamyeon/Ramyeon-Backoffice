@@ -3,7 +3,7 @@ from datetime import datetime
 from pynamodb.exceptions import DoesNotExist
 import logging
 
-from ...models.Supplier import Supplier, SyncLogItem
+from ..models.Supplier import Supplier, SyncLogItem
 from ..utils import generate_sk
 from notifications.services import NotificationService
 from .audit_service import AuditLogService

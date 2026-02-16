@@ -12,10 +12,10 @@ from io import StringIO
 import csv
 
 # --- DynamoDB Models (PynamoDB) ---
-from ...models.Product import Product
-from ...models.Categories import Category
-from ...models.Supplier import Supplier
-from ...models.Branch import Branch
+from ..models.Product import Product
+from ..models.Categories import Category
+from ..models.Supplier import Supplier
+from ..models.Branch import Branch
 
 # --- Other Services / Utils ---
 from notifications.services import notification_service

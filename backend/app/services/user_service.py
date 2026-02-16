@@ -4,7 +4,7 @@ from pynamodb.exceptions import DoesNotExist
 import bcrypt
 import logging
 
-from ...models.Users import User
+from ..models.Users import User
 from ..services.audit_service import AuditLogService
 from notifications.services import NotificationService
 from notifications.email_verification_service import email_verification_service

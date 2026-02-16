@@ -3,7 +3,7 @@ from datetime import datetime
 import logging
 from typing import Optional, List, Dict, Any, Tuple
 
-from ...models.SalesLog import SalesLog
+from ..models.SalesLog import SalesLog
 
 logger = logging.getLogger(__name__)
 

@@ -7,8 +7,8 @@ from typing import List, Optional, Dict, Any
 import logging
 
 # DynamoDB models
-from ...models.Categories import Category, validate_category_id
-from ...models.Product import Product, validate_product_id
+from ..models.Categories import Category, validate_category_id
+from ..models.Product import Product, validate_product_id
 from .product_service import ProductService
 
 # Other services

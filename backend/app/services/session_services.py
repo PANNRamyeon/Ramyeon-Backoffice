@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Union
 
 # DynamoDB model
-from ...models.Sessions import SessionLog, validate_session_log_id, SessionLogManager
+from ..models.Sessions import SessionLog, validate_session_log_id, SessionLogManager
 from app.utils import generate_sk  # For generating SES-##### keys
 
 # External services (kept as in original)

@@ -6,6 +6,9 @@ from botocore.exceptions import ClientError
 AWS_REGION = os.getenv('AWS_REGION', 'ap-southeast-1')
 DYNAMO_TABLE_NAME = "RamyeonCornerDB"
 
+DYNAMODB_LOCAL = os.getenv("DYNAMODB_LOCAL", "true").lower() == "true"
+DYNAMODB_LOCAL_HOST = os.getenv("DYNAMODB_LOCAL_HOST", "http://localhost:8000")
+
 def get_dynamo_table():
     dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
     return dynamodb.Table(DYNAMO_TABLE_NAME)

@@ -4,9 +4,9 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Union
 
-from ...models.Sales import Sale
-from ...models.Product import Product
-from ...models.Categories import Category
+from ..models.Sales import Sale
+from ..models.Product import Product
+from ..models.Categories import Category
 
 logger = logging.getLogger(__name__)
 

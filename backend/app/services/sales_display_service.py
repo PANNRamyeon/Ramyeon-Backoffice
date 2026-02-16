@@ -4,10 +4,10 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Union
 
 # PynamoDB models – import using the exact module paths from your project
-from ...models.Batches import Batch
-from ...models.Categories import Category
-from ...models.Product import Product
-from ...models.Sales import Sale
+from ..models.Batches import Batch
+from ..models.Categories import Category
+from ..models.Product import Product
+from ..models.Sales import Sale
 
 logger = logging.getLogger(__name__)
 
