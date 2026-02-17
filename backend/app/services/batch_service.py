@@ -1,8 +1,8 @@
 # app/services/batch_service.py
 from datetime import datetime, timedelta
-from ...models.Batches import Batch, BatchManager, UsageHistoryItem, SyncLogItem, SyncLogDetailItem
-from ...models.Product import Product, ProductManager
-from ...models.Supplier import Supplier
+from ..models.Batches import Batch, BatchManager, UsageHistoryItem, SyncLogItem, SyncLogDetailItem
+from ..models.Product import Product, ProductManager
+from ..models.Supplier import Supplier
 from notifications.services import notification_service
 import logging
 

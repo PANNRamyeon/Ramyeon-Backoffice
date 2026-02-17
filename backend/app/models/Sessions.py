@@ -16,7 +16,8 @@ import logging
 
 # Import existing utils for consistency
 from app.utils import generate_sk, get_dynamo_table, DYNAMO_TABLE_NAME, AWS_REGION
-from Branch import Branch  # For branch validation
+from app.models.Branch import Branch
+
 
 logger = logging.getLogger(__name__)
 

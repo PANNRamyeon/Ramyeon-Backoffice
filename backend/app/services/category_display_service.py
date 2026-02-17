@@ -677,7 +677,7 @@ class CategoryService:
     def get_category_stats(self):
         """Get comprehensive category statistics."""
         try:
-            from ...models.Categories import CategoryManager
+            from ..models.Categories import CategoryManager
             stats = CategoryManager.get_category_statistics()
 
             total_products = 0

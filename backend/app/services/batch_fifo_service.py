@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
-from ...models.Batches import Batch
-from ...models.Product import Product
+from ..models.Batches import Batch
+from ..models.Product import Product
 import logging
 
 logger = logging.getLogger(__name__)
@@ -266,7 +266,7 @@ class BatchFIFOService:
         """
         try:
             # Use BatchManager to update expired batches
-            from ...models.Batches import BatchManager
+            from ..models.Batches import BatchManager
             updated = BatchManager.update_expired_batches()
             
             logger.info(f"Updated {len(updated)} expired batches")
@@ -290,7 +290,7 @@ class BatchFIFOService:
         """
         try:
             # Use BatchManager's fulfillment planning
-            from ...models.Batches import BatchManager
+            from ..models.Batches import BatchManager
             plan = BatchManager.get_batch_for_fulfillment(
                 product_id=product_id,
                 quantity_needed=quantity_needed,
@@ -319,7 +319,7 @@ class BatchFIFOService:
             dict with expiry statistics
         """
         try:
-            from ...models.Batches import BatchManager
+            from ..models.Batches import BatchManager
             summary = BatchManager.get_expiry_summary(product_id)
             return summary
             

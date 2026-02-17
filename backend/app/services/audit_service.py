@@ -2,7 +2,7 @@
 from datetime import datetime
 import json
 from decimal import Decimal
-from ...models.Audit import AuditLog, log_audit_event, AuditEvents
+from ..models.Audit import AuditLog, log_audit_event, AuditEvents
 import logging
 
 logger = logging.getLogger(__name__)

@@ -15,7 +15,7 @@ class ShiftSummaryService:
     
     def __init__(self):
         self.db = db_manager.get_database()
-        self.user_collection = self.db.users
+        self.users_table = self.db.Table("users")
         self.sales_service = SalesService()
     
     def get_admin_emails(self):

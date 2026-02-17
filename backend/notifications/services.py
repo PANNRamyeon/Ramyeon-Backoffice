@@ -6,7 +6,8 @@ from django.contrib.auth.models import User
 from django.http import JsonResponse
 
 # Import both the model AND its manager utility
-from app.models import Notification, NotificationManager
+from notifications.models import Notification, NotificationManager
+
 from app.utils import generate_sk
 
 import logging

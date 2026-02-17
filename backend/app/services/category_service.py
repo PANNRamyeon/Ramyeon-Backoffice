@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from ..models.Categories import Category, CategoryManager, validate_category_id
 from ..models.Product import Product, validate_product_id
-from services.audit_service import AuditLogService
+from app.services.audit_service import AuditLogService
 from notifications.services import notification_service
 
 logger = logging.getLogger(__name__)
