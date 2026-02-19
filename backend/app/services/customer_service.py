@@ -6,15 +6,20 @@ import logging
 from .audit_service import AuditLogService
 import csv
 import io
+import boto3
+from boto3.dynamodb.conditions import Key, Attr
 
 logger = logging.getLogger(__name__)
 
 class CustomerService:
     def __init__(self):
-        """Initialize CustomerService with audit logging"""
-        self.db = db_manager.get_database()  
-        self.customer_collection = self.db.customers  
-        self.session_logs = self.db.session_logs
+        """Initialize CustomerService for DynamoDB"""
+        self.db = db_manager.get_database()  # boto3.resource('dynamodb')
+
+        # DynamoDB tables
+        self.customer_table = self.db.Table("customers")
+        self.session_logs_table = self.db.Table("session_logs")
+
         self.audit_service = AuditLogService()
         
     # ================================================================
@@ -191,7 +196,8 @@ class CustomerService:
                 "status": "active"
             }
             
-            self.customer_collection.insert_one(customer_record)
+            self.customer_table.put_item(Item=customer_record)
+
             
             if current_user and self.audit_service:
                 try:
