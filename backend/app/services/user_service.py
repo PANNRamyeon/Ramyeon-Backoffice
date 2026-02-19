@@ -1,19 +1,16 @@
-import uuid
 from datetime import datetime
-from ..services.database_service import DatabaseService
-from ..models import User
+from models.Users import User
 import bcrypt
 import logging
 from .audit_service import AuditLogService
-from notifications.services import  NotificationService
+from notifications.services import NotificationService
 from notifications.email_verification_service import email_verification_service
+
 logger = logging.getLogger(__name__)
 
 class UserService:
     def __init__(self):
-        """Initialize UserService with audit logging"""
-        db_service = DatabaseService()
-        self.table = db_service.get_table('users')
+        """Initialize UserService using PynamoDB User model"""
         self.audit_service = AuditLogService()
         self.notification_service = NotificationService()
     
@@ -76,16 +73,17 @@ class UserService:
     # CRUD OPERATIONS
     # ================================================================
     def update_user_profile(self, user_id, user_data, current_user=None, role_context=None):
-        """Update user with role-based restrictions in DynamoDB"""
+        """Update user with role-based restrictions using PynamoDB model"""
         try:
             if not user_id:
                 return None
             
-            response = self.table.get_item(Key={'user_id': user_id})
-            old_user = response.get('Item')
-            if not old_user or old_user.get('isDeleted'):
+            # Get existing user
+            user = User.get("users", user_id)
+            if not user or user.isDeleted:
                 return None
             
+            # Determine allowed fields based on role context
             allowed_fields = {}
             if role_context == 'self_service':
                 allowed_fields = {'password': user_data.get('password')}
@@ -93,275 +91,321 @@ class UserService:
                 allowed_fields = user_data.copy()
             else:
                 raise Exception("Invalid role context")
-
-            allowed_fields['last_updated'] = datetime.utcnow().isoformat() + "Z"
+            
+            # Update allowed fields
             update_data = {k: v for k, v in allowed_fields.items() if v is not None}
+            
+            # Hash password if provided
             if update_data.get('password'):
-                update_data['password'] = self.hash_password(update_data['password'])
+                update_data['password_hash'] = self.hash_password(update_data.pop('password'))
             
-            update_expression = "SET " + ", ".join(f"#{k}=:{k}" for k in update_data.keys())
-            expression_attribute_names = {f"#{k}": k for k in update_data.keys()}
-            expression_attribute_values = {f":{k}": v for k, v in update_data.items()}
-
-            self.table.update_item(
-                Key={'user_id': user_id},
-                UpdateExpression=update_expression,
-                ExpressionAttributeNames=expression_attribute_names,
-                ExpressionAttributeValues=expression_attribute_values
-            )
+            # Update user attributes
+            for key, value in update_data.items():
+                if hasattr(user, key):
+                    setattr(user, key, value)
             
-            response = self.table.get_item(Key={'user_id': user_id})
-            updated_user = response.get('Item')
+            user.last_updated = datetime.utcnow()
+            user.save()
             
-            user_name = updated_user.get('full_name', updated_user.get('username', 'User'))
+            user_dict = user.to_dict()
+            
+            # Send notification
+            user_name = user.full_name or user.username
             action = 'password_changed' if role_context == 'self_service' else 'updated'
             self._send_user_notification(action, user_name, user_id)
             
-            return updated_user
+            # Audit logging
+            if current_user and self.audit_service:
+                try:
+                    self.audit_service.log_user_update(current_user, user_dict)
+                except Exception as audit_error:
+                    logger.error(f"Audit logging failed: {audit_error}")
             
+            return user_dict
+            
+        except User.DoesNotExist:
+            logger.error(f"User {user_id} not found")
+            return None
         except Exception as e:
+            logger.error(f"Error updating user profile: {e}")
             raise Exception(f"Error updating user profile: {str(e)}")
 
-    def generate_user_id(self):
-        """Generate a unique USER-#### format ID"""
-        return f"USER-{uuid.uuid4()}"
-
     def create_user(self, user_data, current_user=None):
-        """Create a new user in DynamoDB"""
+        """Create a new user using PynamoDB model"""
         try:
-            user_id = self.generate_user_id()
-            user_data['user_id'] = user_id
+            logger.info(f"Creating user: {user_data.get('username')}")
             
-            if user_data.get('password'):
-                user_data['password'] = self.hash_password(user_data['password'])
+            # Validate required fields
+            username = user_data.get('username')
+            email = user_data.get('email')
+            password = user_data.get('password')
             
-            now_iso = datetime.utcnow().isoformat() + "Z"
-            user_data.update({
-                'date_created': now_iso,
-                'last_updated': now_iso,
-                'status': user_data.get('status', 'active'),
-                'isDeleted': False,
-                'email_verified': False
-            })
+            if not username:
+                raise ValueError("Username is required")
+            if not email:
+                raise ValueError("Email is required")
+            if not password:
+                raise ValueError("Password is required")
             
-            user_data.pop('_id', None) # remove old _id if present
-            item_to_put = {k: v for k, v in user_data.items() if v not in [None, '']}
+            # Hash password
+            password_hash = self.hash_password(password)
             
-            self.table.put_item(Item=item_to_put)
+            # Create user using model's class method
+            user = User.create_user(
+                username=username,
+                email=email,
+                password_hash=password_hash,
+                full_name=user_data.get('full_name'),
+                role=user_data.get('role', 'user'),
+                status=user_data.get('status', 'active')
+            )
             
-            user_name = user_data.get('full_name', user_data.get('username', 'User'))
-            self._send_user_notification('created', user_name, user_id)
+            user_dict = user.to_dict()
             
-            # ... (email verification and audit logging) ...
+            # Send notification
+            user_name = user.full_name or user.username
+            self._send_user_notification('created', user_name, user.sk)
             
-            return user_data
+            # Send email verification
+            try:
+                email_verification_service.send_verification_email(user.email, user.sk)
+                logger.info(f"Verification email sent to {user.email}")
+            except Exception as email_error:
+                logger.error(f"Failed to send verification email: {email_error}")
             
+            # Audit logging
+            if current_user and self.audit_service:
+                try:
+                    self.audit_service.log_user_create(current_user, user_dict)
+                    logger.debug("Audit log created for user creation")
+                except Exception as audit_error:
+                    logger.error(f"Audit logging failed: {audit_error}")
+            
+            logger.info(f"User '{user.username}' created successfully with ID {user.sk}")
+            return user_dict
+            
+        except ValueError as ve:
+            logger.error(f"Validation error: {ve}")
+            raise Exception(f"Validation error: {str(ve)}")
         except Exception as e:
             logger.error(f"Error creating user: {str(e)}")
             raise Exception(f"Error creating user: {str(e)}")
         
-    def get_users(self, page=1, limit=50, status=None, role=None, include_deleted=False, search=None, start_key=None):
-        """Get users with pagination and filtering from DynamoDB."""
+    def get_users(self, page=1, limit=50, status=None, role=None, include_deleted=False, search=None):
+        """Get users with pagination and filtering using PynamoDB model"""
         try:
-            scan_kwargs = {'Limit': limit}
-            if start_key:
-                scan_kwargs['ExclusiveStartKey'] = start_key
+            # Get users with optional role/status filtering
+            if role or status:
+                users = User.get_users_by_role_status(role=role, status=status)
+            else:
+                users = User.get_all_users(include_deleted=include_deleted)
             
-            filter_expressions = []
-            if not include_deleted:
-                filter_expressions.append(Attr('isDeleted').ne(True))
-            if status:
-                filter_expressions.append(Attr('status').eq(status))
-            if role:
-                filter_expressions.append(Attr('role').eq(role))
+            # Apply search filter if provided
             if search:
-                filter_expressions.append(
-                    Attr('username').contains(search) | Attr('email').contains(search) | Attr('full_name').contains(search)
-                )
-
-            if filter_expressions:
-                scan_kwargs['FilterExpression'] = filter_expressions[0]
-                for expression in filter_expressions[1:]:
-                    scan_kwargs['FilterExpression'] &= expression
-        
-            response = self.table.scan(**scan_kwargs)
-        
+                search_lower = search.lower()
+                users = [
+                    u for u in users
+                    if (u.username and search_lower in u.username.lower()) or
+                       (u.email and search_lower in u.email.lower()) or
+                       (u.full_name and search_lower in u.full_name.lower())
+                ]
+            
+            # Apply pagination
+            skip = (page - 1) * limit
+            total = len(users)
+            users_page = users[skip:skip + limit]
+            
+            # Convert to dicts
+            users_data = [u.to_dict() for u in users_page]
+            
             return {
-                'users': response.get('Items', []),
-                'last_evaluated_key': response.get('LastEvaluatedKey')
+                'users': users_data,
+                'total': total,
+                'page': page,
+                'limit': limit,
+                'has_more': skip + limit < total
             }
         except Exception as e:
+            logger.error(f"Error getting users: {e}")
             raise Exception(f"Error getting users: {str(e)}")
 
     def get_user_by_id(self, user_id, include_deleted=False):
-        """Get user by user_id from DynamoDB."""
+        """Get user by ID using PynamoDB model"""
         try:
             if not user_id:
                 return None
-        
-            response = self.table.get_item(Key={'user_id': user_id})
-            user = response.get('Item')
-
-            if user and not include_deleted and user.get('isDeleted'):
+            
+            user = User.get("users", user_id)
+            
+            if not user:
                 return None
-        
-            return user
+            
+            if not include_deleted and user.isDeleted:
+                return None
+            
+            return user.to_dict()
+        except User.DoesNotExist:
+            logger.info(f"User {user_id} not found")
+            return None
         except Exception as e:
+            logger.error(f"Error getting user {user_id}: {e}")
             raise Exception(f"Error getting user: {str(e)}")
     
     def get_user_by_username(self, username, include_deleted=False):
-        """Get user by username from DynamoDB. NOTE: This is inefficient without a GSI on username."""
+        """Get user by username using PynamoDB model GSI"""
         try:
             if not username:
                 return None
-        
-            filter_expression = Attr('username').eq(username)
-            if not include_deleted:
-                filter_expression &= Attr('isDeleted').ne(True)
             
-            response = self.table.scan(FilterExpression=filter_expression)
-        
-            return response.get('Items')[0] if response.get('Items') else None
+            user = User.get_by_username(username)
+            
+            if not user:
+                return None
+            
+            if not include_deleted and user.isDeleted:
+                return None
+            
+            return user.to_dict()
         except Exception as e:
+            logger.error(f"Error getting user by username: {e}")
             raise Exception(f"Error getting user by username: {str(e)}")
 
     def get_user_by_email(self, email, include_deleted=False):
-        """Get user by email from DynamoDB. NOTE: This is inefficient without a GSI on email."""
+        """Get user by email using PynamoDB model GSI"""
         try:
             if not email:
                 return None
-                
-            filter_expression = Attr('email').eq(email)
-            if not include_deleted:
-                filter_expression &= Attr('isDeleted').ne(True)
-                
-            response = self.table.scan(FilterExpression=filter_expression)
-        
-            return response.get('Items')[0] if response.get('Items') else None
+            
+            user = User.get_by_email(email)
+            
+            if not user:
+                return None
+            
+            if not include_deleted and user.isDeleted:
+                return None
+            
+            return user.to_dict()
         except Exception as e:
+            logger.error(f"Error getting user by email: {e}")
             raise Exception(f"Error getting user by email: {str(e)}")
     
-    def get_disabled_users(self, page=1, limit=50, start_key=None):
-        """Get users with disabled status from DynamoDB"""
+    def get_disabled_users(self, page=1, limit=50):
+        """Get users with disabled status using PynamoDB model"""
         try:
-            scan_kwargs = {'Limit': limit}
-            if start_key:
-                scan_kwargs['ExclusiveStartKey'] = start_key
-                
-            scan_kwargs['FilterExpression'] = Attr('status').eq('disabled') & Attr('isDeleted').ne(True)
+            users = User.get_users_by_role_status(status='disabled')
             
-            response = self.table.scan(**scan_kwargs)
-
+            # Apply pagination
+            skip = (page - 1) * limit
+            total = len(users)
+            users_page = users[skip:skip + limit]
+            
+            # Convert to dicts
+            users_data = [u.to_dict() for u in users_page]
+            
             return {
-                'users': response.get('Items', []),
-                'last_evaluated_key': response.get('LastEvaluatedKey')
+                'users': users_data,
+                'total': total,
+                'page': page,
+                'limit': limit,
+                'has_more': skip + limit < total
             }
         except Exception as e:
+            logger.error(f"Error getting disabled users: {e}")
             raise Exception(f"Error getting disabled users: {str(e)}")
 
     def soft_delete_user(self, user_id, current_user=None):
-        """Soft delete user - streamlined"""
+        """Soft delete user using PynamoDB model"""
         try:
             logger.info(f"Soft deleting user {user_id}")
             if current_user:
-                logger.info(f"Deleted by: {current_user['username']}")
+                logger.info(f"Deleted by: {current_user.get('username')}")
             
             if not user_id:
                 return False
             
-            # Get user data before deletion (only active users)
-            user_to_delete = self.collection.find_one({
-                '_id': user_id,  # No ObjectId needed
-                'isDeleted': {'$ne': True}
-            })
-            
-            if not user_to_delete:
+            # Get user
+            user = User.get("users", user_id)
+            if not user or user.isDeleted:
+                logger.warning(f"User {user_id} not found or already deleted")
                 return False
             
             # Soft delete
-            update_data = {
-                'isDeleted': True,
-                'deletedAt': datetime.utcnow(),
-                'deletedBy': current_user.get('username') if current_user else 'system',
-                'last_updated': datetime.utcnow()
-            }
+            user.isDeleted = True
+            user.deletedAt = datetime.utcnow()
+            user.deletedBy = current_user.get('username') if current_user else 'system'
+            user.last_updated = datetime.utcnow()
+            user.save()
             
-            result = self.collection.update_one(
-                {'_id': user_id},
-                {'$set': update_data}
-            )
+            user_dict = user.to_dict()
             
-            if result.modified_count > 0:
-                # Send notification
-                user_name = user_to_delete.get('full_name', user_to_delete.get('username', 'User'))
-                self._send_user_notification('soft_deleted', user_name, user_id)
-                
-                # Audit logging
-                if current_user and self.audit_service:
-                    try:
-                        self.audit_service.log_user_delete(current_user, user_to_delete, deletion_type="soft_delete")
-                        logger.info("Audit log created for user soft deletion")
-                    except Exception as audit_error:
-                        logger.error(f"Audit logging failed: {audit_error}")
-                
-                return True
+            # Send notification
+            user_name = user.full_name or user.username
+            self._send_user_notification('soft_deleted', user_name, user_id)
             
+            # Audit logging
+            if current_user and self.audit_service:
+                try:
+                    self.audit_service.log_user_delete(current_user, user_dict, deletion_type="soft_delete")
+                    logger.info("Audit log created for user soft deletion")
+                except Exception as audit_error:
+                    logger.error(f"Audit logging failed: {audit_error}")
+            
+            return True
+            
+        except User.DoesNotExist:
+            logger.error(f"User {user_id} not found")
             return False
-            
         except Exception as e:
-            logger.error(f"Error soft deleting user {user_id}: {str(e)}")
+            logger.error(f"Error soft deleting user {user_id}: {e}")
             raise Exception(f"Error soft deleting user: {str(e)}")
         
     def restore_user(self, user_id, current_user=None):
-        """Restore soft-deleted user (compliance feature)"""
+        """Restore soft-deleted user using PynamoDB model"""
         try:
             if not user_id:
                 return False
             
-            # Find deleted user
-            deleted_user = self.collection.find_one({
-                '_id': user_id,
-                'isDeleted': True
-            })
-            
-            if not deleted_user:
+            # Get deleted user
+            user = User.get("users", user_id)
+            if not user or not user.isDeleted:
+                logger.warning(f"User {user_id} not found or not deleted")
                 return False
             
-            # Restore with minimal data
-            result = self.collection.update_one(
-                {'_id': user_id},
-                {
-                    '$set': {
-                        'isDeleted': False,
-                        'restoredAt': datetime.utcnow(),
-                        'restoredBy': current_user.get('username') if current_user else 'system',
-                        'last_updated': datetime.utcnow(),
-                        'status': 'active'
-                    },
-                    '$unset': {
-                        'deletedAt': "",
-                        'deletedBy': ""
-                    }
-                }
-            )
+            # Restore user
+            user.isDeleted = False
+            user.restoredAt = datetime.utcnow()
+            user.restoredBy = current_user.get('username') if current_user else 'system'
+            user.last_updated = datetime.utcnow()
+            user.status = 'active'
+            user.deletedAt = None
+            user.deletedBy = None
+            user.save()
             
-            if result.modified_count > 0:
-                user_name = deleted_user.get('full_name', deleted_user.get('username', 'User'))
-                self._send_user_notification('restored', user_name, user_id)
-                
-                # Audit for compliance
-                if current_user and self.audit_service:
-                    self.audit_service.log_user_restore(current_user, deleted_user)
-                
-                return True
+            user_dict = user.to_dict()
+            
+            # Send notification
+            user_name = user.full_name or user.username
+            self._send_user_notification('restored', user_name, user_id)
+            
+            # Audit logging
+            if current_user and self.audit_service:
+                try:
+                    self.audit_service.log_user_restore(current_user, user_dict)
+                    logger.info("Audit log created for user restoration")
+                except Exception as audit_error:
+                    logger.error(f"Audit logging failed: {audit_error}")
+            
+            return True
+            
+        except User.DoesNotExist:
+            logger.error(f"User {user_id} not found")
             return False
-            
         except Exception as e:
-            logger.error(f"Error restoring user {user_id}: {str(e)}")
+            logger.error(f"Error restoring user {user_id}: {e}")
             raise Exception(f"Error restoring user: {str(e)}")
     
     def hard_delete_user(self, user_id, current_user=None, confirmation_token=None):
-        """PERMANENT deletion - compliance only (requires confirmation)"""
+        """PERMANENT deletion using PynamoDB model - compliance only (requires confirmation)"""
         try:
             # Extra safety check
             if not confirmation_token or confirmation_token != "PERMANENT_DELETE_CONFIRMED":
@@ -373,51 +417,34 @@ class UserService:
                 return False
             
             # Get user before permanent deletion
-            user_to_delete = self.collection.find_one({'_id': user_id})
-            if not user_to_delete:
+            user = User.get("users", user_id)
+            if not user:
+                logger.error(f"User {user_id} not found")
                 return False
             
+            user_dict = user.to_dict()
+            user_name = user.full_name or user.username
+            
             # PERMANENTLY DELETE
-            result = self.collection.delete_one({'_id': user_id})
+            user.delete()
             
-            if result.deleted_count > 0:
-                user_name = user_to_delete.get('full_name', user_to_delete.get('username', 'User'))
-                
-                # Critical notification
-                self._send_user_notification('hard_deleted', user_name, user_id)
-                
-                # Compliance audit
-                if current_user and self.audit_service:
-                    self.audit_service.log_user_hard_delete(current_user, user_to_delete)
-                
-                logger.warning(f"User {user_id} PERMANENTLY DELETED")
-                return True
+            # Critical notification
+            self._send_user_notification('hard_deleted', user_name, user_id)
             
+            # Compliance audit
+            if current_user and self.audit_service:
+                try:
+                    self.audit_service.log_user_hard_delete(current_user, user_dict)
+                except Exception as audit_error:
+                    logger.error(f"Audit logging failed: {audit_error}")
+            
+            logger.warning(f"User {user_id} PERMANENTLY DELETED")
+            return True
+            
+        except User.DoesNotExist:
+            logger.error(f"User {user_id} not found")
             return False
-            
         except Exception as e:
-            logger.error(f"Error permanently deleting user {user_id}: {str(e)}")
+            logger.error(f"Error permanently deleting user {user_id}: {e}")
             raise Exception(f"Error permanently deleting user: {str(e)}")
-
-    def get_disabled_users(self, page=1, limit=50):
-        """Get users with disabled status"""
-        try:
-            query = {
-                'status': 'disabled',
-                'isDeleted': {'$ne': True}  # Not actually deleted, just disabled
-            }
-            
-            skip = (page - 1) * limit
-            users = list(self.collection.find(query).skip(skip).limit(limit))
-            total = self.collection.count_documents(query)
-            
-            return {
-                'users': users,
-                'total': total,
-                'page': page,
-                'limit': limit,
-                'has_more': skip + limit < total
-            }
-        except Exception as e:
-            raise Exception(f"Error getting disabled users: {str(e)}")
         

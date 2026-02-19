@@ -127,7 +127,7 @@ class UserDetailView(APIView):
             current_user = request.current_user
             
             # Determine role context
-            if current_user.get('_id') == user_id:
+            if current_user.get('user_id') == user_id:
                 # Self-service: only password changes
                 if set(request.data.keys()) - {'password'} != set():
                     return Response(

@@ -15,8 +15,8 @@ from typing import Optional, List, Dict, Any
 import logging
 
 # Import existing utils for consistency
-from app.utils import generate_sk, get_dynamo_table, DYNAMO_TABLE_NAME, AWS_REGION
-from Branch import Branch  # For branch validation if needed
+from app.utils import get_dynamo_table, DYNAMO_TABLE_NAME, AWS_REGION
+from app.utils.counters import counter_service
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +111,8 @@ class Product(Model):
         write_capacity_units = 5
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="products")
-    sk = UnicodeAttribute(range_key=True)  # "PROD-00001" (5-digit)
+    pk = UnicodeAttribute(hash_key=True, default="products", attr_name="PK")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "PROD-00001" (5-digit)
     
     # ============= PRODUCT IDENTIFICATION =============
     product_name = UnicodeAttribute()
@@ -224,8 +224,8 @@ class Product(Model):
             if existing and not existing.isDeleted:
                 raise ValueError(f"Product with SKU '{sku}' already exists")
             
-            # Generate 5-digit SK using utils.py
-            sk_value = generate_sk('PROD-', 'product_seq')
+            # Generate SK using the centralized counter service
+            sk_value = counter_service.get_next_id('products')
             
             # Set default date_received if not provided
             if date_received is None:

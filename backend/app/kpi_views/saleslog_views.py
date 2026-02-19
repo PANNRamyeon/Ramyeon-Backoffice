@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.http import HttpResponse
-from ..services.saleslog_service import SalesLogService, SalesItemHistory, SalesTopItem
+from ..services.saleslog_service import SalesLogService
 
 from datetime import datetime
 import logging
@@ -292,154 +292,154 @@ class SalesLogStatsView(APIView):
             )
         
 
-class SalesItemHistoryView(APIView):
-    """
-    API View to get sales item history with pagination
-    """
+# class SalesItemHistoryView(APIView):
+#     """
+#     API View to get sales item history with pagination
+#     """
     
-    def get(self, request):
-        try:
-            # Get pagination parameters from query params
-            page = int(request.GET.get('page', 1))
-            page_size = int(request.GET.get('page_size', 10))
+#     def get(self, request):
+#         try:
+#             # Get pagination parameters from query params
+#             page = int(request.GET.get('page', 1))
+#             page_size = int(request.GET.get('page_size', 10))
             
-            # Validate pagination parameters
-            if page < 1:
-                page = 1
-            if page_size < 1 or page_size > 100:  # Limit max page size
-                page_size = 10
+#             # Validate pagination parameters
+#             if page < 1:
+#                 page = 1
+#             if page_size < 1 or page_size > 100:  # Limit max page size
+#                 page_size = 10
             
-            # Create service instance
-            Report= SalesItemHistory()
+#             # Create service instance
+#             Report= SalesItemHistory()
             
-            # Fetch item history data
-            result = Report.fetch_item_history(page=page, page_size=page_size)
+#             # Fetch item history data
+#             result = Report.fetch_item_history(page=page, page_size=page_size)
             
-            return Response({
-                'success': True,
-                'message': 'Item history retrieved successfully',
-                'data': result
-            }, status=status.HTTP_200_OK)
+#             return Response({
+#                 'success': True,
+#                 'message': 'Item history retrieved successfully',
+#                 'data': result
+#             }, status=status.HTTP_200_OK)
             
-        except ValueError as e:
-            return Response({
-                'success': False,
-                'message': 'Invalid page or page_size parameter'
-            }, status=status.HTTP_400_BAD_REQUEST)
+#         except ValueError as e:
+#             return Response({
+#                 'success': False,
+#                 'message': 'Invalid page or page_size parameter'
+#             }, status=status.HTTP_400_BAD_REQUEST)
             
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': f'Error retrieving item history: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#         except Exception as e:
+#             return Response({
+#                 'success': False,
+#                 'message': f'Error retrieving item history: {str(e)}'
+#             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class SalesTopItemView(APIView):
-    def get(self, request):
-        try:
-            # Get limit parameter from query params
-            limit = int(request.GET.get('limit', 5))
+# class SalesTopItemView(APIView):
+#     def get(self, request):
+#         try:
+#             # Get limit parameter from query params
+#             limit = int(request.GET.get('limit', 5))
             
-            # Initialize your Report class (assuming SalesTopItem is a class)
-            report = SalesTopItem()  # Create an instance
+#             # Initialize your Report class (assuming SalesTopItem is a class)
+#             report = SalesTopItem()  # Create an instance
             
-            # Call the method (note the parentheses to actually call it)
-            result = report.fetch_top_item(limit=limit)
+#             # Call the method (note the parentheses to actually call it)
+#             result = report.fetch_top_item(limit=limit)
             
-            # Return proper Response format
-            return Response({
-                'success': True,
-                'data': result.get('items', []),
-                'total_invoices': result.get('total_invoices', 0),
-                'showing_top': result.get('showing_top', 0)
-            }, status=status.HTTP_200_OK)
+#             # Return proper Response format
+#             return Response({
+#                 'success': True,
+#                 'data': result.get('items', []),
+#                 'total_invoices': result.get('total_invoices', 0),
+#                 'showing_top': result.get('showing_top', 0)
+#             }, status=status.HTTP_200_OK)
             
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': f'Error retrieving top items: {str(e)}',
-                'data': []
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#         except Exception as e:
+#             return Response({
+#                 'success': False,
+#                 'message': f'Error retrieving top items: {str(e)}',
+#                 'data': []
+#             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-class SalesTopItemChartView(APIView):
-    def get(self, request):
-        try:
-            # Get parameters from query params
-            limit = request.GET.get('limit', None)
-            if limit:
-                limit = int(limit)
+# class SalesTopItemChartView(APIView):
+#     def get(self, request):
+#         try:
+#             # Get parameters from query params
+#             limit = request.GET.get('limit', None)
+#             if limit:
+#                 limit = int(limit)
             
-            # Get date filtering parameters
-            start_date = request.GET.get('start_date', None)
-            end_date = request.GET.get('end_date', None)
-            frequency = request.GET.get('frequency', 'monthly')
+#             # Get date filtering parameters
+#             start_date = request.GET.get('start_date', None)
+#             end_date = request.GET.get('end_date', None)
+#             frequency = request.GET.get('frequency', 'monthly')
             
-            # Debug logging
-            print(f"Chart API called with: limit={limit}, start_date={start_date}, end_date={end_date}, frequency={frequency}")
+#             # Debug logging
+#             print(f"Chart API called with: limit={limit}, start_date={start_date}, end_date={end_date}, frequency={frequency}")
             
-            # Parse dates if provided
-            start_date_obj = None
-            end_date_obj = None
+#             # Parse dates if provided
+#             start_date_obj = None
+#             end_date_obj = None
             
-            if start_date:
-                start_date_obj = parse_date(start_date)
-                if not start_date_obj:
-                    return Response({
-                        'success': False,
-                        'message': 'Invalid start_date format. Use YYYY-MM-DD.',
-                        'data': []
-                    }, status=status.HTTP_400_BAD_REQUEST)
+#             if start_date:
+#                 start_date_obj = parse_date(start_date)
+#                 if not start_date_obj:
+#                     return Response({
+#                         'success': False,
+#                         'message': 'Invalid start_date format. Use YYYY-MM-DD.',
+#                         'data': []
+#                     }, status=status.HTTP_400_BAD_REQUEST)
             
-            if end_date:
-                end_date_obj = parse_date(end_date)
-                if not end_date_obj:
-                    return Response({
-                        'success': False,
-                        'message': 'Invalid end_date format. Use YYYY-MM-DD.',
-                        'data': []
-                    }, status=status.HTTP_400_BAD_REQUEST)
+#             if end_date:
+#                 end_date_obj = parse_date(end_date)
+#                 if not end_date_obj:
+#                     return Response({
+#                         'success': False,
+#                         'message': 'Invalid end_date format. Use YYYY-MM-DD.',
+#                         'data': []
+#                     }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Initialize your Report class
-            report = SalesTopItem()
+#             # Initialize your Report class
+#             report = SalesTopItem()
             
-            # ✅ FIXED: Use the correct method name
-            result = report.fetch_all_top_item(
-                start_date=start_date_obj,
-                end_date=end_date_obj,
-                frequency=frequency
-            )
+#             # ✅ FIXED: Use the correct method name
+#             result = report.fetch_all_top_item(
+#                 start_date=start_date_obj,
+#                 end_date=end_date_obj,
+#                 frequency=frequency
+#             )
             
-            # Apply limit if provided
-            items = result.get('items', [])
-            if limit and limit > 0:
-                items = items[:limit]
+#             # Apply limit if provided
+#             items = result.get('items', [])
+#             if limit and limit > 0:
+#                 items = items[:limit]
             
-            print(f"Returning {len(items)} items after date filtering")  # Debug log
+#             print(f"Returning {len(items)} items after date filtering")  # Debug log
             
-            # Return proper Response format
-            return Response({
-                'success': True,
-                'data': items,
-                'total_invoices': result.get('total_invoices', 0),
-                'showing_top': len(items),
-                'date_filter_applied': result.get('date_filter_applied', False),
-                'frequency': frequency,
-                'date_range': result.get('date_range', {
-                    'start_date': start_date,
-                    'end_date': end_date
-                })
-            }, status=status.HTTP_200_OK)
+#             # Return proper Response format
+#             return Response({
+#                 'success': True,
+#                 'data': items,
+#                 'total_invoices': result.get('total_invoices', 0),
+#                 'showing_top': len(items),
+#                 'date_filter_applied': result.get('date_filter_applied', False),
+#                 'frequency': frequency,
+#                 'date_range': result.get('date_range', {
+#                     'start_date': start_date,
+#                     'end_date': end_date
+#                 })
+#             }, status=status.HTTP_200_OK)
             
-        except ValueError as e:
-            return Response({
-                'success': False,
-                'message': 'Invalid limit parameter. Must be a valid integer.',
-                'data': []
-            }, status=status.HTTP_400_BAD_REQUEST)
+#         except ValueError as e:
+#             return Response({
+#                 'success': False,
+#                 'message': 'Invalid limit parameter. Must be a valid integer.',
+#                 'data': []
+#             }, status=status.HTTP_400_BAD_REQUEST)
             
-        except Exception as e:
-            print(f"Error in SalesTopItemChartView: {str(e)}")  # Debug log
-            return Response({
-                'success': False,
-                'message': f'Error retrieving top items: {str(e)}',
-                'data': []
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#         except Exception as e:
+#             print(f"Error in SalesTopItemChartView: {str(e)}")  # Debug log
+#             return Response({
+#                 'success': False,
+#                 'message': f'Error retrieving top items: {str(e)}',
+#                 'data': []
+#             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

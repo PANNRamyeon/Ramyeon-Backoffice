@@ -133,18 +133,18 @@ from .kpi_views.batch_views import (
 )
 
 from .kpi_views.category_views import (
-     CategoryKPIView,
+    CategoryKPIView,
     CategoryDetailView,
     CategorySoftDeleteView,
     CategoryHardDeleteView,
-    CategoryRestoreView,                  
-    CategoryDeletedListView,               
-    CategoryBulkOperationsView,         
-    CategoryDeleteInfoView,               
-    CategorySubcategoryView,              
-    UncategorizedCategoryView,              
+    CategoryRestoreView,
+    CategoryDeletedListView,
+    CategoryBulkOperationsView,
+    CategoryDeleteInfoView,
+    CategorySubcategoryView,
+    UncategorizedCategoryView,
     SubcategoryProductsView,
-    CategoryProductManagementView,  
+    CategoryProductManagementView,
 )
 
 # POS Operations
@@ -155,7 +155,7 @@ from .kpi_views.category_pos_views import (
     POSSearchView,
     POSStockCheckView,
     POSLowStockView,
-    POSSubcategoryProductsView,  
+    POSSubcategoryProductsView,
 )
 
 # Display/Export Operations
@@ -168,9 +168,6 @@ from .kpi_views.category_display_views import (
 from .kpi_views.saleslog_views import (
     SalesLogView,
     SalesLogStatsView,
-    SalesItemHistoryView,
-    SalesTopItemView,
-    SalesTopItemChartView,
 )
 
 from .kpi_views.sales_bulk_views import (
@@ -271,8 +268,8 @@ from .kpi_views.online_transaction_views import (
 )
 
 from .kpi_views.sales_by_category_views import (
-    SalesByCategoryView, 
-    TopCategoriesView, 
+    SalesByCategoryView,
+    TopCategoriesView,
     CategoryPerformanceDetailView
 )
 
@@ -488,9 +485,9 @@ urlpatterns = [
     path('invoices/<str:invoice_id>/', SalesLogView.as_view(), name='invoice-detail'),
     
     # Sales reports
-    path('reports/top-item/', SalesTopItemView.as_view(), name='top-items'),
-    path('reports/top-chart-item/', SalesTopItemChartView.as_view(), name='top-chart-items'), 
-    path('reports/item-history/', SalesItemHistoryView.as_view(), name='item-history'),
+    # path('reports/top-item/', SalesTopItemView.as_view(), name='top-items'),
+    # path('reports/top-chart-item/', SalesTopItemChartView.as_view(), name='top-chart-items'), 
+    # path('reports/item-history/', SalesItemHistoryView.as_view(), name='item-history'),
     
     # Sales report API endpoints
     path('sales-report/summary/', SalesSummaryView.as_view(), name='sales_summary'),

@@ -1,7 +1,7 @@
 """
 User Model - Following ERD Specification with Single Table Design
 PK = users, SK = USER-### (3-digit format)
-Single Table Design using RamyeonCornerDB with GSIs
+Single Table Design using RamyeonCornerDB with 1 GSI for auth lookups
 """
 from pynamodb.models import Model
 from pynamodb.attributes import (
@@ -33,24 +33,6 @@ class UserIdentifierGSI(GlobalSecondaryIndex):
     
     identifier_type = UnicodeAttribute(hash_key=True)  # "EMAIL", "USERNAME"
     identifier_value = UnicodeAttribute(range_key=True)  # actual email or username
-
-
-class UserRoleStatusGSI(GlobalSecondaryIndex):
-    """
-    GSI for role-based and status-based queries
-    Query patterns:
-    1. Find active admins: role_status="ADMIN#ACTIVE"
-    2. Find all cashiers: role_status="CASHIER#ACTIVE"
-    3. Find suspended users: role_status="#SUSPENDED" (all roles)
-    """
-    class Meta:
-        index_name = 'gsi-user-role-status'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    
-    role_status = UnicodeAttribute(hash_key=True)  # "ADMIN#ACTIVE", "CASHIER#ACTIVE", "#SUSPENDED"
-    user_id = UnicodeAttribute(range_key=True)  # USER-001
 
 
 class User(Model):
@@ -86,20 +68,16 @@ class User(Model):
         write_capacity_units = 5
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="users")
-    sk = UnicodeAttribute(range_key=True)  # "USER-001" (3-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="users")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "USER-001" (3-digit)
     
     # ============= GSI KEYS =============
     # GSI 1: Identifier index
     identifier_type = UnicodeAttribute(null=True)  # "EMAIL", "USERNAME"
     identifier_value = UnicodeAttribute(null=True)  # actual value
     
-    # GSI 2: Role/Status index
-    role_status = UnicodeAttribute(null=True)  # "ADMIN#ACTIVE", "CASHIER#ACTIVE"
-    
     # ============= GSI REFERENCES =============
     identifier_gsi = UserIdentifierGSI()
-    role_status_gsi = UserRoleStatusGSI()
     
     # ============= CORE ERD FIELDS =============
     username = UnicodeAttribute(null=True)
@@ -159,7 +137,6 @@ class User(Model):
             # Get role and status
             role = kwargs.get('role', 'user')
             status = kwargs.get('status', 'active')
-            role_status = f"{role.upper()}#{status.upper()}"
             
             # Create and save user
             user = cls(
@@ -178,9 +155,6 @@ class User(Model):
                 # GSI 1: Identifier index
                 identifier_type=None,  # Will be set via _update_gsi_identifiers()
                 identifier_value=None,
-                
-                # GSI 2: Role/Status index
-                role_status=role_status,
                 
                 date_created=datetime.utcnow(),
                 last_updated=datetime.utcnow(),
@@ -253,7 +227,7 @@ class User(Model):
     @classmethod
     def get_users_by_role_status(cls, role: str = None, status: str = None) -> List['User']:
         """
-        Get users by role and/or status using GSI
+        Get users by role and/or status using scan (optimized for small user base)
         
         Args:
             role: Role to filter by (optional)
@@ -265,28 +239,16 @@ class User(Model):
         try:
             users = []
             
-            if role and status:
-                # Exact role-status match
-                role_status = f"{role.upper()}#{status.upper()}"
-                for user in cls.role_status_gsi.query(role_status):
+            # Scan all users and filter (efficient for small datasets < 100 users)
+            for user in cls.query("users"):
+                if user.isDeleted:
+                    continue
+                
+                role_match = not role or user.role.upper() == role.upper()
+                status_match = not status or user.status.upper() == status.upper()
+                
+                if role_match and status_match:
                     users.append(user)
-            elif role:
-                # All users with role (any status)
-                # Query with begins_with
-                for user in cls.role_status_gsi.query(
-                    f"{role.upper()}#",
-                    range_key_condition=cls.role_status.startswith(f"{role.upper()}#")
-                ):
-                    users.append(user)
-            elif status:
-                # All users with status (any role)
-                # This is less efficient but works for status-only queries
-                for user in cls.query("users"):
-                    if user.status.upper() == status.upper():
-                        users.append(user)
-            else:
-                # No filters, return all users
-                return cls.get_all_users()
             
             return users
         except Exception as e:
@@ -333,6 +295,28 @@ class User(Model):
             logger.error(f"Error getting admins: {str(e)}")
             return []
     
+    @classmethod
+    def get_all_users(cls, include_deleted: bool = False) -> List['User']:
+        """
+        Get all users
+        
+        Args:
+            include_deleted: Whether to include deleted users
+            
+        Returns:
+            list: List of all users
+        """
+        try:
+            users = []
+            for user in cls.query("users"):
+                if not include_deleted and user.isDeleted:
+                    continue
+                users.append(user)
+            return users
+        except Exception as e:
+            logger.error(f"Error getting all users: {str(e)}")
+            return []
+    
     # ============= FALLBACK SCAN METHODS (if GSI fails) =============
     
     @classmethod
@@ -363,10 +347,6 @@ class User(Model):
             elif self.username:
                 self.identifier_type = "USERNAME"
                 self.identifier_value = self.username.lower()
-            
-            # Update role_status GSI
-            if self.role and self.status:
-                self.role_status = f"{self.role.upper()}#{self.status.upper()}"
             
             self.save()
         except Exception as e:
@@ -557,39 +537,35 @@ class UserGSIManager:
             return False
     
     @staticmethod
-    def get_user_stats_via_gsi() -> Dict[str, Any]:
+    def get_user_stats_via_scan() -> Dict[str, Any]:
         """
-        Get user statistics using GSIs (more efficient)
+        Get user statistics using scan (efficient for small user base)
         """
         try:
             stats = {
                 "total_users": 0,
                 "by_role": {},
-                "by_status": {},
-                "by_role_status": {}
+                "by_status": {}
             }
             
-            # Count by role-status combinations using GSI
-            role_status_counts = {}
-            for item in User.role_status_gsi.scan():
-                role_status = item.role_status
-                role_status_counts[role_status] = role_status_counts.get(role_status, 0) + 1
-            
-            # Parse role_status combinations
-            for role_status, count in role_status_counts.items():
-                stats["by_role_status"][role_status] = count
+            # Scan all users and count (fast for < 100 users)
+            for user in User.query("users"):
+                if user.isDeleted:
+                    continue
                 
-                # Extract role and status
-                if '#' in role_status:
-                    role, status = role_status.split('#', 1)
-                    stats["by_role"][role] = stats["by_role"].get(role, 0) + count
-                    stats["by_status"][status] = stats["by_status"].get(status, 0) + count
-            
-            stats["total_users"] = sum(role_status_counts.values())
+                stats["total_users"] += 1
+                
+                # Count by role
+                role = user.role.upper() if user.role else "UNKNOWN"
+                stats["by_role"][role] = stats["by_role"].get(role, 0) + 1
+                
+                # Count by status
+                status = user.status.upper() if user.status else "UNKNOWN"
+                stats["by_status"][status] = stats["by_status"].get(status, 0) + 1
             
             return stats
         except Exception as e:
-            logger.error(f"Error getting user stats via GSI: {str(e)}")
+            logger.error(f"Error getting user stats: {str(e)}")
             return {}
     
     @staticmethod

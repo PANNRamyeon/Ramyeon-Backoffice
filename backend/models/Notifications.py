@@ -109,8 +109,8 @@ class Notification(Model):
         write_capacity_units = 20  # Higher for frequent notification writes
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="notifications")
-    sk = UnicodeAttribute(range_key=True)  # "NOTIF-00001" (5-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="notifications")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "NOTIF-00001" (5-digit)
     
     # ============= GSI DEFINITIONS =============
     type_index = NotificationTypeIndex()

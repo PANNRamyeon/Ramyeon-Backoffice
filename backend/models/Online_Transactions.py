@@ -138,8 +138,8 @@ class OnlineTransaction(Model):
         write_capacity_units = 20
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="online_transactions")
-    sk = UnicodeAttribute(range_key=True)  # "ONLINE-00000001" (8-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="online_transactions")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "ONLINE-00000001" (8-digit)
     
     # ============= GSI DEFINITIONS =============
     customer_id_index = CustomerIdIndex()

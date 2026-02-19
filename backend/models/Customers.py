@@ -9,7 +9,7 @@ from pynamodb.attributes import (
     ListAttribute, MapAttribute, UTCDateTimeAttribute
 )
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
-from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION
 from datetime import datetime
 import re
 import logging
@@ -46,7 +46,7 @@ class EmailIndex(GlobalSecondaryIndex):
         write_capacity_units = 5
     
     email = UnicodeAttribute(hash_key=True)
-    sk = UnicodeAttribute(range_key=True)
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")
 
 
 class StatusIndex(GlobalSecondaryIndex):
@@ -60,7 +60,7 @@ class StatusIndex(GlobalSecondaryIndex):
         write_capacity_units = 5
     
     status = UnicodeAttribute(hash_key=True)
-    sk = UnicodeAttribute(range_key=True)
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")
 
 
 # ============= MAIN CUSTOMER MODEL =============
@@ -103,8 +103,8 @@ class Customer(Model):
         write_capacity_units = 10
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="customers")
-    sk = UnicodeAttribute(range_key=True)  # "CUST-0001" (4-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="customers")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "CUST-0001" (4-digit)
     
     # ============= GSI DEFINITIONS =============
     email_index = EmailIndex()

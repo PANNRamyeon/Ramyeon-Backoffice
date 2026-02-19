@@ -54,7 +54,7 @@ class AuditLog(Model):
     
     # ============= PRIMARY KEYS =============
     pk = UnicodeAttribute(hash_key=True)   # Partition Key: "audit_logs"
-    sk = UnicodeAttribute(range_key=True)  # Sort Key: "AUD-00001" (generated)
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # Sort Key: "AUD-00001" (generated)
     
     # ============= GSI DEFINITION =============
     user_id_index = UserIdTimestampIndex()

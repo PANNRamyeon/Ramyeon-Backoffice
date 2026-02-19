@@ -9,9 +9,10 @@ from django.conf import settings
 from jose import jwt, JWTError
 from requests_oauthlib import OAuth2Session
 
-from ..database import db_manager
 from .auth_services import AuthService, ACCESS_TOKEN_EXPIRE_MINUTES
 from .customer_service import CustomerService
+from models.Customers import Customer
+from pynamodb.exceptions import PynamoDBException
 
 
 class OAuthService:
@@ -30,9 +31,7 @@ class OAuthService:
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.db = db_manager.get_database()
         self.customer_service = CustomerService()
-        self.customer_collection = self.db.customers
 
         self.allowed_redirects = config(
             "OAUTH_ALLOWED_REDIRECTS",
@@ -49,9 +48,9 @@ class OAuthService:
         self.state_algorithm = config("OAUTH_STATE_ALGORITHM", default="HS256")
         self.state_ttl = config("OAUTH_STATE_TTL", default=600, cast=int)
 
-    # --------------------------------------------------------------------- #
-    # Provider configuration helpers
-    # --------------------------------------------------------------------- #
+    # ... (the rest of the methods that do not interact with DB can stay the same)
+    # ... I will only rewrite the methods that interact with the database.
+    
     def _provider_settings(self, provider: str) -> Dict:
         provider = (provider or "").lower()
         if provider not in ("google", "facebook"):
@@ -93,16 +92,12 @@ class OAuthService:
 
         return config_map
 
-    # --------------------------------------------------------------------- #
-    # Redirect + state handling
-    # --------------------------------------------------------------------- #
     def _sanitize_redirect(self, redirect_uri: str) -> str:
         redirect_uri = (redirect_uri or "").strip()
         if not redirect_uri:
             return self.default_redirect
 
         if not self.allowed_redirects:
-            # If allow-list is empty, accept provided URI (use cautiously)
             return redirect_uri
 
         for allowed in self.allowed_redirects:
@@ -133,9 +128,6 @@ class OAuthService:
         except JWTError as exc:
             raise ValueError(f"Invalid OAuth state token: {exc}") from exc
 
-    # --------------------------------------------------------------------- #
-    # Authorization / token exchange
-    # --------------------------------------------------------------------- #
     def build_authorization_url(
         self, provider: str, callback_url: str, redirect_uri: str
     ) -> str:
@@ -163,7 +155,6 @@ class OAuthService:
     ) -> Dict:
         provider_cfg = self._provider_settings(provider)
 
-        # Validate state
         state_payload = self.decode_state_token(state_token)
         if state_payload.get("provider") != provider:
             raise ValueError("OAuth provider mismatch in state payload")
@@ -182,7 +173,7 @@ class OAuthService:
                 code=code,
                 include_client_id=True,
             )
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             raise ValueError(f"Token exchange failed: {exc}") from exc
 
         userinfo_params = provider_cfg.get("userinfo_params", {})
@@ -192,7 +183,7 @@ class OAuthService:
             )
             response.raise_for_status()
             userinfo = response.json()
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             raise ValueError(f"Failed to fetch user profile: {exc}") from exc
 
         profile = self._normalize_profile(provider, userinfo)
@@ -200,9 +191,6 @@ class OAuthService:
         profile["state"] = state_payload
         return profile
 
-    # --------------------------------------------------------------------- #
-    # Profile normalization and persistence
-    # --------------------------------------------------------------------- #
     def _normalize_profile(self, provider: str, userinfo: Dict) -> Dict:
         provider = provider.lower()
         if provider == "google":
@@ -257,104 +245,63 @@ class OAuthService:
         if not provider or not provider_user_id:
             raise ValueError("Provider profile is missing required identifiers.")
 
-        # Attempt lookup by email
-        customer = None
-        if email:
-            customer = self.customer_collection.find_one(
-                {
-                    "email": email,
-                    "isDeleted": {"$ne": True},
-                }
-            )
+        try:
+            customer = Customer.get_by_email(email)
 
-        # Fallback lookup by provider ID
-        if not customer:
-            customer = self.customer_collection.find_one(
-                {
-                    "auth_providers": {
-                        "$elemMatch": {
-                            "provider": provider,
-                            "provider_user_id": provider_user_id,
-                        }
-                    }
-                }
-            )
+            if not customer:
+                # Fallback lookup by provider ID
+                results = Customer.scan(
+                    Customer.auth_providers.contains(
+                        {"provider": provider, "provider_user_id": provider_user_id}
+                    )
+                )
+                customer = next(results, None)
 
-        now = datetime.now(timezone.utc)
-        provider_entry = self._provider_record(profile)
+            provider_entry = self._provider_record(profile)
 
-        if not customer:
-            customer_id = self.customer_service.generate_customer_id()
-            username = email.split("@")[0] if email else customer_id.lower()
+            if not customer:
+                customer = Customer.create_with_oauth(
+                    provider=provider,
+                    provider_user_id=provider_user_id,
+                    email=email,
+                    full_name=profile.get("full_name"),
+                    first_name=profile.get("first_name"),
+                    last_name=profile.get("last_name"),
+                    avatar_url=profile.get("avatar_url"),
+                    locale=profile.get("locale"),
+                    source=provider,
+                )
+            else:
+                actions = [Customer.last_updated.set(datetime.now(timezone.utc))]
+                if profile.get("email_verified"):
+                    actions.append(Customer.email_verified.set(True))
+                if profile.get("full_name"):
+                    actions.append(Customer.full_name.set(profile["full_name"]))
 
-            customer_record = {
-                "_id": customer_id,
-                "username": username,
-                "full_name": profile.get("full_name") or username,
-                "email": email or None,
-                "email_verified": profile.get("email_verified", False),
-                "password": None,
-                "password_set": False,
-                "auth_mode": "oauth",
-                "auth_providers": [provider_entry],
-                "phone": "",
-                "delivery_address": {},
-                "loyalty_points": 0,
-                "last_purchase": None,
-                "isDeleted": False,
-                "status": "active",
-                "date_created": now,
-                "last_updated": now,
-                "source": provider,
-            }
+                # Update or add provider
+                providers = customer.auth_providers or []
+                updated = False
+                for entry in providers:
+                    if (
+                        entry.provider == provider
+                        and entry.provider_user_id == provider_user_id
+                    ):
+                        entry.last_login = provider_entry['last_login']
+                        updated = True
+                        break
+                if not updated:
+                    providers.append(provider_entry)
+                actions.append(Customer.auth_providers.set(providers))
+                customer.update(actions=actions)
 
-            self.customer_collection.insert_one(customer_record)
-            self.logger.info(
-                "Created new OAuth customer %s via %s",
-                customer_id,
-                provider,
-            )
-            customer = customer_record
-        else:
-            updates = {
-                "last_updated": now,
-            }
+            return customer.to_dict()
+        except PynamoDBException as e:
+            raise Exception(f"Error upserting customer: {str(e)}")
 
-            if profile.get("email_verified"):
-                updates["email_verified"] = True
 
-            if profile.get("full_name"):
-                updates["full_name"] = profile["full_name"]
-
-            providers = customer.get("auth_providers", [])
-            updated = False
-            for entry in providers:
-                if (
-                    entry.get("provider") == provider
-                    and entry.get("provider_user_id") == provider_user_id
-                ):
-                    entry.update(provider_entry)
-                    updated = True
-                    break
-
-            if not updated:
-                providers.append(provider_entry)
-
-            updates["auth_providers"] = providers
-            self.customer_collection.update_one(
-                {"_id": customer["_id"]},
-                {"$set": updates},
-            )
-            customer = self.customer_collection.find_one({"_id": customer["_id"]})
-
-        return customer
-
-    # --------------------------------------------------------------------- #
-    # Token issuance
-    # --------------------------------------------------------------------- #
     def issue_tokens(self, customer: Dict) -> Dict:
         auth_service = AuthService()
-        user_id = str(customer["_id"])
+        user_id = str(customer["customer_id"])
         token_data = {
             "sub": user_id,
             "email": customer.get("email"),
@@ -385,9 +332,6 @@ class OAuthService:
             "user": user_payload,
         }
 
-    # --------------------------------------------------------------------- #
-    # Fragment construction helpers
-    # --------------------------------------------------------------------- #
     @staticmethod
     def build_success_params(token_payload: Dict) -> str:
         fragment_parts = [
@@ -410,10 +354,6 @@ class OAuthService:
 
     @staticmethod
     def build_redirect_url(redirect_uri: str, params: str) -> str:
-        """
-        Attach query parameters to the supplied redirect URI while respecting
-        hash-based SPA routes.
-        """
         if not redirect_uri:
             return ""
 
@@ -429,4 +369,3 @@ class OAuthService:
 
 
 oauth_service = OAuthService()
-

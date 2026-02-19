@@ -1,20 +1,65 @@
 """
 Category Model - Following ERD Specification with Enhancements
-PK = "categories", SK = "CAT-####" (4-digit format)
+PK = "category", SK = "CAT-####" (4-digit format)
 Single Table Design using RamyeonCornerDB
 """
 from pynamodb.models import Model
 from pynamodb.attributes import (
     UnicodeAttribute, NumberAttribute, BooleanAttribute,
-    ListAttribute, MapAttribute, UTCDateTimeAttribute
+    ListAttribute, MapAttribute, UTCDateTimeAttribute, Attribute
 )
 from pynamodb.exceptions import UpdateError
-from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from app.utils import DYNAMO_TABLE_NAME, AWS_REGION
+from app.utils.counters import counter_service
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+
+# Custom DateTime Attribute to handle legacy date formats
+class FlexibleDateTimeAttribute(Attribute):
+    """
+    A DateTime attribute that can handle multiple date formats for backward compatibility
+    """
+    attr_type = 'S'
+    
+    def serialize(self, value):
+        """Convert datetime to string for storage"""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]
+        return str(value)
+    
+    def deserialize(self, value):
+        """Convert string from storage to datetime"""
+        if not value:
+            return None
+        
+        # Handle the bad format with extra zeros: '000002025-10-08...'
+        if value.startswith('0000'):
+            value = value[4:]  # Remove extra zeros
+        
+        # Try different formats
+        formats = [
+            '%Y-%m-%dT%H:%M:%S.%f',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S.%f+0000',
+            '%Y-%m-%dT%H:%M:%S+0000',
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+        
+        # If all formats fail, log and return current time
+        logger.warning(f"Could not parse datetime: {value}, using current time")
+        return datetime.utcnow()
 
 
 # ============= NESTED MAP ATTRIBUTES =============
@@ -25,7 +70,7 @@ class SubCategoryItem(MapAttribute):
     subcategory_id = UnicodeAttribute()  # Generated with utils.generate_sk
     name = UnicodeAttribute()
     description = UnicodeAttribute(null=True)
-    created_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    created_at = FlexibleDateTimeAttribute(default=datetime.utcnow)
     status = UnicodeAttribute(default="active")
     sort_order = NumberAttribute(default=0)
     icon = UnicodeAttribute(null=True)  # Icon/Image URL for subcategory
@@ -63,8 +108,8 @@ class Category(Model):
         write_capacity_units = 5
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="categories")
-    sk = UnicodeAttribute(range_key=True)  # "CAT-0001" (4-digit)
+    pk = UnicodeAttribute(hash_key=True, default="category", attr_name="PK")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "CAT-0001" (4-digit)
     
     # ============= CATEGORY DETAILS =============
     category_name = UnicodeAttribute()
@@ -80,8 +125,8 @@ class Category(Model):
     
     # ============= STATUS AND METADATA =============
     isDeleted = BooleanAttribute(default=False)
-    date_created = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
-    last_updated = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    date_created = FlexibleDateTimeAttribute(default=datetime.utcnow)
+    last_updated = FlexibleDateTimeAttribute(default=datetime.utcnow)
     
     # ============= CLASS METHODS =============
     
@@ -104,12 +149,12 @@ class Category(Model):
             if not category_name or not category_name.strip():
                 raise ValueError("category_name is required")
             
-            # Generate 4-digit SK using utils.py
-            sk = generate_sk('CAT-', 'category_seq')
+            # Generate 4-digit SK using the centralized counter service
+            sk = counter_service.get_next_id('categories')
             
             # Create and save category
             category = cls(
-                pk="categories",
+                pk="category",
                 sk=sk,
                 category_name=category_name.strip(),
                 description=description.strip() if description else None,
@@ -145,7 +190,7 @@ class Category(Model):
             if not category_id.startswith('CAT-'):
                 category_id = f"CAT-{category_id.zfill(4)}"  # Pad to 4 digits if needed
             
-            return cls.get("categories", category_id)
+            return cls.get("category", category_id)
         except cls.DoesNotExist:
             logger.warning(f"Category not found: {category_id}")
             return None
@@ -166,7 +211,7 @@ class Category(Model):
         """
         try:
             # Query main table with filter (efficient for low cardinality items like categories)
-            for category in cls.query("categories", filter_condition=(cls.category_name == category_name)):
+            for category in cls.query("category", filter_condition=(cls.category_name == category_name)):
                 if not category.isDeleted:
                     return category
             return None
@@ -192,7 +237,7 @@ class Category(Model):
             if not include_deleted:
                 condition = condition & (cls.isDeleted == False)
             
-            for category in cls.query("categories", filter_condition=condition):
+            for category in cls.query("category", filter_condition=condition):
                 categories.append(category)
             return categories
         except Exception as e:
@@ -222,7 +267,7 @@ class Category(Model):
         """
         try:
             categories = []
-            for category in cls.query("categories"):
+            for category in cls.query("category"):
                 if include_deleted or not category.isDeleted:
                     categories.append(category)
             return categories
@@ -243,7 +288,7 @@ class Category(Model):
         """
         try:
             count = 0
-            for category in cls.query("categories"):
+            for category in cls.query("category"):
                 if include_deleted or not category.isDeleted:
                     count += 1
             return count
@@ -296,7 +341,7 @@ class Category(Model):
         """
         try:
             categories = []
-            for category in cls.query("categories"):
+            for category in cls.query("category"):
                 if (not category.isDeleted and 
                     len(category.sub_categories) >= min_subcategories):
                     categories.append(category)
@@ -424,8 +469,8 @@ class Category(Model):
             if name.lower() in existing_names:
                 raise ValueError(f"Subcategory '{name}' already exists in this category")
             
-            # Generate subcategory ID using utils.py
-            subcategory_id = generate_sk('SUB-', 'subcategory_seq')
+            # Generate subcategory ID using the centralized counter service
+            subcategory_id = counter_service.get_next_id('subcategories')
             
             subcategory = SubCategoryItem(
                 subcategory_id=subcategory_id,

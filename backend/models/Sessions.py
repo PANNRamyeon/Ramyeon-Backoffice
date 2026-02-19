@@ -16,7 +16,7 @@ import logging
 
 # Import existing utils for consistency
 from app.utils import generate_sk, get_dynamo_table, DYNAMO_TABLE_NAME, AWS_REGION
-from Branch import Branch  # For branch validation
+from models.Branch import Branch  # For branch validation
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,8 @@ class SessionLog(Model):
         write_capacity_units = 5
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="session_logs")
-    sk = UnicodeAttribute(range_key=True)  # "SES-00001" (5-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="session_logs")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "SES-00001" (5-digit)
     
     # ============= SESSION LOG DATA =============
     branch_id = UnicodeAttribute()  # Required for employee tracking

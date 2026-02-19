@@ -34,8 +34,12 @@ class CategoryKPIView(APIView):
                 'sub_categories': request.data.get('sub_categories', [])
             }
             
-            # Add image fields if they exist
-            image_fields = ['image_url', 'image_filename', 'image_size', 'image_type', 'image_uploaded_at']
+            # Map image_url to icon field for the new model
+            if 'image_url' in request.data and request.data['image_url'] is not None:
+                category_data['image_url'] = request.data['image_url']
+            
+            # Add other image metadata fields if they exist
+            image_fields = ['image_filename', 'image_size', 'image_type', 'image_uploaded_at']
             for field in image_fields:
                 if field in request.data and request.data[field] is not None:
                     category_data[field] = request.data[field]
@@ -59,15 +63,29 @@ class CategoryKPIView(APIView):
             search_term = request.query_params.get('search')
             active_only = request.query_params.get('active_only', 'false').lower() == 'true'
             include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'
+            include_product_counts = request.query_params.get('include_product_counts', 'false').lower() == 'true'
             limit = int(request.query_params.get('limit', 100))
             skip = int(request.query_params.get('skip', 0))
             
             if search_term:
-                categories = category_service.search_categories(search_term, include_deleted=include_deleted, limit=limit)
+                categories = category_service.search_categories(
+                    search_term, 
+                    include_deleted=include_deleted, 
+                    limit=limit,
+                    include_product_counts=include_product_counts
+                )
             elif active_only:
-                categories = category_service.get_active_categories(include_deleted=include_deleted)
+                categories = category_service.get_active_categories(
+                    include_deleted=include_deleted,
+                    include_product_counts=include_product_counts
+                )
             else:
-                categories = category_service.get_all_categories(include_deleted=include_deleted, limit=limit, skip=skip)
+                categories = category_service.get_all_categories(
+                    include_deleted=include_deleted, 
+                    limit=limit, 
+                    skip=skip,
+                    include_product_counts=include_product_counts
+                )
             
             # Serialize any remaining non-JSON-serializable objects
             clean_categories = self._serialize_objectids(categories)
@@ -90,7 +108,12 @@ class CategoryDetailView(APIView):
         try:
             category_service = CategoryService()
             include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'
-            category = category_service.get_category_by_id(category_id, include_deleted=include_deleted)
+            include_product_counts = request.query_params.get('include_product_counts', 'true').lower() == 'true'
+            category = category_service.get_category_by_id(
+                category_id, 
+                include_deleted=include_deleted,
+                include_product_counts=include_product_counts
+            )
             
             if not category:
                 return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -207,7 +230,8 @@ class CategoryDeletedListView(APIView):
         """Get list of soft-deleted categories (Admin only)"""
         try:
             category_service = CategoryService()
-            deleted_categories = category_service.get_deleted_categories()
+            include_product_counts = request.query_params.get('include_product_counts', 'false').lower() == 'true'
+            deleted_categories = category_service.get_deleted_categories(include_product_counts=include_product_counts)
             
             return Response({
                 "message": "Deleted categories retrieved successfully",

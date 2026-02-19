@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from ..database import db_manager
-from ..models import Supplier
+from models.Supplier import Supplier
 from notifications.services import NotificationService
 import logging
 from .audit_service import AuditLogService

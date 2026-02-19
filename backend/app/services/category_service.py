@@ -1,26 +1,22 @@
 from datetime import datetime
-from ..database import db_manager
-from ..models import Category
+from models.Categories import Category, SubCategoryItem
+from models.Product import Product
 import logging
 import re
 from .audit_service import AuditLogService
 from notifications.services import notification_service
+from app.utils.counters import counter_service
 
 logger = logging.getLogger(__name__)
 
 class CategoryService:
-    VALID_CATEGORY_PREFIXES = ('CTGY-', 'UNCTGRY-', 'UNGTY-')
+    VALID_CATEGORY_PREFIXES = ('CAT-', 'CTGY-', 'UNCTGRY-', 'UNGTY-')
     UNCATEGORIZED_ID_CANDIDATES = ['UNCTGRY-001', 'UNGTY-001']
     DEFAULT_SUBCATEGORY_NAME = 'None'
 
     def __init__(self):
-        """Initialize CategoryService with string-based architecture"""
-        self.db = db_manager.get_database()
-        self.collection = self.db.category
-        self.product_collection = self.db.products  
+        """Initialize CategoryService using PynamoDB models"""
         self.audit_service = AuditLogService()
-        self._ensure_indexes()
-
         self.ensure_uncategorized_category_exists()
 
     # ================================================================
@@ -29,76 +25,59 @@ class CategoryService:
 
     def _is_valid_category_id(self, category_id):
         """Allow CTGY-* plus legacy uncategorized IDs"""
-        return isinstance(category_id, str) and category_id.startswith(self.VALID_CATEGORY_PREFIXES)
+        return isinstance(category_id, str)
 
     def _ensure_subcategory_present(self, category_id, category_doc, subcategory_name):
         """Ensure a subcategory exists for a given category; create if missing."""
-        subcategories = category_doc.get('sub_categories', [])
-        exists = any(sub.get('name') == subcategory_name for sub in subcategories)
-
-        if not exists:
-            subcategory = {
-                'subcategory_id': self.generate_subcategory_id(),
-                'name': subcategory_name,
-                'description': f'Default {subcategory_name} subcategory',
-                'products': [],
-                'status': 'active',
-                'created_at': datetime.utcnow().isoformat()
-            }
-
-            self.collection.update_one(
-                {'_id': category_id},
-                {
-                    '$push': {'sub_categories': subcategory},
-                    '$set': {'last_updated': datetime.utcnow().isoformat()}
-                }
-            )
-
-            category_doc.setdefault('sub_categories', []).append(subcategory)
+        # This logic is now handled by Category model methods
+        pass
 
     def ensure_uncategorized_category_exists(self):
         """Ensure an 'Uncategorized' category exists, create if not"""
         try:
             # Check if uncategorized category already exists
-            uncategorized = self.collection.find_one({
-                'isDeleted': {'$ne': True},
-                '$or': [
-                    {'_id': {'$in': self.UNCATEGORIZED_ID_CANDIDATES}},
-                    {'category_name': re.compile(r'^uncategorized$', re.IGNORECASE)}
-                ]
-            })
+            # Try standard ID first
+            uncategorized = Category.get_by_id('UNCTGRY-001')
+            if not uncategorized:
+                # Try finding by name
+                uncategorized = Category.get_by_name('Uncategorized')
             
             if uncategorized:
-                self._ensure_subcategory_present(
-                    uncategorized['_id'],
-                    uncategorized,
-                    self.DEFAULT_SUBCATEGORY_NAME
-                )
+                # Ensure default subcategory exists
+                has_default = False
+                for sub in uncategorized.sub_categories:
+                    if sub.name == self.DEFAULT_SUBCATEGORY_NAME:
+                        has_default = True
+                        break
+                
+                if not has_default:
+                    uncategorized.add_subcategory(
+                        name=self.DEFAULT_SUBCATEGORY_NAME,
+                        description='Default holding subcategory for uncategorized products'
+                    )
+                
                 logger.info("Uncategorized category already exists")
-                return uncategorized
+                return uncategorized.to_dict()
             
             # Create default uncategorized category
-            now = datetime.utcnow()
-            uncategorized_data = {
-                '_id': 'UNCTGRY-001',
-                'category_name': 'Uncategorized',
-                'description': 'Default category for products without specific categorization',
-                'status': 'active',
-                'sub_categories': [{
-                    'subcategory_id': 'SUBCAT-00001',
-                    'name': self.DEFAULT_SUBCATEGORY_NAME,
-                    'description': 'Default holding subcategory for uncategorized products',
-                    'products': [],
-                    'created_at': now.isoformat(),
-                    'status': 'active'
-                }],
-                'isDeleted': False,
-                'date_created': now.isoformat(),
-                'last_updated': now.isoformat()
-            }
+            # We manually create it to force the ID
+            uncategorized = Category(
+                pk="category",
+                sk="UNCTGRY-001",
+                category_name="Uncategorized",
+                description="Default category for products without specific categorization",
+                status="active",
+                isDeleted=False,
+                date_created=datetime.utcnow(),
+                last_updated=datetime.utcnow()
+            )
+            uncategorized.save()
             
-            # Insert the category
-            result = self.collection.insert_one(uncategorized_data)
+            # Add default subcategory
+            uncategorized.add_subcategory(
+                name=self.DEFAULT_SUBCATEGORY_NAME,
+                description="Default holding subcategory for uncategorized products"
+            )
             
             logger.info("Created default 'Uncategorized' category with ID: UNCTGRY-001")
             
@@ -108,132 +87,15 @@ class CategoryService:
                 'action_type': 'system_initialization'
             })
             
-            return uncategorized_data
+            return uncategorized.to_dict()
             
         except Exception as e:
             logger.error(f"Error ensuring uncategorized category exists: {e}")
             raise Exception(f"Error creating uncategorized category: {str(e)}")
 
-    def generate_category_id(self):
-        """Generate sequential CTGY-### ID with conflict checking"""
-        try:
-            max_attempts = 100  # Safety limit
-            
-            for attempt in range(max_attempts):
-                # Find the highest existing CTGY number
-                pipeline = [
-                    {
-                        '$match': {
-                            '_id': {'$regex': '^CTGY-\\d{3}$'}
-                        }
-                    },
-                    {
-                        '$addFields': {
-                            'numeric_part': {
-                                '$toInt': {'$substr': ['$_id', 5, 3]}
-                            }
-                        }
-                    },
-                    {
-                        '$sort': {'numeric_part': -1}
-                    },
-                    {
-                        '$limit': 1
-                    }
-                ]
-                
-                result = list(self.collection.aggregate(pipeline))
-                
-                if result:
-                    next_number = result[0]['numeric_part'] + 1 + attempt
-                else:
-                    # No CTGY categories exist, start from 1
-                    next_number = 1 + attempt
-                
-                # Generate candidate ID
-                candidate_id = f"CTGY-{next_number:03d}"
-                
-                # Check if this ID already exists
-                existing = self.collection.find_one({'_id': candidate_id})
-                
-                if not existing:
-                    logger.info(f"Generated unique category ID: {candidate_id}")
-                    return candidate_id
-                
-                logger.warning(f"ID {candidate_id} already exists, trying next number...")
-            
-            # If we exhausted all attempts, use timestamp-based fallback
-            logger.error("Could not generate unique ID after 100 attempts, using fallback")
-            import time
-            fallback_number = int(time.time()) % 1000
-            return f"CTGY-{fallback_number:03d}"
-            
-        except Exception as e:
-            logger.error(f"Error generating category ID: {e}", exc_info=True)
-            # Emergency fallback
-            import time
-            fallback_number = int(time.time()) % 1000
-            return f"CTGY-{fallback_number:03d}"
-
-    def generate_subcategory_id(self):
-        """Generate sequential SUBCAT-##### ID"""
-        try:
-            # Use aggregation to find highest existing number across all categories
-            pipeline = [
-                {"$unwind": "$sub_categories"},
-                {
-                    '$match': {
-                        'sub_categories.subcategory_id': {'$regex': '^SUBCAT-\\d{5}$'}
-                    }
-                },
-                {
-                    '$addFields': {
-                        'numeric_part': {
-                            '$toInt': {'$substr': ['$sub_categories.subcategory_id', 7, 5]}
-                        }
-                    }
-                },
-                {
-                    '$group': {
-                        '_id': None,
-                        'max_number': {'$max': '$numeric_part'}
-                    }
-                }
-            ]
-            
-            result = list(self.collection.aggregate(pipeline))
-            
-            if result and result[0]['max_number'] is not None:
-                next_number = result[0]['max_number'] + 1
-            else:
-                next_number = 1
-            
-            return f"SUBCAT-{next_number:05d}"
-            
-        except Exception as e:
-            logger.error(f"Error generating subcategory ID: {e}")
-            # Emergency fallback
-            import time
-            fallback_number = int(time.time()) % 100000
-            return f"SUBCAT-{fallback_number:05d}"
-
     def _ensure_indexes(self):
-        """Create indexes for string-based operations"""
-        try:
-            indexes = [
-                [("category_id", 1), ("isDeleted", 1)],
-                [("category_name", 1), ("isDeleted", 1)],
-                [("status", 1), ("isDeleted", 1)],
-                [("sub_categories.products.product_id", 1)],
-                [("sub_categories.name", 1)]
-            ]
-            
-            for index_fields in indexes:
-                self.collection.create_index(index_fields, background=True)
-                
-            logger.info("String-based indexes created successfully")
-        except Exception as e:
-            logger.warning(f"Could not create indexes: {e}")
+        """Indexes are managed by PynamoDB models"""
+        pass
 
     def _validate_category_data(self, category_data):
         """Validate category data before processing"""
@@ -244,13 +106,10 @@ class CategoryService:
         if not category_name:
             raise ValueError("Category name is required")
         
-        # Check for duplicates using string operations
-        existing = self.collection.find_one({
-            'category_name': category_name,
-            'isDeleted': {'$ne': True}
-        })
+        # Check for duplicates
+        existing = Category.get_by_name(category_name)
 
-        if existing:
+        if existing and not existing.isDeleted:
             raise ValueError(f"Category '{category_name}' already exists")
         
         # Validate status if provided
@@ -281,61 +140,13 @@ class CategoryService:
         if not subcategories_list:
             return []
         
-        # Get the starting ID number once
-        start_id_number = self._get_next_subcategory_number()
-        
         prepared_subcategories = []
         for i, subcategory in enumerate(subcategories_list):
-            # Generate sequential ID for each subcategory
-            subcategory_id = f"SUBCAT-{(start_id_number + i):05d}"
-            
-            prepared_subcategory = {
-                'subcategory_id': subcategory_id,
-                'name': subcategory.get('name', ''),
-                'description': subcategory.get('description', ''),
-                'products': [],
-                'created_at': datetime.utcnow().isoformat(),
-                'status': 'active'
-            }
-            prepared_subcategories.append(prepared_subcategory)
+            # Note: IDs will be generated by Category.add_subcategory or create_category
+            # We just pass the data structure for now
+            prepared_subcategories.append(subcategory)
         
         return prepared_subcategories
-    
-    def _get_next_subcategory_number(self):
-        """Get the next available subcategory number"""
-        try:
-            pipeline = [
-                {"$unwind": "$sub_categories"},
-                {
-                    '$match': {
-                        'sub_categories.subcategory_id': {'$regex': '^SUBCAT-\\d{5}$'}
-                    }
-                },
-                {
-                    '$addFields': {
-                        'numeric_part': {
-                            '$toInt': {'$substr': ['$sub_categories.subcategory_id', 7, 5]}
-                        }
-                    }
-                },
-                {
-                    '$group': {
-                        '_id': None,
-                        'max_number': {'$max': '$numeric_part'}
-                    }
-                }
-            ]
-            
-            result = list(self.collection.aggregate(pipeline))
-            
-            if result and result[0]['max_number'] is not None:
-                return result[0]['max_number'] + 1
-            else:
-                return 1
-                
-        except Exception as e:
-            logger.error(f"Error getting next subcategory number: {e}")
-            return 1
     
     def _send_category_notification(self, action_type, category_name, category_id=None, additional_metadata=None):
         """Centralized notification helper for category actions"""
@@ -423,48 +234,43 @@ class CategoryService:
             category_name = self._validate_category_data(category_data)
             logger.info(f"Creating category: {category_name}")
             
-            # Generate string ID
-            category_id = self.generate_category_id()
+            # Use the model's classmethod to create the category.
+            # This correctly uses the counter service we set up in the model.
+            category = Category.create_category(
+                category_name=category_name,
+                description=category_data.get("description"),
+                icon=category_data.get("image_url"), # Mapping image_url to icon
+                sort_order=category_data.get("sort_order", 0)
+            )
             
-            # Prepare subcategories
-            existing_sub_categories = category_data.get("sub_categories", [])
-            sub_categories = self._prepare_subcategories(existing_sub_categories)
+            # After the category is created, add any subcategories.
+            for sub in category_data.get("sub_categories", []):
+                if sub.get('name'):
+                    # Use the model's instance method to add subcategories.
+                    # This correctly uses the counter service for subcategory IDs.
+                    category.add_subcategory(
+                        name=sub.get('name'),
+                        description=sub.get('description'),
+                        status=sub.get('status', 'active'),
+                        sort_order=sub.get('sort_order', 0),
+                        icon=sub.get('icon')
+                    )
             
-            # Add timestamps and default values
-            now = datetime.utcnow()
-            category_kwargs = {
-                '_id': category_id,
-                'category_name': category_name,
-                'description': category_data.get("description", ''),
-                'status': category_data.get("status", 'active'),
-                'sub_categories': sub_categories,
-                'isDeleted': False,
-                'date_created': now.isoformat(),
-                'last_updated': now.isoformat()
-            }
-            
-            # Add image fields if present
-            image_fields = ['image_url', 'image_filename', 'image_size', 'image_type', 'image_uploaded_at']
-            for field in image_fields:
-                if field in category_data and category_data[field] is not None:
-                    category_kwargs[field] = category_data[field]
-            
-            # ✅ FIXED: Insert dict directly instead of using Category model
-            self.collection.insert_one(category_kwargs)
+            category_kwargs = category.to_dict()
             
             # Send notification
-            self._send_category_notification('created', category_name, category_id)
+            self._send_category_notification('created', category.category_name, category.sk)
             
             # Audit logging
             if current_user and self.audit_service:
                 try:
-                    audit_data = {**category_kwargs, "category_id": category_id}
+                    audit_data = {**category_kwargs, "category_id": category.sk}
                     self.audit_service.log_category_create(current_user, audit_data)
                     logger.debug("Audit log created for category creation")
                 except Exception as audit_error:
                     logger.error(f"Audit logging failed: {audit_error}")
             
-            logger.info(f"Category '{category_name}' created successfully with ID {category_id}")
+            logger.info(f"Category '{category.category_name}' created successfully with ID {category.sk}")
             
             # Return the created data
             return category_kwargs
@@ -476,31 +282,37 @@ class CategoryService:
             logger.error(f"Error creating category: {e}", exc_info=True)
             raise Exception(f"Error creating category: {str(e)}")
         
-    def get_all_categories(self, include_deleted=False, limit=None, skip=None):
-        """Get all categories with product counts added to subcategories"""
+    def get_all_categories(self, include_deleted=False, limit=None, skip=None, include_product_counts=False):
+        """Get all categories, optionally with product counts"""
         try:
-            query = {}
-            if not include_deleted:
-                query['isDeleted'] = {'$ne': True}
-
-            cursor = self.collection.find(query)
-
+            categories = Category.get_all_categories(include_deleted=include_deleted)
+            
+            # Manual pagination (PynamoDB returns list for small datasets)
             if skip:
-                cursor = cursor.skip(skip)
+                categories = categories[skip:]
             if limit:
-                cursor = cursor.limit(limit)
-
-            categories = list(cursor)
-
-            # Add product counts for each category's subcategories
+                categories = categories[:limit]
+            
+            # Convert to dicts
+            result = []
             for category in categories:
-                for subcategory in category.get('sub_categories', []):
-                    subcategory['product_count'] = self.get_subcategory_product_count(
-                        category['_id'],
-                        subcategory['name']
-                    )
+                cat_dict = category.to_dict()
+                
+                # Add product counts only if requested (expensive operation)
+                if include_product_counts and 'sub_categories' in cat_dict:
+                    for subcategory in cat_dict['sub_categories']:
+                        subcategory['product_count'] = self.get_subcategory_product_count(
+                            category.sk,
+                            subcategory['name']
+                        )
+                elif 'sub_categories' in cat_dict:
+                    # Set count to None when not requested to indicate it's not calculated
+                    for subcategory in cat_dict['sub_categories']:
+                        subcategory['product_count'] = None
+                
+                result.append(cat_dict)
 
-            return categories
+            return result
         except Exception as e:
             logger.error(f"Error getting categories: {e}")
             raise Exception(f"Error getting categories: {str(e)}")
@@ -508,10 +320,9 @@ class CategoryService:
     def get_category_product_count(self, category_id):
         """Get total number of products in a category"""
         try:
-            count = self.product_collection.count_documents({
-                'category_id': category_id,
-                'isDeleted': {'$ne': True}
-            })
+            # Use Product model to count
+            products = Product.query_by_category(category_id)
+            count = len(products)
             return count
         except Exception as e:
             logger.error(f"Error getting category product count: {e}")
@@ -520,37 +331,38 @@ class CategoryService:
     def get_subcategory_product_count(self, category_id, subcategory_name):
         """Get number of products in a specific subcategory"""
         try:
-            count = self.product_collection.count_documents({
-                'category_id': category_id,
-                'subcategory_name': subcategory_name,
-                'isDeleted': {'$ne': True}
-            })
+            # Use Product model to count
+            products = Product.query_by_category(category_id)
+            count = 0
+            for p in products:
+                if p.subcategory_name == subcategory_name:
+                    count += 1
             return count
         except Exception as e:
             logger.error(f"Error getting subcategory product count: {e}")
             return 0
     
-    def get_category_by_id(self, category_id, include_deleted=False):
-        """Get category by string ID with product counts added to subcategories"""
+    def get_category_by_id(self, category_id, include_deleted=False, include_product_counts=True):
+        """Get category by string ID, optionally with product counts (defaults to True for detail view)"""
         try:
-            if not self._is_valid_category_id(category_id):
+            category = Category.get_by_id(category_id)
+            if not category or (category.isDeleted and not include_deleted):
                 return None
 
-            query = {'_id': category_id}  # Use _id instead of category_id
-            if not include_deleted:
-                query['isDeleted'] = {'$ne': True}
-
-            category = self.collection.find_one(query)
-
-            # Add product counts for subcategories
-            if category:
-                for subcategory in category.get('sub_categories', []):
+            cat_dict = category.to_dict()
+            
+            # Add product counts for subcategories (default True for detail view)
+            if include_product_counts and 'sub_categories' in cat_dict:
+                for subcategory in cat_dict['sub_categories']:
                     subcategory['product_count'] = self.get_subcategory_product_count(
-                        category['_id'],
+                        category.sk,
                         subcategory['name']
                     )
+            elif 'sub_categories' in cat_dict:
+                for subcategory in cat_dict['sub_categories']:
+                    subcategory['product_count'] = None
 
-            return category
+            return cat_dict
         except Exception as e:
             logger.error(f"Error getting category by ID {category_id}: {e}")
             raise Exception(f"Error getting category: {str(e)}")
@@ -562,52 +374,30 @@ class CategoryService:
             if current_user:
                 logger.info(f"Updated by: {current_user['username']}")
             
-            if not self._is_valid_category_id(category_id):
+            category = Category.get_by_id(category_id)
+            if not category:
                 return None
             
-            # Get current category data for audit - USE _id instead of category_id
-            old_category = self.collection.find_one({
-                '_id': category_id,  # Changed from 'category_id': category_id
-                'isDeleted': {'$ne': True}
-            })
-            
-            if not old_category:
-                logger.error(f"Category {category_id} not found for update")
-                return None
+            old_data = category.to_dict()
             
             # Prepare update data
-            update_data = category_data.copy()
-            update_data['last_updated'] = datetime.utcnow().isoformat()  # Use ISO string
+            update_kwargs = {}
+            if 'category_name' in category_data:
+                update_kwargs['category_name'] = category_data['category_name']
+            if 'description' in category_data:
+                update_kwargs['description'] = category_data['description']
+            if 'status' in category_data:
+                update_kwargs['status'] = category_data['status']
+            if 'image_url' in category_data:
+                update_kwargs['icon'] = category_data['image_url']
             
-            # Validate category name if being updated
-            if 'category_name' in update_data:
-                new_name = update_data['category_name'].strip()
-                if new_name != old_category.get('category_name'):
-                    existing = self.collection.find_one({
-                        'category_name': new_name,
-                        'isDeleted': {'$ne': True},
-                        '_id': {'$ne': category_id}  # Changed from 'category_id': {'$ne': category_id}
-                    })
-                    if existing:
-                        raise ValueError(f"Category name '{new_name}' already exists")
-
-            # Update using _id instead of category_id
-            result = self.collection.update_one(
-                {
-                    '_id': category_id,  # Changed from 'category_id': category_id
-                    'isDeleted': {'$ne': True}
-                },
-                {'$set': update_data}
-            )
+            # Update category
+            category.update_category(**update_kwargs)
             
-            if result.modified_count == 0:
-                return None
-
-            # Get updated category using _id
-            updated_category = self.collection.find_one({'_id': category_id})
+            updated_category = category.to_dict()
             
             # Send notification
-            self._send_category_notification('updated', updated_category['category_name'], category_id)
+            self._send_category_notification('updated', category.category_name, category_id)
             
             # Audit logging
             if current_user and self.audit_service:
@@ -615,8 +405,8 @@ class CategoryService:
                     self.audit_service.log_action(
                         current_user, 
                         category_id, 
-                        old_values=old_category, 
-                        new_values=update_data
+                        old_values=old_data, 
+                        new_values=updated_category
                     )
                     logger.debug("Audit log created for category update")
                 except Exception as audit_error:
@@ -639,55 +429,31 @@ class CategoryService:
             if current_user:
                 logger.info(f"Deleted by: {current_user['username']}")
             
-            if not self._is_valid_category_id(category_id):
+            category = Category.get_by_id(category_id)
+            if not category or category.isDeleted:
                 return False
             
-            # Get category data before deletion (only active categories) - USE _id
-            category_to_delete = self.collection.find_one({
-                '_id': category_id,  # ✅ Changed to use _id
-                'isDeleted': {'$ne': True}
-            })
+            category_name = category.category_name
+            category_data = category.to_dict()
             
-            if not category_to_delete:
-                logger.error(f"Category {category_id} not found for soft delete")
-                return False
+            # Soft delete
+            category.soft_delete()
             
-            now = datetime.utcnow()
+            # Send notification
+            self._send_category_notification('soft_deleted', category_name, category_id)
             
-            # Soft delete data
-            update_data = {
-                'isDeleted': True,
-                'deleted_at': now.isoformat(),  # Use ISO string for consistency
-                'deletedBy': current_user.get('username') if current_user else 'system',
-                'last_updated': now.isoformat(),  # Use ISO string for consistency
-                'deletionContext': deletion_context or "category_deletion"
-            }
+            # Audit logging
+            if current_user and self.audit_service:
+                try:
+                    category_for_audit = category_data.copy()
+                    category_for_audit['deletion_type'] = 'soft_delete'
+                    
+                    self.audit_service.log_action(current_user, category_for_audit)
+                    logger.info("Audit log created for category soft deletion")
+                except Exception as audit_error:
+                    logger.error(f"Audit logging failed: {audit_error}")
             
-            # Update category using _id - FIXED
-            result = self.collection.update_one(
-                {'_id': category_id},  # ✅ Changed to use _id
-                {'$set': update_data}
-            )
-            
-            if result.modified_count > 0:
-                # Send notification
-                self._send_category_notification('soft_deleted', category_to_delete['category_name'], category_id)
-                
-                # Audit logging
-                if current_user and self.audit_service:
-                    try:
-                        category_for_audit = category_to_delete.copy()
-                        category_for_audit['deletion_type'] = 'soft_delete'
-                        
-                        self.audit_service.log_action(current_user, category_for_audit)
-                        logger.info("Audit log created for category soft deletion")
-                    except Exception as audit_error:
-                        logger.error(f"Audit logging failed: {audit_error}")
-                
-                logger.info("Category soft deleted successfully")
-                return True
-            
-            return False
+            return True
             
         except Exception as e:
             logger.error(f"Error soft deleting category {category_id}: {str(e)}")
@@ -700,60 +466,24 @@ class CategoryService:
             if current_user:
                 logger.info(f"Restored by: {current_user['username']}")
             
-            if not self._is_valid_category_id(category_id):
+            category = Category.get_by_id(category_id)
+            if not category or not category.isDeleted:
                 return False
             
-            # Find deleted category using string ID
-            deleted_category = self.collection.find_one({
-                '_id': category_id,
-                'isDeleted': True
-            })
+            category.restore_category()
             
-            if not deleted_category:
-                return False
+            # Send notification
+            self._send_category_notification('restored', category.category_name, category_id)
             
-            now = datetime.utcnow()
+            # Audit logging
+            if current_user and self.audit_service:
+                try:
+                    self.audit_service.log_category_restore(current_user, category.to_dict())
+                    logger.info("Audit log created for category restoration")
+                except Exception as audit_error:
+                    logger.error(f"Audit logging failed: {audit_error}")
             
-            # Restore data
-            restore_data = {
-                'isDeleted': False,
-                'restoredAt': now,
-                'restoredBy': current_user.get('username') if current_user else 'system',
-                'last_updated': now,
-                'status': 'active'  # Reactivate
-            }
-            
-            # Remove deletion metadata
-            unset_data = {
-                'deleted_at': "",
-                'deletedBy': "",
-                'deletionContext': ""
-            }
-            
-            # Restore category using string ID
-            result = self.collection.update_one(
-                {'_id': category_id},
-                {'$set': restore_data, '$unset': unset_data}
-            )
-            
-            if result.modified_count > 0:
-                restored_category = self.collection.find_one({'category_id': category_id})
-                
-                # Send notification
-                self._send_category_notification('restored', restored_category['category_name'], category_id)
-                
-                # Audit logging
-                if current_user and self.audit_service:
-                    try:
-                        self.audit_service.log_category_restore(current_user, restored_category)
-                        logger.info("Audit log created for category restoration")
-                    except Exception as audit_error:
-                        logger.error(f"Audit logging failed: {audit_error}")
-                
-                logger.info("Category restored successfully")
-                return True
-            
-            return False
+            return True
             
         except Exception as e:
             logger.error(f"Error restoring category {category_id}: {str(e)}")
@@ -766,60 +496,61 @@ class CategoryService:
             if current_user:
                 logger.info(f"Deleted by: {current_user['username']}")
             
-            if not self._is_valid_category_id(category_id):
+            category = Category.get_by_id(category_id)
+            if not category:
                 return False
             
-            # Get category data before permanent deletion
-            category_to_delete = self.collection.find_one({'_id': category_id})
-            if not category_to_delete:
-                return False
+            category_name = category.category_name
+            category_data = category.to_dict()
             
-            category_name = category_to_delete.get('category_name', 'Unknown Category')
+            category.delete()
             
-            # Permanently delete from collection using string ID
-            result = self.collection.delete_one({'_id': category_id})
+            # Send critical notification
+            self._send_category_notification('hard_deleted', category_name, category_id, {
+                "warning": "PERMANENT_DELETION",
+                "deleted_by": current_user.get('username') if current_user else 'system'
+            })
             
-            if result.deleted_count > 0:
-                # Send critical notification with enhanced metadata
-                self._send_category_notification('hard_deleted', category_name, category_id, {
-                    "warning": "PERMANENT_DELETION",
-                    "deleted_by": current_user.get('username') if current_user else 'system'
-                })
-                
-                # Audit logging
-                if current_user and self.audit_service:
-                    try:
-                        category_for_audit = category_to_delete.copy()
-                        category_for_audit['deletion_type'] = 'hard_delete'
-                        
-                        self.audit_service.log_action(current_user, category_for_audit)
-                        logger.info("Audit log created for PERMANENT category deletion")
-                    except Exception as audit_error:
-                        logger.error(f"Audit logging failed: {audit_error}")
-                
-                logger.warning("Category PERMANENTLY deleted")
-                return True
+            # Audit logging
+            if current_user and self.audit_service:
+                try:
+                    category_for_audit = category_data.copy()
+                    category_for_audit['deletion_type'] = 'hard_delete'
+                    
+                    self.audit_service.log_action(current_user, category_for_audit)
+                    logger.info("Audit log created for PERMANENT category deletion")
+                except Exception as audit_error:
+                    logger.error(f"Audit logging failed: {audit_error}")
             
-            return False
+            return True
             
         except Exception as e:
             logger.error(f"Error permanently deleting category {category_id}: {str(e)}")
             raise Exception(f"Error permanently deleting category: {str(e)}")
 
-    def get_deleted_categories(self):
-        """Get all soft-deleted categories with product counts"""
+    def get_deleted_categories(self, include_product_counts=False):
+        """Get all soft-deleted categories, optionally with product counts"""
         try:
-            categories = list(self.collection.find({'isDeleted': True}))
+            categories = Category.get_by_status('deleted', include_deleted=True)
+            # Or use get_all_categories and filter
+            # categories = [c for c in Category.get_all_categories(include_deleted=True) if c.isDeleted]
 
-            # Add product counts for each category's subcategories
+            result = []
+            # Add product counts only if requested
             for category in categories:
-                for subcategory in category.get('sub_categories', []):
-                    subcategory['product_count'] = self.get_subcategory_product_count(
-                        category['_id'],
-                        subcategory['name']
-                    )
+                cat_dict = category.to_dict()
+                if include_product_counts:
+                    for subcategory in cat_dict.get('sub_categories', []):
+                        subcategory['product_count'] = self.get_subcategory_product_count(
+                            category.sk,
+                            subcategory['name']
+                        )
+                else:
+                    for subcategory in cat_dict.get('sub_categories', []):
+                        subcategory['product_count'] = None
+                result.append(cat_dict)
 
-            return categories
+            return result
         except Exception as e:
             logger.error(f"Error getting deleted categories: {e}")
             raise Exception(f"Error getting deleted categories: {str(e)}")
@@ -837,29 +568,28 @@ class CategoryService:
             if isinstance(product_identifier, str):
                 if product_identifier.startswith('PROD-'):
                     # Direct lookup by string ID
-                    product = self.product_collection.find_one({'product_id': product_identifier})
+                    product = Product.get_by_id(product_identifier)
                 else:
                     # Try as product name (case-insensitive)
-                    product = self.product_collection.find_one({
-                        'product_name': {'$regex': f'^{re.escape(product_identifier.strip())}$', '$options': 'i'}
-                    })
+                    # Product model doesn't have regex search exposed easily, use scan or search_by_name
+                    products = Product.search_by_name(product_identifier.strip(), limit=1)
+                    product = products[0] if products else None
             
             # Case 2: Dictionary with product data (from imports)
             elif isinstance(product_identifier, dict):
                 if 'product_id' in product_identifier:
                     product_id = product_identifier['product_id']
-                    product = self.product_collection.find_one({'product_id': product_id})
+                    product = Product.get_by_id(product_id)
                 elif 'product_name' in product_identifier:
-                    product = self.product_collection.find_one({
-                        'product_name': product_identifier['product_name']
-                    })
+                    products = Product.search_by_name(product_identifier['product_name'], limit=1)
+                    product = products[0] if products else None
             
             if not product:
                 raise ValueError(f"Product not found: {product_identifier}")
             
             return {
-                'id': product['product_id'],  # Now returns string ID
-                'name': product['product_name']
+                'id': product.sk,
+                'name': product.product_name
             }
             
         except Exception as e:
@@ -870,25 +600,18 @@ class CategoryService:
         try:
             logger.info(f"Adding product '{product_identifier}' to subcategory '{subcategory_name}' in category {category_id}")
             
-            if not self._is_valid_category_id(category_id):
-                raise ValueError("Invalid category ID")
-            
             if not subcategory_name or not subcategory_name.strip():
                 raise ValueError("Subcategory name is required")
             
-            # Get and validate category using string ID
-            category = self.collection.find_one({
-                'category_id': category_id,
-                'isDeleted': {'$ne': True}
-            })
+            category = Category.get_by_id(category_id)
             
             if not category:
                 raise ValueError("Category not found or deleted")
             
             # Check if subcategory exists
             subcategory_exists = any(
-                sub['name'] == subcategory_name 
-                for sub in category.get('sub_categories', [])
+                sub.name == subcategory_name 
+                for sub in category.sub_categories
             )
             
             if not subcategory_exists:
@@ -899,67 +622,23 @@ class CategoryService:
             product_id = product_data['id']  # This should be PROD-##### 
             product_name = product_data['name']
             
-            # Check if product already exists in this subcategory
-            for subcategory in category.get('sub_categories', []):
-                if subcategory['name'] == subcategory_name:
-                    products = subcategory.get('products', [])
-                    if products and isinstance(products[0], dict):
-                        existing_product_ids = [p['product_id'] for p in products]
-                        if product_id in existing_product_ids:
-                            return {
-                                'success': True,
-                                'action': 'no_change',
-                                'message': f"Product '{product_name}' already exists in subcategory '{subcategory_name}'"
-                            }
-                                    
-            # Remove product from any other subcategory first
-            self._remove_product_from_all_subcategories(product_id)
-            
-            # Add to subcategory with combined format using string IDs
-            result = self.collection.update_one(
-                {'_id': category_id},
-                {
-                    '$addToSet': {
-                        'sub_categories.$[elem].products': {
-                            'product_id': product_id,        # String: PROD-#####
-                            'product_name': product_name,    # String: Product Name
-                            'added_at': datetime.utcnow()    # Datetime (serializable)
-                        }
-                    },
-                    '$set': {
-                        'sub_categories.$[elem].updated_at': datetime.utcnow(),
-                        'last_updated': datetime.utcnow()
-                    }
-                },
-                array_filters=[{'elem.name': subcategory_name}]
-            )
-            
-            if result.modified_count > 0:
-                # Update product document with category reference using string IDs
-                self.product_collection.update_one(
-                    {'product_id': product_id},
-                    {
-                        '$set': {
-                            'category_id': category_id,  # String category ID
-                            'subcategory_name': subcategory_name,
-                            'updated_at': datetime.utcnow()
-                        }
-                    }
+            # Update product document with category reference
+            product = Product.get_by_id(product_id)
+            if product:
+                product.update_product(
+                    category_id=category_id,
+                    subcategory_name=subcategory_name
                 )
                 
-                logger.info(f"Successfully added product '{product_name}' to subcategory '{subcategory_name}'")
-                
-                return {
-                    'success': True,
-                    'action': 'added',
-                    'product_id': product_id,
-                    'product_name': product_name,
-                    'category_id': category_id,
-                    'subcategory_name': subcategory_name,
-                    'message': f"Product '{product_name}' added to subcategory '{subcategory_name}'"
-                }
-            
-            return {'success': False, 'message': 'Failed to add product to subcategory'}
+            return {
+                'success': True,
+                'action': 'added',
+                'product_id': product_id,
+                'product_name': product_name,
+                'category_id': category_id,
+                'subcategory_name': subcategory_name,
+                'message': f"Product '{product_name}' added to subcategory '{subcategory_name}'"
+            }
             
         except Exception as e:
             logger.error(f"Error adding product to subcategory: {e}")
@@ -967,44 +646,18 @@ class CategoryService:
 
     def _remove_product_from_all_subcategories(self, product_id):
         """Remove product from all subcategories using string ID"""
-        try:
-            categories_with_product = self.collection.find({
-                'sub_categories.products.product_id': product_id,
-                'isDeleted': {'$ne': True}
-            })
-            
-            for category in categories_with_product:
-                self.collection.update_one(
-                    {'category_id': category['category_id']},  # Use string ID
-                    {
-                        '$pull': {
-                            'sub_categories.$[].products': {'product_id': product_id}
-                        },
-                        '$set': {'last_updated': datetime.utcnow()}
-                    }
-                )
-            
-            logger.info(f"Removed product {product_id} from all subcategories")
-            
-        except Exception as e:
-            logger.error(f"Error removing product from all subcategories: {e}")
+        # No longer needed as products are not stored in categories
+        pass
 
     def remove_product_from_subcategory(self, category_id, subcategory_name, product_identifier, current_user=None):
         """Remove product from subcategory using string IDs"""
         try:
             logger.info(f"Removing product '{product_identifier}' from subcategory '{subcategory_name}' in category {category_id}")
             
-            if not self._is_valid_category_id(category_id):
-                raise ValueError("Invalid category ID")
-            
             if not subcategory_name or not subcategory_name.strip():
                 raise ValueError("Subcategory name is required")
             
-            # Get and validate category using string ID
-            category = self.collection.find_one({
-                'category_id': category_id,
-                'isDeleted': {'$ne': True}
-            })
+            category = Category.get_by_id(category_id)
             
             if not category:
                 raise ValueError("Category not found or deleted")
@@ -1014,166 +667,112 @@ class CategoryService:
             product_id = product_data['id']
             product_name = product_data['name']
             
-            # Remove from subcategory using string IDs
-            result = self.collection.update_one(
-                {'category_id': category_id},
-                {
-                    '$pull': {
-                        'sub_categories.$[elem].products': {'product_id': product_id}
-                    },
-                    '$set': {
-                        'sub_categories.$[elem].updated_at': datetime.utcnow(),
-                        'last_updated': datetime.utcnow()
-                    }
-                },
-                array_filters=[{'elem.name': subcategory_name}]
-            )
-            
-            if result.modified_count > 0:
-                # Update product document to remove category reference
-                self.product_collection.update_one(
-                    {'product_id': product_id},
-                    {
-                        '$unset': {
-                            'category_id': "",
-                            'subcategory_name': ""
-                        },
-                        '$set': {
-                            'updated_at': datetime.utcnow()
-                        }
-                    }
+            # Update product to remove category reference
+            product = Product.get_by_id(product_id)
+            if product:
+                # Move to Uncategorized instead of removing completely
+                product.update_product(
+                    category_id="UNCTGRY-001",
+                    subcategory_name="General"
                 )
                 
-                logger.info(f"Successfully removed product '{product_name}' from subcategory '{subcategory_name}'")
-                
-                return {
-                    'success': True,
-                    'action': 'removed',
-                    'product_id': product_id,
-                    'product_name': product_name,
-                    'category_id': category_id,
-                    'subcategory_name': subcategory_name,
-                    'message': f"Product '{product_name}' removed from subcategory '{subcategory_name}'"
-                }
-            
-            return {'success': False, 'message': 'Product not found in subcategory or no changes made'}
+            return {
+                'success': True,
+                'action': 'removed',
+                'product_id': product_id,
+                'product_name': product_name,
+                'category_id': category_id,
+                'subcategory_name': subcategory_name,
+                'message': f"Product '{product_name}' removed from subcategory '{subcategory_name}'"
+            }
             
         except Exception as e:
             logger.error(f"Error removing product from subcategory: {e}")
             raise Exception(f"Error removing product from subcategory: {str(e)}")
     
-    def get_active_categories(self, include_deleted=False):
-        """Get only active categories with product counts"""
+    def get_active_categories(self, include_deleted=False, include_product_counts=False):
+        """Get only active categories, optionally with product counts"""
         try:
-            query = {'status': 'active'}
-            if not include_deleted:
-                query['isDeleted'] = {'$ne': True}
+            categories = Category.get_active_categories()
+            
+            result = []
 
-            categories = list(self.collection.find(query))
-
-            # Add product counts for each category's subcategories
+            # Add product counts only if requested
             for category in categories:
-                for subcategory in category.get('sub_categories', []):
-                    subcategory['product_count'] = self.get_subcategory_product_count(
-                        category['_id'],
-                        subcategory['name']
-                    )
+                cat_dict = category.to_dict()
+                if include_product_counts:
+                    for subcategory in cat_dict.get('sub_categories', []):
+                        subcategory['product_count'] = self.get_subcategory_product_count(
+                            category.sk,
+                            subcategory['name']
+                        )
+                else:
+                    for subcategory in cat_dict.get('sub_categories', []):
+                        subcategory['product_count'] = None
+                result.append(cat_dict)
 
-            return categories
+            return result
         except Exception as e:
             logger.error(f"Error getting active categories: {e}")
             raise Exception(f"Error getting active categories: {str(e)}")
 
-    def search_categories(self, search_term, include_deleted=False, limit=20):
-        """Search categories by name or description with product counts"""
+    def search_categories(self, search_term, include_deleted=False, limit=20, include_product_counts=False):
+        """Search categories by name or description, optionally with product counts"""
         try:
             if not search_term or not search_term.strip():
                 return []
 
             search_term = search_term.strip()
-            regex_pattern = {'$regex': search_term, '$options': 'i'}
+            categories = Category.search_categories(search_term, limit=limit)
+            
+            result = []
 
-            query = {
-                '$or': [
-                    {'category_name': regex_pattern},
-                    {'description': regex_pattern}
-                ]
-            }
-
-            if not include_deleted:
-                query['isDeleted'] = {'$ne': True}
-
-            categories = list(self.collection.find(query).limit(limit))
-
-            # Add product counts for each category's subcategories
+            # Add product counts only if requested
             for category in categories:
-                for subcategory in category.get('sub_categories', []):
-                    subcategory['product_count'] = self.get_subcategory_product_count(
-                        category['_id'],
-                        subcategory['name']
-                    )
+                cat_dict = category.to_dict()
+                if include_product_counts:
+                    for subcategory in cat_dict.get('sub_categories', []):
+                        subcategory['product_count'] = self.get_subcategory_product_count(
+                            category.sk,
+                            subcategory['name']
+                        )
+                else:
+                    for subcategory in cat_dict.get('sub_categories', []):
+                        subcategory['product_count'] = None
+                result.append(cat_dict)
 
-            return categories
+            return result
         except Exception as e:
             logger.error(f"Error searching categories: {e}")
             raise Exception(f"Error searching categories: {str(e)}")
     
     def add_subcategory(self, category_id, subcategory_data, current_user=None):
-        """Add a subcategory to a category"""
+        """Add a subcategory to a category by delegating to the model."""
         try:
             logger.info(f"Adding subcategory to category {category_id}")
             if current_user:
                 logger.info(f"Added by: {current_user['username']}")
             
-            if not self._is_valid_category_id(category_id):
-                return False
-            
-            # Validate subcategory data
-            if not subcategory_data or not subcategory_data.get('name', '').strip():
-                raise ValueError("Subcategory name is required")
-            
-            # Check if category exists and is not deleted - USE _id instead of category_id
-            category = self.collection.find_one({
-                '_id': category_id,  # Changed from 'category_id': category_id
-                'isDeleted': {'$ne': True}
-            })
-            
+            category = Category.get_by_id(category_id)
             if not category:
                 raise ValueError("Category not found or is deleted")
-            
-            # Check for duplicate subcategory name
-            existing_names = [sub.get('name', '').lower() for sub in category.get('sub_categories', [])]
-            new_name = subcategory_data.get('name', '').strip().lower()
-            
-            if new_name in existing_names:
-                raise ValueError(f"Subcategory '{subcategory_data.get('name')}' already exists")
-            
-            # Ensure required fields
-            if 'products' not in subcategory_data:
-                subcategory_data['products'] = []
-            if 'created_at' not in subcategory_data:
-                subcategory_data['created_at'] = datetime.utcnow().isoformat()  # Use ISO string
-            
-            # Add subcategory - USE _id instead of category_id
-            result = self.collection.update_one(
-                {'_id': category_id},  # Changed from 'category_id': category_id
-                {
-                    '$addToSet': {'sub_categories': subcategory_data},
-                    '$set': {'last_updated': datetime.utcnow().isoformat()}  # Use ISO string
-                }
+
+            # Use the model's instance method directly
+            category.add_subcategory(
+                name=subcategory_data.get('name'),
+                description=subcategory_data.get('description'),
+                icon=subcategory_data.get('icon'),
+                sort_order=subcategory_data.get('sort_order', 0),
+                status=subcategory_data.get('status', 'active')
             )
             
-            if result.modified_count > 0:
-                # Send notification
-                self._send_category_notification('subcategory_added', category.get('category_name', 'Unknown'), category_id, {
-                    "subcategory_name": subcategory_data.get('name', 'Unknown'),
-                    "action_type": "subcategory_added"
-                })
-                
-                logger.info(f"Subcategory '{subcategory_data.get('name')}' added successfully")
-                return True
+            # Send notification
+            self._send_category_notification('subcategory_added', category.category_name, category_id, {
+                "subcategory_name": subcategory_data.get('name', 'Unknown'),
+                "action_type": "subcategory_added"
+            })
             
-            return False
+            return True
             
         except ValueError as ve:
             logger.error(f"Validation error adding subcategory: {ve}")
@@ -1183,54 +782,27 @@ class CategoryService:
             raise Exception(f"Error adding subcategory: {str(e)}")
 
     def remove_subcategory(self, category_id, subcategory_name, current_user=None):
-        """Remove a subcategory from a category"""
+        """Remove a subcategory from a category by its name."""
         try:
             logger.info(f"Removing subcategory '{subcategory_name}' from category {category_id}")
             
-            if not self._is_valid_category_id(category_id):
-                return False
-            
-            # Check if category exists and is not deleted
-            category = self.collection.find_one({
-                'category_id': category_id,
-                'isDeleted': {'$ne': True}
-            })
-            
+            category = Category.get_by_id(category_id)
             if not category:
                 raise ValueError("Category not found or is deleted")
             
-            # Find subcategory and check if it has products
-            subcategory_to_remove = None
-            for sub in category.get('sub_categories', []):
-                if sub.get('name') == subcategory_name:
-                    subcategory_to_remove = sub
-                    break
+            # Find the subcategory by name to get its ID for removal
+            sub_to_remove = next((sub for sub in category.sub_categories if sub.name == subcategory_name), None)
             
-            if not subcategory_to_remove:
-                raise ValueError(f"Subcategory '{subcategory_name}' not found")
+            if sub_to_remove:
+                # Use the model's remove method with the found ID
+                if category.remove_subcategory(sub_to_remove.subcategory_id):
+                    self._send_category_notification('subcategory_removed', category.category_name, category_id, {
+                        "subcategory_name": subcategory_name,
+                        "action_type": "subcategory_removed"
+                    })
+                    return True
             
-            # Check if subcategory has products
-            if subcategory_to_remove.get('products', []):
-                raise ValueError(f"Cannot remove subcategory '{subcategory_name}' - it contains products")
-            
-            # Remove subcategory
-            result = self.collection.update_one(
-                {'category_id': category_id},
-                {
-                    '$pull': {'sub_categories': {'name': subcategory_name}},
-                    '$set': {'last_updated': datetime.utcnow()}
-                }
-            )
-            
-            if result.modified_count > 0:
-                self._send_category_notification('subcategory_removed', category.get('category_name', 'Unknown'), category_id, {
-                    "subcategory_name": subcategory_name,
-                    "action_type": "subcategory_removed"
-                })
-                
-                logger.info(f"Subcategory '{subcategory_name}' removed successfully")
-                return True
-            
+            logger.warning(f"Subcategory '{subcategory_name}' not found in category '{category.category_name}'.")
             return False
             
         except ValueError as ve:
@@ -1243,18 +815,14 @@ class CategoryService:
     def get_subcategories(self, category_id):
         """Get all subcategories for a specific category"""
         try:
-            if not self._is_valid_category_id(category_id):
+            category = Category.get_by_id(category_id)
+            if not category:
                 return []
             
-            category = self.collection.find_one(
-                {
-                    '_id': category_id,
-                    'isDeleted': {'$ne': True}
-                },
-                {'sub_categories': 1}
-            )
-            
-            return category.get('sub_categories', []) if category else []
+            return [
+                {'name': sub.name, 'description': sub.description, 'subcategory_id': sub.subcategory_id} 
+                for sub in category.sub_categories
+            ]
             
         except Exception as e:
             logger.error(f"Error getting subcategories: {e}")
@@ -1263,28 +831,15 @@ class CategoryService:
     def get_subcategory_products_with_details(self, category_id, subcategory_name):
         """Get products in subcategory with full product details (ID + Name format)"""
         try:
-            if not self._is_valid_category_id(category_id):
-                return []
-                
-            category = self.collection.find_one({'category_id': category_id})
-            if not category:
-                return []
-            
-            for subcategory in category.get('sub_categories', []):
-                if subcategory['name'] == subcategory_name:
-                    products = subcategory.get('products', [])
-                    
-                    # Return combined format with both ID and Name
-                    if products and isinstance(products[0], dict):
-                        return [
-                            {
-                                'product_id': p['product_id'],    # String ID: PROD-#####
-                                'product_name': p['product_name'] # Product name
-                            } 
-                            for p in products
-                        ]
-            
-            return []
+            # Use Product model to query
+            products = Product.query_by_category(category_id)
+            return [
+                {
+                    'product_id': p.sk,
+                    'product_name': p.product_name
+                }
+                for p in products if p.subcategory_name == subcategory_name
+            ]
             
         except Exception as e:
             logger.error(f"Error getting subcategory products: {e}")
@@ -1293,51 +848,8 @@ class CategoryService:
     def get_category_stats(self):
         """Get comprehensive category statistics"""
         try:
-            pipeline = [
-                {
-                    '$group': {
-                        '_id': None,
-                        'total_categories': {'$sum': 1},
-                        'active_categories': {
-                            '$sum': {
-                                '$cond': [
-                                    {'$and': [
-                                        {'$eq': ['$status', 'active']},
-                                        {'$ne': ['$isDeleted', True]}
-                                    ]},
-                                    1, 0
-                                ]
-                            }
-                        },
-                        'deleted_categories': {
-                            '$sum': {'$cond': [{'$eq': ['$isDeleted', True]}, 1, 0]}
-                        },
-                        'total_subcategories': {
-                            '$sum': {'$size': {'$ifNull': ['$sub_categories', []]}}
-                        },
-                        'total_products': {
-                            '$sum': {
-                                '$sum': {
-                                    '$map': {
-                                        'input': {'$ifNull': ['$sub_categories', []]},
-                                        'as': 'sub',
-                                        'in': {'$size': {'$ifNull': ['$$sub.products', []]}}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            ]
-            
-            result = list(self.collection.aggregate(pipeline))
-            return result[0] if result else {
-                'total_categories': 0,
-                'active_categories': 0,
-                'deleted_categories': 0,
-                'total_subcategories': 0,
-                'total_products': 0
-            }
+            from models.Categories import CategoryManager
+            return CategoryManager.get_category_statistics()
             
         except Exception as e:
             logger.error(f"Error getting category stats: {e}")
@@ -1352,33 +864,26 @@ class CategoryService:
     def get_category_delete_info(self, category_id):
         """Get information about a category before deletion"""
         try:
-            if not self._is_valid_category_id(category_id):
-                return None
-            
-            category = self.collection.find_one({'category_id': category_id})
+            category = Category.get_by_id(category_id)
             if not category:
                 return None
             
             # Count subcategories and products
-            subcategories_count = len(category.get('sub_categories', []))
-            products_count = 0
-            
-            for subcategory in category.get('sub_categories', []):
-                products_count += len(subcategory.get('products', []))
+            subcategories_count = len(category.sub_categories)
+            products_count = self.get_category_product_count(category_id)
             
             return {
-                'category_id': category['category_id'],
-                'category_name': category.get('category_name', 'Unknown'),
-                'description': category.get('description', ''),
-                'status': category.get('status', 'active'),
-                'isDeleted': category.get('isDeleted', False),
+                'category_id': category.sk,
+                'category_name': category.category_name,
+                'description': category.description,
+                'status': category.status,
+                'isDeleted': category.isDeleted,
                 'subcategories_count': subcategories_count,
                 'products_count': products_count,
-                'can_soft_delete': not category.get('isDeleted', False),
-                'can_restore': category.get('isDeleted', False),
-                'created_at': category.get('date_created'),
-                'last_updated': category.get('last_updated'),
-                'deleted_at': category.get('deleted_at')
+                'can_soft_delete': not category.isDeleted,
+                'can_restore': category.isDeleted,
+                'created_at': category.date_created,
+                'last_updated': category.last_updated
             }
             
         except Exception as e:
@@ -1399,11 +904,6 @@ class CategoryService:
             
             for category_id in category_ids:
                 try:
-                    if not self._is_valid_category_id(category_id):
-                        failed_count += 1
-                        errors.append(f"Invalid category ID: {category_id}")
-                        continue
-                        
                     result = self.soft_delete_category(category_id, current_user)
                     if result:
                         success_count += 1
@@ -1435,34 +935,26 @@ class CategoryService:
             
             logger.info(f"Bulk updating {len(category_ids)} categories to status: {new_status}")
             
-            # Filter valid category IDs
-            valid_ids = [cid for cid in category_ids if self._is_valid_category_id(cid)]
-            
-            result = self.collection.update_many(
-                {
-                    'category_id': {'$in': valid_ids},
-                    'isDeleted': {'$ne': True}
-                },
-                {
-                    '$set': {
-                        'status': new_status,
-                        'last_updated': datetime.utcnow()
-                    }
-                }
-            )
+            updated_count = 0
+            for category_id in category_ids:
+                category = Category.get_by_id(category_id)
+                if category and not category.isDeleted:
+                    category.status = new_status
+                    category.save()
+                    updated_count += 1
             
             # Send bulk notification
-            if result.modified_count > 0:
-                self._send_category_notification('bulk_updated', f"{result.modified_count} categories", None, {
-                    "updated_count": result.modified_count,
+            if updated_count > 0:
+                self._send_category_notification('bulk_updated', f"{updated_count} categories", None, {
+                    "updated_count": updated_count,
                     "new_status": new_status,
                     "action_type": "categories_bulk_status_update",
                     "updated_by": current_user.get('username') if current_user else 'system'
                 })
             
-            logger.info(f"Updated {result.modified_count} categories to {new_status}")
+            logger.info(f"Updated {updated_count} categories to {new_status}")
             return {
-                'success': result.modified_count,
+                'success': updated_count,
                 'total_requested': len(category_ids)
             }
             
@@ -1475,88 +967,29 @@ class CategoryService:
     
     def _get_subcategory_product_ids(self, category_id, subcategory_name):
         """Get all product IDs in a specific subcategory (string format only)"""
-        try:
-            if not self._is_valid_category_id(category_id):
-                return []
-                
-            category = self.collection.find_one({'category_id': category_id})
-            if not category:
-                return []
-            
-            for subcategory in category.get('sub_categories', []):
-                if subcategory['name'] == subcategory_name:
-                    products = subcategory.get('products', [])
-                    # Handle combined format only (ID + Name)
-                    if products and isinstance(products[0], dict):
-                        return [p['product_id'] for p in products]
-                    return []
-            
-            return []
-        except Exception as e:
-            logger.error(f"Error getting subcategory products: {e}")
-            return []
+        # Use Product model
+        products = Product.query_by_category(category_id)
+        return [p.sk for p in products if p.subcategory_name == subcategory_name]
 
     def move_product_to_none_subcategory(self, product_id, category_id, current_user=None):
         """Move product to the default catch-all subcategory within the same category"""
         try:
             logger.info(f"Moving product {product_id} to '{self.DEFAULT_SUBCATEGORY_NAME}' subcategory in category {category_id}")
             
-            if not product_id.startswith('PROD-') or not self._is_valid_category_id(category_id):
-                raise ValueError("Invalid product or category ID format")
-            
-            # Get product details
-            product = self.product_collection.find_one({'product_id': product_id})
+            product = Product.get_by_id(product_id)
             if not product:
                 raise ValueError(f"Product {product_id} not found")
             
-            product_name = product.get('product_name')
-            
-            # Remove from current subcategory
-            self._remove_product_from_all_subcategories(product_id)
-            
-            # Ensure subcategory exists
-            category = self.collection.find_one({'category_id': category_id})
-            if not category:
-                raise ValueError(f"Category {category_id} not found")
-
-            self._ensure_subcategory_present(category_id, category, self.DEFAULT_SUBCATEGORY_NAME)
-
-            # Add to default subcategory
-            result = self.collection.update_one(
-                {'category_id': category_id},
-                {
-                    '$addToSet': {
-                        'sub_categories.$[elem].products': {
-                            'product_id': product_id,
-                            'product_name': product_name
-                        }
-                    },
-                    '$set': {'last_updated': datetime.utcnow()}
-                },
-                array_filters=[{'elem.name': self.DEFAULT_SUBCATEGORY_NAME}]
+            product.update_product(
+                category_id=category_id,
+                subcategory_name=self.DEFAULT_SUBCATEGORY_NAME
             )
             
-            if result.modified_count > 0:
-                # Update product document
-                self.product_collection.update_one(
-                    {'product_id': product_id},
-                    {
-                        '$set': {
-                            'category_id': category_id,
-                            'subcategory_name': 'None',
-                            'updated_at': datetime.utcnow()
-                        }
-                    }
-                )
-                
-                logger.info(f"Product moved to '{self.DEFAULT_SUBCATEGORY_NAME}' subcategory successfully")
-                return {
-                    'success': True,
-                    'action': 'moved_to_default',
-                    'message': f"Product '{product_name}' moved to '{self.DEFAULT_SUBCATEGORY_NAME}' subcategory"
-                }
-            
-            return {'success': False, 'message': 'Failed to move product to None subcategory'}
+            return {
+                'success': True,
+                'action': 'moved_to_default',
+                'message': f"Product '{product.product_name}' moved to '{self.DEFAULT_SUBCATEGORY_NAME}' subcategory"
+            }
             
         except Exception as e:
             logger.error(f"Error moving product to None subcategory: {e}")
@@ -1565,21 +998,9 @@ class CategoryService:
     def get_products_in_subcategory(self, category_id, subcategory_name, include_deleted=False):
         """Get all products in a specific subcategory"""
         try:
-            from ..services.product_service import ProductService
-            product_service = ProductService()
-            
-            # Get products by category and subcategory
-            filters = {
-                'category_id': category_id,
-                'subcategory_name': subcategory_name
-            }
-            
-            products = product_service.get_all_products(
-                filters=filters,
-                include_deleted=include_deleted
-            )
-            
-            return products
+            # Use Product model
+            products = Product.query_by_category(category_id)
+            return [p.to_dict() for p in products if p.subcategory_name == subcategory_name]
             
         except Exception as e:
             logger.error(f"Error getting products in subcategory: {e}")
@@ -1588,44 +1009,21 @@ class CategoryService:
     def move_product_to_category(self, product_id, new_category_id, new_subcategory_name=None, current_user=None):
         """Move a product to a different category/subcategory using ProductService"""
         try:
-            from ..services.product_service import ProductService
-            product_service = ProductService()
-            
-            # Validate the target category exists
-            target_category = self.get_category_by_id(new_category_id)
-            if not target_category:
-                raise ValueError(f"Target category {new_category_id} not found")
-            
             # If no subcategory specified, use default catch-all subcategory
             if not new_subcategory_name:
                 new_subcategory_name = self.DEFAULT_SUBCATEGORY_NAME
             
-            # Validate subcategory exists in target category
-            subcategories = target_category.get('sub_categories', [])
-            subcategory_exists = any(
-                sub.get('name') == new_subcategory_name 
-                for sub in subcategories
+            product = Product.get_by_id(product_id)
+            if not product:
+                raise ValueError(f"Product {product_id} not found")
+            
+            product.update_product(
+                category_id=new_category_id,
+                subcategory_name=new_subcategory_name
             )
             
-            if not subcategory_exists:
-                if new_subcategory_name == self.DEFAULT_SUBCATEGORY_NAME:
-                    self._ensure_subcategory_present(new_category_id, target_category, new_subcategory_name)
-                else:
-                    raise ValueError(f"Subcategory '{new_subcategory_name}' not found in category {new_category_id}")
-            
-            # Update the product using ProductService
-            update_data = {
-                'category_id': new_category_id,
-                'subcategory_name': new_subcategory_name
-            }
-            
-            updated_product = product_service.update_product(product_id, update_data)
-            
-            if not updated_product:
-                raise ValueError(f"Product {product_id} not found or update failed")
-            
             logger.info(f"Product {product_id} moved to category {new_category_id} > {new_subcategory_name}")
-            return updated_product
+            return product.to_dict()
             
         except Exception as e:
             logger.error(f"Error moving product to category: {e}")
@@ -1636,45 +1034,19 @@ class CategoryService:
         try:
             logger.info(f"Bulk moving {len(product_ids)} products to category {new_category_id}")
             
-            # Validate the target category exists
-            target_category = self.get_category_by_id(new_category_id)
-            if not target_category:
-                raise ValueError(f"Target category {new_category_id} not found")
-            
             # If no subcategory specified, use default catch-all subcategory
             if not new_subcategory_name:
                 new_subcategory_name = self.DEFAULT_SUBCATEGORY_NAME
             
-            # Validate subcategory exists in target category
-            subcategories = target_category.get('sub_categories', [])
-            subcategory_exists = any(
-                sub.get('name') == new_subcategory_name 
-                for sub in subcategories
-            )
-            
-            if not subcategory_exists:
-                if new_subcategory_name == self.DEFAULT_SUBCATEGORY_NAME:
-                    self._ensure_subcategory_present(new_category_id, target_category, new_subcategory_name)
-                else:
-                    raise ValueError(f"Subcategory '{new_subcategory_name}' not found in category {new_category_id}")
-            
-            # Bulk update products directly in database
-            result = self.product_collection.update_many(
-                {
-                    '_id': {'$in': product_ids},
-                    'isDeleted': {'$ne': True}
-                },
-                {
-                    '$set': {
-                        'category_id': new_category_id,
-                        'subcategory_name': new_subcategory_name,
-                        'updated_at': datetime.utcnow(),
-                        'last_updated': datetime.utcnow()
-                    }
-                }
-            )
-            
-            moved_count = result.modified_count
+            moved_count = 0
+            for pid in product_ids:
+                product = Product.get_by_id(pid)
+                if product:
+                    product.update_product(
+                        category_id=new_category_id,
+                        subcategory_name=new_subcategory_name
+                    )
+                    moved_count += 1
             
             if moved_count > 0:
                 logger.info(f"Bulk moved {moved_count} products to category {new_category_id} > {new_subcategory_name}")

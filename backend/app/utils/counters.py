@@ -22,6 +22,25 @@ class CounterService:
         self.sk_name = 'SK'
         self.counter_pk = 'COUNTERS'
 
+        # Configuration for all counters, mirroring init_counters.py
+        self.counter_configs = [
+            ('products', 'PROD', 5),
+            ('category', 'CAT', 4),
+            ('categories', 'CAT', 4),
+            ('subcategories', 'SUB', 5),
+            ('users', 'USER', 4),
+            ('customers', 'CUST', 5),
+            ('batches', 'BAT', 6),
+            ('notifications', 'NOTIF', 6),
+            ('online_transactions', 'ONLINE', 6),
+            ('audit_logs', 'AUD', 6),
+            ('session_logs', 'SESS', 5),
+            ('shifts', 'SHIFT', 4),
+            ('suppliers', 'SUPP', 3),
+            ('sales', 'SALE', 6),
+            ('promotions', 'PROM', 4),
+        ]
+
     def _get_current_max_id(self, collection_name, prefix):
         """
         Internal method to find the highest existing ID number in a collection.
@@ -98,6 +117,61 @@ class CounterService:
         except Exception as e:
             logger.error(f"Error initializing counter for {collection_name}: {e}")
             raise
+
+    def initialize_all_counters(self):
+        """
+        Initializes all counters based on the predefined configuration.
+        """
+        print("🚀 Starting DynamoDB Counter Initialization...")
+        for collection, prefix, width in self.counter_configs:
+            try:
+                print(f"   Processing '{collection}' (Prefix: {prefix}, Width: {width})...")
+                current_val = self.initialize_counter(collection, prefix, width)
+                print(f"   ✅ Counter set to start from: {current_val}")
+            except Exception as e:
+                print(f"   ❌ Failed for '{collection}': {e}")
+        print("\n✨ Counter initialization complete.")
+
+    def get_next_batch_id(self, product_id: str) -> str:
+        """
+        Atomically increments a per-product counter and returns a new formatted batch ID.
+        The format is BATCH-{product-ID}-{Batch number of this product}.
+        Example: BATCH-00023-00001
+        """
+        if not product_id or not product_id.startswith('PROD-'):
+            raise ValueError("Invalid product_id format. Expected 'PROD-XXXXX'.")
+
+        # Use a specific SK for per-product batch counters
+        counter_sk = f"batch_counter:{product_id}"
+
+        try:
+            # Atomically increment the counter. If the item doesn't exist,
+            # update_item with ADD will create it with the value of :inc (1).
+            response = self.table.update_item(
+                Key={
+                    self.pk_name: self.counter_pk,
+                    self.sk_name: counter_sk
+                },
+                UpdateExpression="ADD current_value :inc",
+                ExpressionAttributeValues={':inc': 1},
+                ReturnValues="UPDATED_NEW"  # Return the new value of the attribute
+            )
+
+            next_val = int(response['Attributes']['current_value'])
+
+            # Extract the numeric part of the product_id and format the new ID
+            product_id_num = product_id.replace('PROD-', '')
+            batch_seq_num = str(next_val).zfill(5)
+            
+            # Ensure product_id_num is also 5 digits, as per the example
+            formatted_product_id = product_id_num.zfill(5)
+
+            return f"BATCH-{formatted_product_id}-{batch_seq_num}"
+
+        except Exception as e:
+            logger.error(f"Error generating next batch ID for product {product_id}: {e}")
+            # Re-raise as a more specific exception for the caller
+            raise Exception(f"Could not generate batch ID for product {product_id}.") from e
 
     def get_next_id(self, collection_name, prefix=None, width=None):
         """
