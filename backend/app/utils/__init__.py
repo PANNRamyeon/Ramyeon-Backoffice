@@ -4,6 +4,8 @@ from .counters import counter_service
 # Define constants that the Product model and other parts of the app expect
 DYNAMO_TABLE_NAME = os.getenv("DYNAMO_TABLE_NAME", "RamyeonCornerDB")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+DYNAMODB_LOCAL = os.getenv("DYNAMODB_LOCAL", "False").lower() == "true"
+DYNAMODB_LOCAL_HOST = os.getenv("DYNAMODB_LOCAL_HOST", "http://localhost:8000")
 
 def generate_sk(prefix: str, sequence_name: str) -> str:
     """
@@ -25,9 +27,9 @@ def get_dynamo_table(table_name: str):
     The PynamoDB model manages its own table connection through its Meta class,
     so this function is only here to prevent the ImportError.
     """
-    from ..services.database_service import DatabaseService
+    from ..services.core.database_service import DatabaseService
     db_service = DatabaseService()
     return db_service.get_table(table_name)
 
 # Define __all__ to control what 'from app.utils import *' imports, if used.
-__all__ = ['generate_sk', 'get_dynamo_table', 'DYNAMO_TABLE_NAME', 'AWS_REGION']
+__all__ = ['generate_sk', 'get_dynamo_table', 'DYNAMO_TABLE_NAME', 'AWS_REGION', 'DYNAMODB_LOCAL', 'DYNAMODB_LOCAL_HOST']

@@ -1,9 +1,15 @@
 # Category API Test Requests
 
-## Base URL
+## Base URL (UPDATED!)
 ```
-http://localhost:8000/api/v1
+http://localhost:8000/api/v1/admin
 ```
+
+**⚠️ IMPORTANT: URL Structure Changed!**
+- **Old:** `http://localhost:8000/api/v1/category/`
+- **New:** `http://localhost:8000/api/v1/admin/categories/`
+
+All category endpoints now use the `/admin/` prefix since they are administrative operations.
 
 ---
 
@@ -12,8 +18,8 @@ http://localhost:8000/api/v1
 **Product Counts are Optional!**
 
 By default, list endpoints do NOT include product counts for performance:
-- **Fast (default)**: `GET /category/` - Returns categories with `product_count: null`
-- **With counts**: `GET /category/?include_product_counts=true` - Calculates actual counts (slower)
+- **Fast (default)**: `GET /api/v1/admin/categories/` - Returns categories with `product_count: null`
+- **With counts**: `GET /api/v1/admin/categories/?include_product_counts=true` - Calculates actual counts (slower)
 
 **Response Times:**
 - Without counts: ~0.5s ⚡
@@ -30,7 +36,7 @@ By default, list endpoints do NOT include product counts for performance:
 
 ### GET - List All Categories
 ```
-GET /category/
+GET /api/v1/admin/categories/
 ```
 
 **Query Parameters (optional):**
@@ -43,9 +49,9 @@ GET /category/
 
 **Examples:**
 ```
-GET /category/
-GET /category/?search=drinks&limit=10
-GET /category/?include_product_counts=true
+GET /api/v1/admin/categories/
+GET /api/v1/admin/categories/?search=drinks&limit=10
+GET /api/v1/admin/categories/?include_product_counts=true
 ```
 
 **Performance Note:**
@@ -56,7 +62,7 @@ GET /category/?include_product_counts=true
 
 ### POST - Create Category
 ```
-POST /category/
+POST /api/v1/admin/categories/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -84,28 +90,28 @@ Authorization: Bearer YOUR_TOKEN
 
 ### GET - Category Statistics
 ```
-GET /category/stats/
+GET /api/v1/admin/categories/stats/
 ```
 
 ---
 
 ### GET - Category Display Data
 ```
-GET /category/display/
+GET /api/v1/admin/categories/display/
 ```
 
 ---
 
 ### GET - Export Categories
 ```
-GET /category/export/
+GET /api/v1/admin/categories/export/
 ```
 
 ---
 
 ### POST - Bulk Operations
 ```
-POST /category/bulk/
+POST /api/v1/admin/categories/bulk/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -130,7 +136,7 @@ Authorization: Bearer YOUR_TOKEN
 
 ### GET - Get Category by ID
 ```
-GET /category/CAT-0001/
+GET /api/v1/admin/categories/CAT-0001/
 ```
 
 **Query Parameters (optional):**
@@ -143,7 +149,7 @@ GET /category/CAT-0001/
 
 ### PUT - Update Category
 ```
-PUT /category/CAT-0001/
+PUT /api/v1/admin/categories/CAT-0001/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -159,14 +165,14 @@ Authorization: Bearer YOUR_TOKEN
 
 ### GET - Category Delete Info
 ```
-GET /category/CAT-0001/delete-info/
+GET /api/v1/admin/categories/CAT-0001/delete-info/
 ```
 
 ---
 
 ### DELETE - Soft Delete Category
 ```
-DELETE /category/CAT-0001/soft-delete/
+DELETE /api/v1/admin/categories/CAT-0001/soft-delete/
 Authorization: Bearer YOUR_TOKEN
 ```
 
@@ -174,7 +180,7 @@ Authorization: Bearer YOUR_TOKEN
 
 ### DELETE - Hard Delete Category (Admin Only)
 ```
-DELETE /category/CAT-0001/hard-delete/
+DELETE /api/v1/admin/categories/CAT-0001/hard-delete/
 Authorization: Bearer YOUR_ADMIN_TOKEN
 ```
 
@@ -182,7 +188,7 @@ Authorization: Bearer YOUR_ADMIN_TOKEN
 
 ### POST - Restore Category (Admin Only)
 ```
-POST /category/CAT-0001/restore/
+POST /api/v1/admin/categories/CAT-0001/restore/
 Authorization: Bearer YOUR_ADMIN_TOKEN
 ```
 
@@ -192,14 +198,14 @@ Authorization: Bearer YOUR_ADMIN_TOKEN
 
 ### GET - List Subcategories
 ```
-GET /category/CAT-0001/subcategories/
+GET /api/v1/admin/categories/CAT-0001/subcategories/
 ```
 
 ---
 
 ### POST - Add Subcategory
 ```
-POST /category/CAT-0001/subcategories/
+POST /api/v1/admin/categories/CAT-0001/subcategories/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -217,7 +223,7 @@ Authorization: Bearer YOUR_TOKEN
 
 ### DELETE - Remove Subcategory
 ```
-DELETE /category/CAT-0001/subcategories/
+DELETE /api/v1/admin/categories/CAT-0001/subcategories/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -230,7 +236,7 @@ Authorization: Bearer YOUR_TOKEN
 
 ### GET - Products in Subcategory
 ```
-GET /category/CAT-0001/subcategories/Hot Drinks/products/
+GET /api/v1/admin/categories/subcategories/Hot Drinks/products/
 ```
 
 ---
@@ -239,7 +245,7 @@ GET /category/CAT-0001/subcategories/Hot Drinks/products/
 
 ### GET - List Deleted Categories (Admin Only)
 ```
-GET /category/deleted/
+GET /api/v1/admin/categories/deleted/
 Authorization: Bearer YOUR_ADMIN_TOKEN
 ```
 
@@ -250,14 +256,14 @@ Authorization: Bearer YOUR_ADMIN_TOKEN
 
 ### GET - Uncategorized Category Info
 ```
-GET /category/uncategorized/
+GET /api/v1/admin/categories/uncategorized/
 ```
 
 ---
 
 ### POST - Ensure Uncategorized Exists (Admin Only)
 ```
-POST /category/uncategorized/
+POST /api/v1/admin/categories/uncategorized/
 Authorization: Bearer YOUR_ADMIN_TOKEN
 ```
 
@@ -267,7 +273,7 @@ Authorization: Bearer YOUR_ADMIN_TOKEN
 
 ### PUT - Move Single Product to Category
 ```
-PUT /category/product-management/
+PUT /api/v1/admin/categories/CAT-0001/products/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -282,7 +288,7 @@ Authorization: Bearer YOUR_TOKEN
 
 ### POST - Bulk Move Products
 ```
-POST /category/product-management/
+POST /api/v1/admin/categories/CAT-0001/products/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -299,7 +305,7 @@ Authorization: Bearer YOUR_TOKEN
 
 ### Test 1: Create Category with Null Image
 ```
-POST /category/
+POST /api/v1/admin/categories/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -315,7 +321,7 @@ Authorization: Bearer YOUR_TOKEN
 
 ### Test 2: Create Category with Empty Image
 ```
-POST /category/
+POST /api/v1/admin/categories/
 Content-Type: application/json
 Authorization: Bearer YOUR_TOKEN
 
@@ -331,21 +337,21 @@ Authorization: Bearer YOUR_TOKEN
 
 ### Test 3: Search Categories
 ```
-GET /category/?search=drinks
+GET /api/v1/admin/categories/?search=drinks
 ```
 
 ---
 
 ### Test 4: Get Active Categories Only
 ```
-GET /category/?active_only=true
+GET /api/v1/admin/categories/?active_only=true
 ```
 
 ---
 
 ### Test 5: Pagination
 ```
-GET /category/?limit=5&skip=0
+GET /api/v1/admin/categories/?limit=5&skip=0
 ```
 
 ---
@@ -354,7 +360,7 @@ GET /category/?limit=5&skip=0
 
 **Step 1: Create a category**
 ```
-POST /category/
+POST /api/v1/admin/categories/
 Body: {"category_name": "Snacks", "description": "Quick bites"}
 ```
 
@@ -362,29 +368,29 @@ Body: {"category_name": "Snacks", "description": "Quick bites"}
 
 **Step 3: Add subcategory**
 ```
-POST /category/CAT-0005/subcategories/
+POST /api/v1/admin/categories/CAT-0005/subcategories/
 Body: {"subcategory": {"name": "Chips", "description": "Potato chips"}}
 ```
 
 **Step 4: Update category**
 ```
-PUT /category/CAT-0005/
+PUT /api/v1/admin/categories/CAT-0005/
 Body: {"description": "Updated snacks description"}
 ```
 
 **Step 5: Get category details**
 ```
-GET /category/CAT-0005/
+GET /api/v1/admin/categories/CAT-0005/
 ```
 
 **Step 6: Soft delete**
 ```
-DELETE /category/CAT-0005/soft-delete/
+DELETE /api/v1/admin/categories/CAT-0005/soft-delete/
 ```
 
 **Step 7: Restore (admin)**
 ```
-POST /category/CAT-0005/restore/
+POST /api/v1/admin/categories/CAT-0005/restore/
 ```
 
 ---
@@ -441,3 +447,54 @@ POST /category/CAT-0005/restore/
 - Product IDs follow format: `PROD-#####` (5 digits)
 - Subcategory names can contain spaces
 - All timestamps are in ISO format
+
+---
+
+## 🚀 Quick Postman Setup
+
+### Environment Variables (Recommended)
+Set these in Postman environment:
+```
+BASE_URL = http://localhost:8000
+AUTH_TOKEN = your_jwt_token_here
+ADMIN_TOKEN = your_admin_token_here
+```
+
+Then use in requests:
+```
+{{BASE_URL}}/api/v1/admin/categories/
+Authorization: Bearer {{AUTH_TOKEN}}
+```
+
+### Testing Checklist
+- [ ] List all categories
+- [ ] Create new category
+- [ ] Get category by ID
+- [ ] Update category
+- [ ] Add subcategory
+- [ ] List subcategories
+- [ ] Search categories
+- [ ] Soft delete category
+- [ ] List deleted categories (admin)
+- [ ] Restore category (admin)
+- [ ] Hard delete category (admin)
+
+---
+
+## 🔍 Quick Verification
+
+**Test the new URL structure works:**
+
+1. **Old URL (should fail):**
+   ```
+   GET http://localhost:8000/api/v1/category/
+   ```
+   Expected: 404 Not Found
+
+2. **New URL (should work):**
+   ```
+   GET http://localhost:8000/api/v1/admin/categories/
+   ```
+   Expected: 200 OK with categories list
+
+If both responses match expectations, your migration is successful! ✅

@@ -5,7 +5,7 @@ Utility for managing atomic counters and generating sequential IDs in DynamoDB.
 import logging
 import os
 from boto3.dynamodb.conditions import Key
-from ..services.database_service import DatabaseService
+from ..services.core.database_service import DatabaseService
 
 logger = logging.getLogger(__name__)
 

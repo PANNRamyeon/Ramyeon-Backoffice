@@ -4,7 +4,7 @@ import uuid
 from decimal import Decimal
 from django.contrib.auth.models import User
 from django.http import JsonResponse
-from app.services.database_service import DatabaseService
+from app.services.core.database_service import DatabaseService
 from boto3.dynamodb.conditions import Key, Attr
 
 # Helper to convert floats to Decimals for DynamoDB

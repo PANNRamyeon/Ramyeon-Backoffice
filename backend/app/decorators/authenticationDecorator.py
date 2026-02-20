@@ -1,6 +1,6 @@
 from rest_framework.response import Response
 from rest_framework import status
-from ..services.auth_services import AuthService
+from ..services.identity.auth_services import AuthService
 from ..database import db_manager
 import logging
 from functools import wraps

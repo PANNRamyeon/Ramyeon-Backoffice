@@ -23,7 +23,6 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
-    'api',
     'app',  # Added based on your actual structure
     'notifications',
     'reports',
@@ -49,7 +48,7 @@ MIDDLEWARE = [
     # 'app.middleware.JWTAuthenticationMiddleware',     
 ]
 
-ROOT_URLCONF = 'posbackend.urls'
+ROOT_URLCONF = 'config.urls'
 
 TEMPLATES = [
     {
@@ -67,7 +66,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'posbackend.wsgi.application'
+WSGI_APPLICATION = 'config.wsgi.application'
 
 # REST Framework settings
 REST_FRAMEWORK = {

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Attr
 from app.database import db_manager
 from notifications.email_service import email_service
-from app.services.pos.SalesService import SalesService
+from app.services.sales.SalesService import SalesService
 
 logger = logging.getLogger(__name__)
 
