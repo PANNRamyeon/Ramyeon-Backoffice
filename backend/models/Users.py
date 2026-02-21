@@ -5,12 +5,13 @@ Single Table Design using RamyeonCornerDB with 1 GSI for auth lookups
 """
 from pynamodb.models import Model
 from pynamodb.attributes import (
-    UnicodeAttribute, BooleanAttribute, UTCDateTimeAttribute
+    UnicodeAttribute, BooleanAttribute
 )
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
 from datetime import datetime
 import logging
 from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from app.custom_attributes import FixedUTCDateTimeAttribute as UTCDateTimeAttribute
 from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
@@ -484,6 +485,20 @@ class User(Model):
         """
         Convert user to dictionary for API response
         """
+        def safe_isoformat(dt):
+            """Safely convert datetime to ISO format, handling malformed dates"""
+            if not dt:
+                return None
+            try:
+                # Check if datetime has a valid year
+                if hasattr(dt, 'year') and (dt.year < 1900 or dt.year > 9999):
+                    logger.warning(f"Invalid year detected: {dt.year}, using current time")
+                    return datetime.utcnow().isoformat()
+                return dt.isoformat()
+            except Exception as e:
+                logger.error(f"Error formatting datetime: {e}")
+                return None
+        
         try:
             result = {
                 "user_id": self.sk,
@@ -494,10 +509,10 @@ class User(Model):
                 "status": self.status,
                 "isDeleted": self.isDeleted,
                 "email_verified": self.email_verified,
-                "date_created": self.date_created.isoformat() if self.date_created else None,
-                "last_updated": self.last_updated.isoformat() if self.last_updated else None,
-                "last_login": self.last_login.isoformat() if self.last_login else None,
-                "email_verified_at": self.email_verified_at.isoformat() if self.email_verified_at else None
+                "date_created": safe_isoformat(self.date_created),
+                "last_updated": safe_isoformat(self.last_updated),
+                "last_login": safe_isoformat(self.last_login),
+                "email_verified_at": safe_isoformat(self.email_verified_at)
             }
             
             if include_sensitive:

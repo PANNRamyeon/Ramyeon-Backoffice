@@ -86,32 +86,37 @@ class UserService:
             # Determine allowed fields based on role context
             allowed_fields = {}
             if role_context == 'self_service':
-                allowed_fields = {'password': user_data.get('password')}
+                # Self-service users can only update their password
+                if user_data.get('password'):
+                    password_hash = self.hash_password(user_data['password'])
+                    user.update_password(password_hash)
+                    action = 'password_changed'
+                else:
+                    # No update needed
+                    return user.to_dict()
             elif role_context == 'admin':
+                # Admin can update any field
                 allowed_fields = user_data.copy()
+                
+                # Hash password if provided
+                if 'password' in allowed_fields:
+                    password = allowed_fields.pop('password')
+                    password_hash = self.hash_password(password)
+                    user.update_password(password_hash)
+                
+                # Use User model's update_user method for other fields
+                # This handles validation and GSI updates automatically
+                if allowed_fields:
+                    user.update_user(**allowed_fields)
+                
+                action = 'updated'
             else:
                 raise Exception("Invalid role context")
-            
-            # Update allowed fields
-            update_data = {k: v for k, v in allowed_fields.items() if v is not None}
-            
-            # Hash password if provided
-            if update_data.get('password'):
-                update_data['password_hash'] = self.hash_password(update_data.pop('password'))
-            
-            # Update user attributes
-            for key, value in update_data.items():
-                if hasattr(user, key):
-                    setattr(user, key, value)
-            
-            user.last_updated = datetime.utcnow()
-            user.save()
             
             user_dict = user.to_dict()
             
             # Send notification
             user_name = user.full_name or user.username
-            action = 'password_changed' if role_context == 'self_service' else 'updated'
             self._send_user_notification(action, user_name, user_id)
             
             # Audit logging
@@ -126,6 +131,9 @@ class UserService:
         except User.DoesNotExist:
             logger.error(f"User {user_id} not found")
             return None
+        except ValueError as ve:
+            logger.error(f"Validation error updating user: {ve}")
+            raise Exception(f"Validation error: {str(ve)}")
         except Exception as e:
             logger.error(f"Error updating user profile: {e}")
             raise Exception(f"Error updating user profile: {str(e)}")
@@ -329,12 +337,12 @@ class UserService:
                 logger.warning(f"User {user_id} not found or already deleted")
                 return False
             
-            # Soft delete
-            user.isDeleted = True
-            user.deletedAt = datetime.utcnow()
-            user.deletedBy = current_user.get('username') if current_user else 'system'
-            user.last_updated = datetime.utcnow()
-            user.save()
+            # Use User model's soft_delete method
+            user.soft_delete()
+            
+            # Log deletion details
+            deleted_by = current_user.get('username') if current_user else 'system'
+            logger.info(f"User {user_id} soft deleted by {deleted_by}")
             
             user_dict = user.to_dict()
             
@@ -371,15 +379,12 @@ class UserService:
                 logger.warning(f"User {user_id} not found or not deleted")
                 return False
             
-            # Restore user
-            user.isDeleted = False
-            user.restoredAt = datetime.utcnow()
-            user.restoredBy = current_user.get('username') if current_user else 'system'
-            user.last_updated = datetime.utcnow()
-            user.status = 'active'
-            user.deletedAt = None
-            user.deletedBy = None
-            user.save()
+            # Use User model's restore method
+            user.restore()
+            
+            # Log restoration details
+            restored_by = current_user.get('username') if current_user else 'system'
+            logger.info(f"User {user_id} restored by {restored_by}")
             
             user_dict = user.to_dict()
             

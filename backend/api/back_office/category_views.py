@@ -55,6 +55,7 @@ class CategoryKPIView(APIView):
             logger.error(f"Error creating category: {e}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @require_authentication
     def get(self, request):
         """Get all categories or search categories"""
         try:
@@ -103,6 +104,7 @@ class CategoryKPIView(APIView):
 
 class CategoryDetailView(APIView):
     
+    @require_authentication
     def get(self, request, category_id):
         """Get a specific category by ID"""
         try:
@@ -276,6 +278,7 @@ class CategoryBulkOperationsView(APIView):
 
 class CategoryDeleteInfoView(APIView):
     
+    @require_authentication
     def get(self, request, category_id):
         """Get information about category before deletion"""
         try:
@@ -339,6 +342,7 @@ class CategorySubcategoryView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @require_authentication
     def get(self, request, category_id):
         """Get all subcategories for a category"""
         try:
@@ -356,6 +360,7 @@ class CategorySubcategoryView(APIView):
 
 class UncategorizedCategoryView(APIView):
     
+    @require_authentication
     def get(self, request):
         """Get information about the Uncategorized category"""
         try:
@@ -387,6 +392,7 @@ class UncategorizedCategoryView(APIView):
 
 class SubcategoryProductsView(APIView):
     
+    @require_authentication
     def get(self, request, category_id, subcategory_name):
         """Get all products in a subcategory"""
         try:
