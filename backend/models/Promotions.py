@@ -17,7 +17,7 @@ import json
 
 # Import existing utils for consistency
 from app.utils import generate_sk, get_dynamo_table, DYNAMO_TABLE_NAME, AWS_REGION
-from Product import Product  # For product/category validation
+from models.Product import Product  # For product/category validation
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +109,8 @@ class Promotion(Model):
         write_capacity_units = 3
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="promotions")
-    sk = UnicodeAttribute(range_key=True)  # "PROMO-00001" (5-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="promotions")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "PROMO-00001" (5-digit)
     
     # ============= PROMOTION DETAILS =============
     name = UnicodeAttribute()

@@ -1,12 +1,9 @@
-"""
-Shift Summary Service
-Collects shift data and sends summary emails to admins
-"""
 import logging
 from datetime import datetime, timedelta
+from boto3.dynamodb.conditions import Attr
 from app.database import db_manager
 from notifications.email_service import email_service
-from app.services.pos.SalesService import SalesService
+from app.services.sales.SalesService import SalesService
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +12,7 @@ class ShiftSummaryService:
     
     def __init__(self):
         self.db = db_manager.get_database()
-        self.user_collection = self.db.users
+        self.user_collection = self.db.Table('Users')
         self.sales_service = SalesService()
     
     def get_admin_emails(self):
@@ -26,12 +23,10 @@ class ShiftSummaryService:
             list: List of admin email addresses
         """
         try:
-            admins = list(self.user_collection.find({
-                "role": "admin",
-                "status": "active",
-                "isDeleted": {"$ne": True},
-                "email_verified": True
-            }))
+            response = self.user_collection.scan(
+                FilterExpression=Attr('role').eq('admin') & Attr('status').eq('active') & Attr('isDeleted').ne(True) & Attr('email_verified').eq(True)
+            )
+            admins = response.get('Items', [])
             
             # Ensure we only return unique, non-empty emails
             admin_emails = []
@@ -208,7 +203,9 @@ class ShiftSummaryService:
             for admin_email in admin_emails:
                 try:
                     # Get admin name if available
-                    admin = self.user_collection.find_one({"email": admin_email})
+                    response = self.user_collection.scan(FilterExpression=Attr('email').eq(admin_email))
+                    items = response.get('Items', [])
+                    admin = items[0] if items else None
                     admin_name = admin.get('full_name') or admin.get('username', 'Admin') if admin else 'Admin'
                     
                     result = email_service.send_shift_summary_email(
@@ -253,9 +250,3 @@ class ShiftSummaryService:
 
 # Singleton instance
 shift_summary_service = ShiftSummaryService()
-
-
-
-
-
-

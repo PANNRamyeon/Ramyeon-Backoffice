@@ -10,7 +10,8 @@ from pynamodb.attributes import (
 )
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
 from pynamodb.exceptions import UpdateError
-from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from app.utils import DYNAMO_TABLE_NAME, AWS_REGION
+from app.utils.counters import counter_service
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import logging
@@ -59,7 +60,7 @@ class ProductIdIndex(GlobalSecondaryIndex):
         write_capacity_units = 5
     
     product_id = UnicodeAttribute(hash_key=True)
-    sk = UnicodeAttribute(range_key=True)
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")
 
 
 class StatusExpiryIndex(GlobalSecondaryIndex):
@@ -96,8 +97,8 @@ class Batch(Model):
         write_capacity_units = 10
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="batches")
-    sk = UnicodeAttribute(range_key=True)  # "BATCH-00001"
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="batches")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "BATCH-00001"
     
     # ============= GSI DEFINITIONS =============
     product_id_index = ProductIdIndex()
@@ -135,11 +136,16 @@ class Batch(Model):
     @classmethod
     def create_batch(cls, **kwargs) -> 'Batch':
         """
-        Create a new batch with auto-generated SK and automatic status
+        Create a new batch with a per-product auto-generated SK and automatic status.
         """
         try:
-            # Generate SK using utils.py
-            sk = generate_sk('BATCH-', 'batch_seq')
+            # The product_id is now required to generate the batch ID.
+            product_id = kwargs.get('product_id')
+            if not product_id:
+                raise ValueError("product_id is required to create a batch.")
+
+            # Generate SK using the new per-product batch counter service.
+            sk = counter_service.get_next_batch_id(product_id)
             
             # Set required fields
             kwargs['pk'] = 'batches'

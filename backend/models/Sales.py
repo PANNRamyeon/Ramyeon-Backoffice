@@ -104,8 +104,8 @@ class Sale(Model):
         write_capacity_units = 5
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="sales")
-    sk = UnicodeAttribute(range_key=True)  # "SALE-00001" (5-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="sales")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "SALE-00001" (5-digit)
     
     # ============= TRANSACTION INFORMATION =============
     transaction_date = UTCDateTimeAttribute()

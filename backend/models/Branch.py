@@ -5,7 +5,7 @@ Single Table Design using RamyeonCornerDB
 """
 from pynamodb.models import Model
 from pynamodb.attributes import UnicodeAttribute, UTCDateTimeAttribute
-from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION
 from datetime import datetime
 import logging
 
@@ -38,8 +38,8 @@ class Branch(Model):
         write_capacity_units = 3
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="branches")
-    sk = UnicodeAttribute(range_key=True)  # "BRAN-01" (2-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="branches")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "BRAN-01" (2-digit)
     
     # ============= CORE ERD FIELDS =============
     branch_name = UnicodeAttribute()

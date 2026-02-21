@@ -5,7 +5,7 @@ from pynamodb.attributes import (
 )
 from datetime import datetime
 import logging
-from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -73,8 +73,8 @@ class Supplier(Model):
         write_capacity_units = 3
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="suppliers")
-    sk = UnicodeAttribute(range_key=True)  # "SUPP-001" (3-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="suppliers")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "SUPP-001" (3-digit)
     
     # ============= CORE ERD FIELDS (REQUIRED/SIMPLE) =============
     supplier_name = UnicodeAttribute()

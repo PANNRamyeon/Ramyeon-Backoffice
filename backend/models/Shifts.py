@@ -35,8 +35,8 @@ class Shift(Model):
         write_capacity_units = 5
     
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True, default="shifts")
-    sk = UnicodeAttribute(range_key=True)  # "SHIFT-0001" (4-digit)
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="shifts")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "SHIFT-0001" (4-digit)
     
     # ============= CORE ERD FIELDS =============
     cashier_id = UnicodeAttribute()

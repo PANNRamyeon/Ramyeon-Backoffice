@@ -1,5 +1,5 @@
 from datetime import datetime
-from ..database import db_manager
+from ...database import db_manager
 import logging
 
 logger = logging.getLogger(__name__)

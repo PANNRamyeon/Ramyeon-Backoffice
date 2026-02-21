@@ -1,7 +1,8 @@
 from rest_framework.response import Response
 from rest_framework import status
-from ..services.auth_services import AuthService
-from ..database import db_manager
+from ..services.identity.auth_services import AuthService
+from models.Users import User
+from models.Customers import Customer
 import logging
 from functools import wraps
 
@@ -15,48 +16,86 @@ def get_authenticated_user_from_jwt(request):
             return None
 
         authorization = request.headers.get("Authorization", "")
+        logger.info(f"Authorization header received: {authorization[:50]}..." if len(authorization) > 50 else f"Authorization header: {authorization}")
+        
         if not authorization.startswith("Bearer "):
+            logger.warning(f"Authorization header does not start with 'Bearer ': {authorization[:30]}")
             return None
 
         token = authorization.split(" ", 1)[1]
+        
+        # Clean up any accidental "Bearer " prefix in the token itself
+        if token.startswith("Bearer "):
+            logger.warning("Token has extra 'Bearer ' prefix, removing it")
+            token = token.replace("Bearer ", "", 1)
+        
+        logger.info(f"Token extracted, length: {len(token)}")
 
         auth_service = AuthService()
         payload = auth_service.verify_token(token)
+        
         if not payload:
+            logger.warning("Token verification failed - payload is None")
+            return None
+        
+        # Check if it's an access token (not refresh token)
+        if payload.get("type") != "access":
+            logger.warning(f"Invalid token type: {payload.get('type')} (expected 'access')")
             return None
 
+        logger.info(f"Token verified successfully, payload: {payload}")
+        
         user_id = payload.get('sub')
         role = (payload.get('role') or '').lower()
 
-        # Try admin/user collection first
-        user_doc = auth_service.user_collection.find_one({"_id": user_id}) if user_id else None
+        logger.info(f"Attempting to fetch user: {user_id}, role: {role}")
+
+        # Try to get user from DynamoDB
+        user_doc = None
+        try:
+            # Try admin/user first using PynamoDB
+            logger.info(f"Looking up user in users table: {user_id}")
+            user = User.get("users", user_id)
+            if user:
+                user_doc = user.to_dict()
+                logger.info(f"User found in users table: {user_doc.get('email')}")
+        except User.DoesNotExist:
+            logger.info(f"User {user_id} not found in users table, trying customers")
+        except Exception as e:
+            logger.error(f"User lookup error: {e}", exc_info=True)
 
         if not user_doc:
-            # Fallback to customers collection for customer tokens
+            # Fallback to customers for customer tokens
             try:
-                db = db_manager.get_database()
-                customers = db.customers
-                user_doc = customers.find_one({"_id": user_id}) if user_id else None
+                logger.info(f"Looking up customer: {user_id}")
+                customer = Customer.get_by_id(user_id)
+                if customer:
+                    user_doc = customer.to_dict()
+                    logger.info(f"Customer found: {user_doc.get('email')}")
             except Exception as e:
-                logger.error(f"Customer lookup failed: {e}")
+                logger.error(f"Customer lookup failed: {e}", exc_info=True)
                 user_doc = None
 
         if not user_doc:
+            logger.warning(f"User/Customer not found in database: {user_id}")
             return None
 
         username = (user_doc.get('username') or '').strip()
         display_username = username or user_doc.get('email', 'unknown')
 
-        return {
+        result = {
             "user_id": user_id,
             "username": display_username,
             "email": user_doc.get('email'),
             "branch_id": user_doc.get('branch_id', 1),
             "role": user_doc.get('role', role or 'customer')
         }
+        
+        logger.info(f"Authentication successful for user: {display_username}")
+        return result
 
     except Exception as e:
-        logger.error(f"JWT authentication error: {e}")
+        logger.error(f"JWT authentication error: {e}", exc_info=True)
         return None
 
 def require_authentication(view_func):
