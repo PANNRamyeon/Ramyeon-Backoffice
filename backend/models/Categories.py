@@ -1,6 +1,6 @@
 """
 Category Model - Following ERD Specification with Enhancements
-PK = "category", SK = "CAT-####" (4-digit format)
+PK = "category", SK = "CTGY-###" (3-digit format)
 Single Table Design using RamyeonCornerDB
 """
 from pynamodb.models import Model
@@ -82,8 +82,8 @@ class Category(Model):
     CATEGORY MODEL - Following ERD with Enhancements
     
     ERD Fields:
-    - PK = categories
-    - SK = CAT-#### (4-digit)
+    - PK = category
+    - SK = CTGY-### (3-digit)
     - category_name (String)
     - description (String)
     - status (String)
@@ -109,7 +109,7 @@ class Category(Model):
     
     # ============= PRIMARY KEYS =============
     pk = UnicodeAttribute(hash_key=True, default="category", attr_name="PK")
-    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "CAT-0001" (4-digit)
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "CTGY-001" (3-digit)
     
     # ============= CATEGORY DETAILS =============
     category_name = UnicodeAttribute()
@@ -149,8 +149,9 @@ class Category(Model):
             if not category_name or not category_name.strip():
                 raise ValueError("category_name is required")
             
-            # Generate 4-digit SK using the centralized counter service
-            sk = counter_service.get_next_id('categories')
+            # Generate 3-digit SK using the centralized counter service
+            # Use 'category' (singular) to match the PK partition name
+            sk = counter_service.get_next_id('category')
             
             # Create and save category
             category = cls(
@@ -180,15 +181,15 @@ class Category(Model):
         Get category by ID
         
         Args:
-            category_id: Format "CAT-0001" or just "0001"
+            category_id: Format "CTGY-001" or just "001"
         
         Returns:
             Category or None if not found
         """
         try:
             # Ensure proper format
-            if not category_id.startswith('CAT-'):
-                category_id = f"CAT-{category_id.zfill(4)}"  # Pad to 4 digits if needed
+            if not category_id.startswith('CTGY-'):
+                category_id = f"CTGY-{category_id.zfill(3)}"  # Pad to 3 digits if needed
             
             return cls.get("category", category_id)
         except cls.DoesNotExist:
@@ -786,17 +787,17 @@ def validate_category_id(category_id: str) -> bool:
         if not category_id:
             return False
         
-        # Check format: CAT-#### where #### are exactly 4 digits
-        if not category_id.startswith('CAT-'):
+        # Check format: CTGY-### where ### are exactly 3 digits
+        if not category_id.startswith('CTGY-'):
             return False
         
-        number_part = category_id[4:]  # Remove "CAT-"
-        if len(number_part) != 4:
+        number_part = category_id[5:]  # Remove "CTGY-"
+        if len(number_part) != 3:
             return False
         
-        # Check if it's a valid number (0001-9999)
+        # Check if it's a valid number (001-999)
         number = int(number_part)
-        return 1 <= number <= 9999
+        return 1 <= number <= 999
         
     except (ValueError, IndexError):
         return False

@@ -13,11 +13,17 @@ class CategoryService:
     VALID_CATEGORY_PREFIXES = ('CAT-', 'CTGY-', 'UNCTGRY-', 'UNGTY-')
     UNCATEGORIZED_ID_CANDIDATES = ['UNCTGRY-001', 'UNGTY-001']
     DEFAULT_SUBCATEGORY_NAME = 'None'
+    
+    # Class-level flag to ensure uncategorized check runs only once
+    _uncategorized_checked = False
 
     def __init__(self):
         """Initialize CategoryService using PynamoDB models"""
         self.audit_service = AuditLogService()
-        self.ensure_uncategorized_category_exists()
+        # Only check uncategorized once per server lifetime
+        if not CategoryService._uncategorized_checked:
+            self.ensure_uncategorized_category_exists()
+            CategoryService._uncategorized_checked = True
 
     # ================================================================
     # UTILITY METHODS
@@ -102,7 +108,7 @@ class CategoryService:
         if not category_data:
             raise ValueError("Category data is required")
         
-        category_name = category_data.get("category_name", "").strip()
+        category_name = (category_data.get("category_name") or "").strip()
         if not category_name:
             raise ValueError("Category name is required")
         
@@ -245,7 +251,17 @@ class CategoryService:
             
             # After the category is created, add any subcategories.
             for sub in category_data.get("sub_categories", []):
-                if sub.get('name'):
+                # Handle both string format ["Name"] and object format [{"name": "Name"}]
+                if isinstance(sub, str):
+                    if sub.strip():
+                        category.add_subcategory(
+                            name=sub.strip(),
+                            description=None,
+                            status='active',
+                            sort_order=0,
+                            icon=None
+                        )
+                elif isinstance(sub, dict) and sub.get('name'):
                     # Use the model's instance method to add subcategories.
                     # This correctly uses the counter service for subcategory IDs.
                     category.add_subcategory(
@@ -937,11 +953,19 @@ class CategoryService:
             
             updated_count = 0
             for category_id in category_ids:
+                logger.info(f"Attempting to update category: {category_id}")
                 category = Category.get_by_id(category_id)
-                if category and not category.isDeleted:
-                    category.status = new_status
-                    category.save()
-                    updated_count += 1
+                if category:
+                    logger.info(f"Category found: {category.category_name}, isDeleted: {category.isDeleted}")
+                    if not category.isDeleted:
+                        category.status = new_status
+                        category.save()
+                        updated_count += 1
+                        logger.info(f"Successfully updated category {category_id} to {new_status}")
+                    else:
+                        logger.warning(f"Category {category_id} is deleted, skipping")
+                else:
+                    logger.warning(f"Category {category_id} not found")
             
             # Send bulk notification
             if updated_count > 0:

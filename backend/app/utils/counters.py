@@ -25,8 +25,7 @@ class CounterService:
         # Configuration for all counters, mirroring init_counters.py
         self.counter_configs = [
             ('products', 'PROD', 5),
-            ('category', 'CAT', 4),
-            ('categories', 'CAT', 4),
+            ('category', 'CTGY', 3),  # PK='category' in DynamoDB
             ('subcategories', 'SUB', 5),
             ('users', 'USER', 4),
             ('customers', 'CUST', 5),
@@ -88,7 +87,8 @@ class CounterService:
                 item = response['Item']
                 current_val = int(item.get('current_value', 0))
                 # If item exists, ensure prefix and width are up-to-date.
-                if item.get('prefix') != prefix or item.get('width') != width:
+                # Convert Decimal to int for proper comparison
+                if item.get('prefix') != prefix or int(item.get('width', width)) != width:
                     self.table.update_item(
                         Key={self.pk_name: self.counter_pk, self.sk_name: collection_name},
                         UpdateExpression="SET prefix = :p, width = :w",
@@ -122,15 +122,15 @@ class CounterService:
         """
         Initializes all counters based on the predefined configuration.
         """
-        print("🚀 Starting DynamoDB Counter Initialization...")
+        print("Starting DynamoDB Counter Initialization...")
         for collection, prefix, width in self.counter_configs:
             try:
                 print(f"   Processing '{collection}' (Prefix: {prefix}, Width: {width})...")
                 current_val = self.initialize_counter(collection, prefix, width)
-                print(f"   ✅ Counter set to start from: {current_val}")
+                print(f"   [OK] Counter set to start from: {current_val}")
             except Exception as e:
-                print(f"   ❌ Failed for '{collection}': {e}")
-        print("\n✨ Counter initialization complete.")
+                print(f"   [ERROR] Failed for '{collection}': {e}")
+        print("\nCounter initialization complete.")
 
     def get_next_batch_id(self, product_id: str) -> str:
         """
@@ -195,8 +195,9 @@ class CounterService:
             next_val = int(attributes.get('current_value', 0))
 
             # Use override if provided, otherwise use stored value, finally fallback.
+            # Convert Decimal to int/str as DynamoDB returns Decimal objects
             final_prefix = prefix if prefix is not None else attributes.get('prefix', 'UNKNOWN')
-            final_width = width if width is not None else attributes.get('width', 5)
+            final_width = int(width) if width is not None else int(attributes.get('width', 5))
 
             # Format the ID with proper padding
             formatted_id = f"{final_prefix}-{str(next_val).zfill(final_width)}"
