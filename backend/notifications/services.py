@@ -1,299 +1,325 @@
 # notifications/services.py
 from datetime import datetime, timedelta
-import uuid
-from decimal import Decimal
-from django.contrib.auth.models import User
-from django.http import JsonResponse
-from app.services.core.database_service import DatabaseService
-from boto3.dynamodb.conditions import Key, Attr
+import logging
+from typing import Optional, List, Dict, Any, Tuple
 
-# Helper to convert floats to Decimals for DynamoDB
-def floats_to_decimals(obj):
-    if isinstance(obj, list):
-        return [floats_to_decimals(i) for i in obj]
-    elif isinstance(obj, dict):
-        return {k: floats_to_decimals(v) for k, v in obj.items()}
-    elif isinstance(obj, float):
-        return Decimal(str(obj))
-    return obj
+from .models import Notification  # PynamoDB model
+
+logger = logging.getLogger(__name__)
+
 
 class NotificationService:
-    def __init__(self):
-        db_service = DatabaseService()
-        self.table = db_service.get_table('notifications')
-
-    def _build_filter_expression(self, filters):
-        expression = None
-        for f in filters:
-            if expression is None:
-                expression = f
-            else:
-                expression &= f
-        return expression
-
-    # ================================================================
-    # ID GENERATION METHOD
-    # ================================================================
-    
-    def generate_notification_id(self):
-        """
-        Generate a unique notification ID using UUID.
-        """
-        return f"NOTIF-{uuid.uuid4()}"
+    """
+    Service layer for notification operations using the PynamoDB Notification model.
+    """
 
     # ================================================================
     # NOTIFICATION CREATION METHODS
     # ================================================================
-    
-    def create_notification(self, title, message, recipient_id=None, recipient_username=None, 
-                          priority='medium', notification_type='system', metadata=None):
-        """Create a new notification in DynamoDB"""
-        try:
-            notification_id = self.generate_notification_id()
-            now_utc_iso = datetime.utcnow().isoformat() + "Z"
-            
-            notification_item = {
-                "notification_id": notification_id,
-                "title": title,
-                "message": message,
-                "priority": priority,
-                "is_read": False,
-                "archived": False,
-                "created_at": now_utc_iso,
-                "updated_at": now_utc_iso,
-                "notification_type": notification_type,
-                "metadata": metadata or {}
-            }
-            
-            if recipient_id or recipient_username:
-                recipient = self._get_recipient(recipient_id, recipient_username)
-                if not recipient:
-                    raise ValueError("Recipient not found")
-                
-                notification_item.update({
-                    "recipient_id": str(recipient.id),
-                    "recipient_username": recipient.username
-                })
-            
-            notification_item = floats_to_decimals(notification_item)
-            notification_item = {k: v for k, v in notification_item.items() if v not in [None, '']}
 
-            self.table.put_item(Item=notification_item)
-            
-            return notification_item
-            
+    def create_notification(self, title: str, message: str,
+                            recipient_id: Optional[str] = None,
+                            recipient_username: Optional[str] = None,
+                            priority: str = 'medium',
+                            notification_type: str = 'system',
+                            metadata: Optional[Dict] = None) -> Dict:
+        """
+        Create a new notification using the Notification model.
+        """
+        try:
+            notification = Notification.create_notification(
+                title=title,
+                message=message,
+                notification_type=notification_type,
+                priority=priority,
+                recipient_id=recipient_id,
+                recipient_username=recipient_username,
+                metadata=metadata,
+                # delivered_at defaults to now
+            )
+            return notification.to_dict()
         except Exception as e:
+            logger.error(f"Error creating notification: {e}")
             raise Exception(f"Error creating notification: {str(e)}")
 
-    def create_inventory_alert(self, recipient_id, product_id, current_stock, product_name=None):
-        """Create an inventory alert notification"""
+    def create_inventory_alert(self, recipient_id: str, product_id: str,
+                               current_stock: int, product_name: Optional[str] = None) -> Dict:
+        """
+        Create an inventory alert notification.
+        """
         title = "Low Stock Alert"
         message = f"{product_name or 'Product'} is running low"
         metadata = {"product_id": product_id, "current_stock": current_stock}
-        return self.create_notification(title=title, message=message, recipient_id=recipient_id,
-                                      priority='high', notification_type='inventory', metadata=metadata)
+        return self.create_notification(
+            title=title,
+            message=message,
+            recipient_id=recipient_id,
+            priority='high',
+            notification_type='inventory',
+            metadata=metadata
+        )
 
     # ================================================================
     # NOTIFICATION RETRIEVAL METHODS
     # ================================================================
-    
-    def get_notifications(self, recipient_id=None, notification_type=None, is_read=None, limit=50, include_archived=False):
-        """Get notifications with filters from DynamoDB."""
-        filters = []
-        if not include_archived:
-            filters.append(Attr('archived').ne(True))
-        if recipient_id:
-            filters.append(Attr('recipient_id').eq(str(recipient_id)))
-        if notification_type:
-            filters.append(Attr('notification_type').eq(notification_type))
-        if is_read is not None:
-            filters.append(Attr('is_read').eq(is_read))
 
-        scan_kwargs = {'Limit': limit}
-        if filters:
-            scan_kwargs['FilterExpression'] = self._build_filter_expression(filters)
-
+    def get_notifications(self, recipient_id: Optional[str] = None,
+                          notification_type: Optional[str] = None,
+                          is_read: Optional[bool] = None,
+                          limit: int = 50,
+                          include_archived: bool = False) -> List[Dict]:
+        """
+        Get notifications with filters. If recipient_id is provided, uses the recipient GSI;
+        otherwise falls back to type/read indexes or scan.
+        """
         try:
-            response = self.table.scan(**scan_kwargs)
-            items = response.get('Items', [])
-            items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-            return items
+            if recipient_id:
+                notifications = Notification.get_by_recipient(
+                    recipient_id=recipient_id,
+                    is_read=is_read,
+                    notification_type=notification_type,
+                    limit=limit,
+                    include_archived=include_archived
+                )
+            elif notification_type:
+                notifications = Notification.get_by_type(
+                    notification_type=notification_type,
+                    limit=limit,
+                    include_archived=include_archived
+                )
+                if is_read is not None:
+                    notifications = [n for n in notifications if n.is_read == is_read]
+            elif is_read is not None:
+                if is_read is False:
+                    notifications = Notification.get_unread_notifications(
+                        limit=limit,
+                        include_archived=include_archived
+                    )
+                else:
+                    # For read notifications, fallback to scan
+                    notifications = self._scan_with_filters(
+                        is_read=True,
+                        include_archived=include_archived,
+                        limit=limit
+                    )
+            else:
+                notifications = Notification.get_recent_notifications(
+                    limit=limit,
+                    include_archived=include_archived
+                )
+
+            return [n.to_dict() for n in notifications]
+
         except Exception as e:
-            print(f"Error getting notifications: {e}")
+            logger.error(f"Error getting notifications: {e}")
             return []
 
-    def get_notification_by_id(self, notification_id):
-        """Get a specific notification by ID from DynamoDB"""
+    def _scan_with_filters(self, is_read: bool = None,
+                           notification_type: str = None,
+                           recipient_id: str = None,
+                           include_archived: bool = False,
+                           limit: int = 50) -> List[Notification]:
+        """
+        Fallback method using scan with filter expressions.
+        Should be used sparingly; prefer indexed queries.
+        """
+        conditions = []
+        if not include_archived:
+            conditions.append(Notification.archived == False)
+        if is_read is not None:
+            conditions.append(Notification.is_read == is_read)
+        if notification_type:
+            conditions.append(Notification.notification_type == notification_type)
+        if recipient_id:
+            conditions.append(Notification.recipient_id == recipient_id)
+
+        filter_condition = None
+        for cond in conditions:
+            filter_condition = cond if filter_condition is None else filter_condition & cond
+
         try:
-            response = self.table.get_item(Key={'notification_id': notification_id})
-            return response.get('Item')
+            scan_kwargs = {'limit': limit * 2}
+            if filter_condition:
+                scan_kwargs['filter_condition'] = filter_condition
+            results = list(Notification.scan(**scan_kwargs))
+            results.sort(key=lambda n: n.created_at or datetime.min, reverse=True)
+            return results[:limit]
         except Exception as e:
-            print(f"Error getting notification {notification_id}: {e}")
+            logger.error(f"Scan with filters failed: {e}")
+            return []
+
+    def get_notification_by_id(self, notification_id: str, include_archived: bool = False) -> Optional[Dict]:
+        """Get a specific notification by its SK."""
+        try:
+            notification = Notification.get_by_id(notification_id, include_archived=include_archived)
+            return notification.to_dict() if notification else None
+        except Exception as e:
+            logger.error(f"Error getting notification {notification_id}: {e}")
             return None
 
-    def get_recent_notifications(self, limit=10, hours=None, include_archived=False):
-        """Get recent notifications from DynamoDB"""
-        filters = []
-        if not include_archived:
-            filters.append(Attr('archived').ne(True))
-        if hours:
-            time_threshold = (datetime.utcnow() - timedelta(hours=hours)).isoformat() + "Z"
-            filters.append(Attr('created_at').gte(time_threshold))
-        
-        scan_kwargs = {'Limit': limit}
-        if filters:
-            scan_kwargs['FilterExpression'] = self._build_filter_expression(filters)
-
+    def get_recent_notifications(self, limit: int = 10,
+                                 hours: Optional[int] = None,
+                                 include_archived: bool = False) -> List[Dict]:
+        """
+        Get recent notifications, optionally filtered by last N hours.
+        """
         try:
-            response = self.table.scan(**scan_kwargs)
-            items = response.get('Items', [])
-            items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-            return items
+            if hours:
+                cutoff = datetime.utcnow() - timedelta(hours=hours)
+                filter_cond = Notification.created_at >= cutoff
+                if not include_archived:
+                    filter_cond &= (Notification.archived == False)
+                results = list(Notification.scan(filter_condition=filter_cond, limit=limit * 2))
+                results.sort(key=lambda n: n.created_at or datetime.min, reverse=True)
+                return [n.to_dict() for n in results[:limit]]
+            else:
+                notifications = Notification.get_recent_notifications(limit=limit, include_archived=include_archived)
+                return [n.to_dict() for n in notifications]
         except Exception as e:
-            raise Exception(f"Error getting recent notifications: {str(e)}")
+            logger.error(f"Error getting recent notifications: {e}")
+            return []
 
-    def get_all_notifications(self, limit=50, include_archived=False, start_key=None):
-        """Get all notifications with pagination from DynamoDB."""
-        filters = []
-        if not include_archived:
-            filters.append(Attr('archived').ne(True))
-
-        scan_kwargs = {'Limit': limit}
-        if filters:
-            scan_kwargs['FilterExpression'] = self._build_filter_expression(filters)
-        if start_key:
-            scan_kwargs['ExclusiveStartKey'] = start_key
-        
+    def get_all_notifications(self, limit: int = 50,
+                              include_archived: bool = False,
+                              start_key: Optional[Dict] = None) -> Tuple[List[Dict], Optional[Dict]]:
+        """
+        Get all notifications with pagination using scan.
+        Returns (items, last_evaluated_key).
+        Note: Pagination is not fully implemented; returns all items up to limit.
+        """
         try:
-            response = self.table.scan(**scan_kwargs)
-            return response.get('Items', []), response.get('LastEvaluatedKey')
+            notifications = list(Notification.scan(limit=limit))
+            if not include_archived:
+                notifications = [n for n in notifications if not n.archived]
+            # For real pagination, we would need to use the underlying client's LastEvaluatedKey.
+            # This is a simplified version.
+            return [n.to_dict() for n in notifications], None
         except Exception as e:
-            raise Exception(f"Error getting all notifications: {str(e)}")
+            logger.error(f"Error getting all notifications: {e}")
+            return [], None
 
-    def get_unread_count(self, recipient_id=None, include_archived=False):
-        """Get count of unread notifications from DynamoDB"""
-        filters = [Attr('is_read').eq(False)]
-        if not include_archived:
-            filters.append(Attr('archived').ne(True))
-        if recipient_id:
-            filters.append(Attr('recipient_id').eq(str(recipient_id)))
-        
-        scan_kwargs = {'Select': 'COUNT'}
-        if filters:
-            scan_kwargs['FilterExpression'] = self._build_filter_expression(filters)
-
+    def get_unread_count(self, recipient_id: Optional[str] = None,
+                         include_archived: bool = False) -> int:
+        """
+        Get count of unread notifications.
+        If recipient_id is provided, uses recipient GSI; otherwise counts globally (expensive).
+        """
         try:
-            response = self.table.scan(**scan_kwargs)
-            return response.get('Count', 0)
+            if recipient_id:
+                unread = Notification.get_by_recipient(
+                    recipient_id=recipient_id,
+                    is_read=False,
+                    include_archived=include_archived,
+                    limit=10000
+                )
+                return len(unread)
+            else:
+                return Notification.get_unread_count()
         except Exception as e:
-            raise Exception(f"Error getting unread count: {str(e)}")
+            logger.error(f"Error getting unread count: {e}")
+            return 0
 
     # ================================================================
     # NOTIFICATION STATUS UPDATE METHODS
     # ================================================================
-    
-    def mark_as_read(self, notification_id):
-        """Mark notification as read in DynamoDB"""
+
+    def mark_as_read(self, notification_id: str) -> bool:
+        """
+        Mark a single notification as read.
+        """
         try:
-            self.table.update_item(
-                Key={'notification_id': notification_id},
-                UpdateExpression="SET is_read = :r, updated_at = :u",
-                ExpressionAttributeValues={':r': True, ':u': datetime.utcnow().isoformat() + "Z"}
-            )
+            notification = Notification.get_by_id(notification_id)
+            if notification and not notification.is_read:
+                notification.mark_as_read()
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error marking {notification_id} as read: {e}")
             return False
 
-    def mark_as_unread(self, notification_id):
-        """Mark notification as unread in DynamoDB"""
+    def mark_as_unread(self, notification_id: str) -> bool:
+        """
+        Mark a single notification as unread.
+        """
         try:
-            self.table.update_item(
-                Key={'notification_id': notification_id},
-                UpdateExpression="SET is_read = :r, updated_at = :u",
-                ExpressionAttributeValues={':r': False, ':u': datetime.utcnow().isoformat() + "Z"}
-            )
+            notification = Notification.get_by_id(notification_id)
+            if notification and notification.is_read:
+                notification.mark_as_unread()
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error marking {notification_id} as unread: {e}")
             return False
 
-    def mark_all_as_read(self, recipient_id=None):
-        """Mark all notifications as read in DynamoDB. Inefficient for large tables."""
-        items, _ = self.get_all_notifications(limit=1000, include_archived=False) # Add pagination for more than 1000
-        count = 0
-        for item in items:
-            if not item.get('is_read'):
-                if recipient_id and item.get('recipient_id') != str(recipient_id):
-                    continue
-                self.mark_as_read(item['notification_id'])
-                count += 1
-        return count
+    def mark_all_as_read(self, recipient_id: Optional[str] = None) -> int:
+        """
+        Mark all notifications as read for a recipient (or all if no recipient).
+        Returns number updated.
+        """
+        try:
+            if recipient_id:
+                notifications = Notification.get_by_recipient(
+                    recipient_id=recipient_id,
+                    is_read=False,
+                    limit=10000
+                )
+            else:
+                notifications = Notification.get_unread_notifications(limit=10000)
+
+            updated = 0
+            for n in notifications:
+                n.mark_as_read()
+                updated += 1
+            return updated
+        except Exception as e:
+            logger.error(f"Error in mark_all_as_read: {e}")
+            return 0
 
     # ================================================================
     # NOTIFICATION DELETION & ARCHIVING
     # ================================================================
-    
-    def archive_notification(self, notification_id):
-        """Archive a notification in DynamoDB"""
+
+    def archive_notification(self, notification_id: str) -> bool:
+        """
+        Archive a notification.
+        """
         try:
-            self.table.update_item(
-                Key={'notification_id': notification_id},
-                UpdateExpression="SET archived = :a, archived_at = :t, updated_at = :u",
-                ExpressionAttributeValues={
-                    ':a': True,
-                    ':t': datetime.utcnow().isoformat() + "Z",
-                    ':u': datetime.utcnow().isoformat() + "Z"
-                }
-            )
+            notification = Notification.get_by_id(notification_id)
+            if notification and not notification.archived:
+                notification.archive()
             return True
         except Exception as e:
-            raise Exception(f"Error archiving notification: {str(e)}")
-            
-    def delete_notification(self, notification_id):
-        """Delete a notification from DynamoDB"""
-        try:
-            self.table.delete_item(Key={'notification_id': notification_id})
-            return True
-        except Exception:
+            logger.error(f"Error archiving {notification_id}: {e}")
             return False
 
-    # ================================================================
-    # UTILITY & API METHODS (API methods need refactoring)
-    # ================================================================
-    
-    def get_all_notifications_api(self, request):
-        raise NotImplementedError("API method not yet refactored for DynamoDB")
+    def delete_notification(self, notification_id: str) -> bool:
+        """
+        Permanently delete a notification.
+        """
+        try:
+            notification = Notification.get_by_id(notification_id)
+            if notification:
+                notification.delete()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting {notification_id}: {e}")
+            return False
+        
+    def unarchive_notification(self, notification_id: str) -> bool:
+        """Unarchive a notification."""
+        try:
+            # Retrieve the notification even if archived
+            notification = Notification.get_by_id(notification_id, include_archived=True)
+            if not notification:
+                logger.warning(f"Notification {notification_id} not found")
+                return False
+            if not notification.archived:
+                logger.info(f"Notification {notification_id} is already not archived")
+                return True   # nothing to do, but consider it success
+            notification.unarchive()
+            return True
+        except Exception as e:
+            logger.error(f"Error unarchiving {notification_id}: {e}")
+            return False
 
-    def get_recent_notifications_api(self, request):
-        raise NotImplementedError("API method not yet refactored for DynamoDB")
-
-    def mark_as_read_api(self, notification_id):
-        raise NotImplementedError("API method not yet refactored for DynamoDB")
-
-    def mark_all_as_read_api(self, request):
-        raise NotImplementedError("API method not yet refactored for DynamoDB")
-
-    def archive_notification_api(self, notification_id):
-        raise NotImplementedError("API method not yet refactored for DynamoDB")
-
-    def unarchive_notification_api(self, notification_id):
-        raise NotImplementedError("API method not yet refactored for DynamoDB")
-
-    def delete_notification_api(self, notification_id):
-        raise NotImplementedError("API method not yet refactored for DynamoDB")
-
-    def _get_recipient(self, recipient_id=None, recipient_username=None):
-        """Helper method to get recipient User object"""
-        if recipient_id:
-            try:
-                return User.objects.get(id=recipient_id)
-            except User.DoesNotExist:
-                return None
-        elif recipient_username:
-            try:
-                return User.objects.get(username=recipient_username)
-            except User.DoesNotExist:
-                return None
-        return None
 
 # Singleton instance
 notification_service = NotificationService()

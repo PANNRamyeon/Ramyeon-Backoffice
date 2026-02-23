@@ -38,6 +38,7 @@ urlpatterns = [
     # ================================================================
     path('list/', views.list_notifications, name='list'),
     path('<str:notification_id>/mark-read/', views.mark_notification_read, name='mark_read'),
+    path('<str:notification_id>/mark-unread/', views.mark_notification_unread, name='mark_unread'),
     path('<str:notification_id>/archive/', views.archive_notification, name='archive'),
     path('<str:notification_id>/unarchive/', views.unarchive_notification, name='unarchive'),
     path('<str:notification_id>/delete/', views.delete_notification, name='delete'),
