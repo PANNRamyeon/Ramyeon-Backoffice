@@ -738,7 +738,11 @@ class Notification(Model):
     def get_age_days(self) -> float:
         if not self.created_at:
             return 0.0
-        delta = datetime.utcnow() - self.created_at
+        # If created_at is timezone‑aware, make it naive
+        created = self.created_at
+        if created.tzinfo is not None:
+            created = created.replace(tzinfo=None)
+        delta = datetime.utcnow() - created
         return delta.days + delta.seconds / 86400.0
 
     def to_dict(self) -> dict:
