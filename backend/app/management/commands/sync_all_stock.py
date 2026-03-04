@@ -10,8 +10,9 @@ Usage:
 """
 
 from django.core.management.base import BaseCommand
-from app.services.product_service import ProductService
-from app.services.batch_service import BatchService
+from app.utils.singleton import get_singleton
+from app.services.inventory.product_service import ProductService
+from app.services.inventory.batch_service import BatchService
 from datetime import datetime
 
 class Command(BaseCommand):
@@ -86,7 +87,7 @@ class Command(BaseCommand):
         
         try:
             product_service = ProductService()
-            batch_service = BatchService()
+            batch_service = get_singleton(BatchService)
             db = product_service.db
             batch_collection = db.batches
             

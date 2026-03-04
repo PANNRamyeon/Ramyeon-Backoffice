@@ -11,6 +11,7 @@ from . import (
     category_views,
     supplier_views,
     batch_views,
+    shipment_views,
     promotion_views,
     session_views,
     saleslog_views,
@@ -119,6 +120,12 @@ urlpatterns = [
     path('batches/process/sale/', batch_views.ProcessSaleFIFOView.as_view(), name='batches-process-sale'),
     path('batches/process/adjustment/', batch_views.ProcessBatchAdjustmentView.as_view(), name='batches-process-adjustment'),
     path('batches/restock/', batch_views.RestockWithBatchView.as_view(), name='batches-restock'),
+    
+    # ==================== SHIPMENTS ====================
+    path('shipments/', shipment_views.ShipmentListView.as_view(), name='shipments-list'),
+    path('shipments/supplier/<str:supplier_id>/', shipment_views.ShipmentsBySupplierView.as_view(), name='shipments-by-supplier'),
+    path('shipments/<str:shipment_id>/batches/', shipment_views.ShipmentWithBatchesView.as_view(), name='shipments-with-batches'),
+    path('shipments/<str:shipment_id>/', shipment_views.ShipmentDetailView.as_view(), name='shipments-detail'),
     
     # ==================== PROMOTIONS ====================
     path('promotions/health/', promotion_views.PromotionHealthCheckView.as_view(), name='promotions-health'),

@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand
 from datetime import datetime
-from app.services.batch_service import BatchService
+from app.utils.singleton import get_singleton
+from app.services.inventory.batch_service import BatchService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('DRY RUN MODE - No changes will be saved'))
         
         try:
-            batch_service = BatchService()
+            batch_service = get_singleton(BatchService)
             batch_collection = batch_service.batch_collection
             
             # Get all batches
