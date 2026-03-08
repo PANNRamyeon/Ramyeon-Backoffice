@@ -25,40 +25,44 @@ class UserIdTimestampIndex(GlobalSecondaryIndex):
         read_capacity_units = 5
         write_capacity_units = 5
 
+    # Define the key attributes of the index
+    user_id = UnicodeAttribute(hash_key=True)
+    timestamp = UTCDateTimeAttribute(range_key=True)
+
 
 # ============= MAIN AUDIT LOG MODEL =============
 class AuditLog(Model):
     """
     AUDIT LOGS MODEL - Modified ERD Specification
     Single Table Design using RamyeonCornerDB
-    
+
     PK/SK Pattern:
     - PK: "audit_logs" (entity type)
     - SK: "AUD-#####" (5-digit auto-increment using utils.py)
-    
+
     Modified ERD Fields:
     - action (String) replaces metadata (array)
     """
-    
+
     class Meta:
         table_name = DYNAMO_TABLE_NAME  # Use same table as utils.py
-        region = AWS_REGION  # Use same region as utils.py
-        
+        region = AWS_REGION              # Use same region as utils.py
+
         # Add local DynamoDB support if enabled
-        #if DYNAMODB_LOCAL:
-        #    host = DYNAMODB_LOCAL_HOST
-        
+        if DYNAMODB_LOCAL:
+            host = DYNAMODB_LOCAL_HOST   # Use local endpoint
+
         # Capacity units - adjust based on expected volume
         read_capacity_units = 5
         write_capacity_units = 10  # Higher for frequent writes
-    
+
     # ============= PRIMARY KEYS =============
     pk = UnicodeAttribute(hash_key=True)   # Partition Key: "audit_logs"
     sk = UnicodeAttribute(range_key=True, attr_name="SK")  # Sort Key: "AUD-00001" (generated)
-    
+
     # ============= GSI DEFINITION =============
     user_id_index = UserIdTimestampIndex()
-    
+
     # ============= ERD FIELDS (WITH MODIFICATION) =============
     user_id = UnicodeAttribute(null=True)
     username = UnicodeAttribute(null=True)
@@ -71,9 +75,10 @@ class AuditLog(Model):
     target_id = UnicodeAttribute(null=True)
     target_name = UnicodeAttribute(null=True)
     action = UnicodeAttribute(null=True)  # create, update, delete, login, export, etc.
-    
+    description = UnicodeAttribute(null=True)  # Additional details (used by AuditEvents)
+
     # ============= CLASS METHODS =============
-    
+
     @classmethod
     def create_audit_log(cls, **kwargs) -> 'AuditLog':
         """
@@ -82,46 +87,46 @@ class AuditLog(Model):
         try:
             # Generate SK using utils.py function
             sk = generate_sk('AUD-', 'audit_seq')
-            
+
             # Set required fields
             kwargs['pk'] = 'audit_logs'
             kwargs['sk'] = sk
-            
+
             # Ensure timestamps are set
             current_time = datetime.utcnow()
             if 'timestamp' not in kwargs:
                 kwargs['timestamp'] = current_time
             if 'last_updated' not in kwargs:
                 kwargs['last_updated'] = current_time
-            
+
             # Ensure status has default if not provided
             if 'status' not in kwargs:
                 kwargs['status'] = 'success'
-            
+
             # Create and save the audit log
             audit_log = cls(**kwargs)
             audit_log.save()
-            
+
             logger.info(f"Audit log created: {sk} - Action: {kwargs.get('action', 'N/A')}")
             return audit_log
-            
+
         except Exception as e:
             logger.error(f"Failed to create audit log: {str(e)}")
             logger.error(f"Audit log data: {kwargs}")
-            
+
             # For debugging, you might want to raise in development
             if os.environ.get('ENVIRONMENT', 'production') == 'development':
                 raise
-            
+
             return None
-    
+
     @classmethod
     def log_action(cls, **kwargs) -> 'AuditLog':
         """
         Convenience method for logging actions
         """
         return cls.create_audit_log(**kwargs)
-    
+
     @classmethod
     def get_by_id(cls, audit_id: str) -> 'AuditLog | None':
         """
@@ -135,9 +140,9 @@ class AuditLog(Model):
         except Exception as e:
             logger.error(f"Error fetching audit log {audit_id}: {str(e)}")
             return None
-    
+
     @classmethod
-    def get_by_user_id(cls, user_id: str, 
+    def get_by_user_id(cls, user_id: str,
                       start_date: datetime = None,
                       end_date: datetime = None,
                       limit: int = 100,
@@ -159,13 +164,13 @@ class AuditLog(Model):
                     limit=limit,
                     scan_index_forward=not reverse
                 )
-            
+
             return list(query_result)
-            
+
         except Exception as e:
             logger.error(f"Error querying audit logs for user {user_id}: {str(e)}")
             return []
-    
+
     @classmethod
     def get_all_logs(cls, limit: int = 1000, reverse: bool = True) -> list:
         """
@@ -180,7 +185,7 @@ class AuditLog(Model):
         except Exception as e:
             logger.error(f"Error querying all audit logs: {str(e)}")
             return []
-    
+
     def save(self, *args, **kwargs):
         """Override save to update last_updated timestamp"""
         try:
@@ -189,7 +194,7 @@ class AuditLog(Model):
         except Exception as e:
             logger.error(f"Error saving audit log {self.sk}: {str(e)}")
             raise
-    
+
     def to_dict(self) -> dict:
         """
         Convert audit log to dictionary for API responses
@@ -207,7 +212,8 @@ class AuditLog(Model):
                 'target_type': self.target_type,
                 'target_id': self.target_id,
                 'target_name': self.target_name,
-                'action': self.action
+                'action': self.action,
+                'description': self.description
             }
         except Exception as e:
             logger.error(f"Error converting audit log to dict: {str(e)}")
@@ -218,7 +224,8 @@ class AuditLog(Model):
 def log_audit_event(action: str, user_id: str = None, username: str = None,
                    target_type: str = None, target_id: str = None,
                    target_name: str = None, status: str = "success",
-                   source: str = "system", branch_id: str = None) -> AuditLog | None:
+                   source: str = "system", branch_id: str = None,
+                   description: str = None) -> AuditLog | None:
     """
     Simplified function to create audit trail entries
     """
@@ -232,7 +239,8 @@ def log_audit_event(action: str, user_id: str = None, username: str = None,
             target_name=target_name,
             status=status,
             source=source,
-            branch_id=branch_id
+            branch_id=branch_id,
+            description=description
         )
     except Exception as e:
         logger.error(f"Failed to log audit event: {str(e)}")
@@ -242,11 +250,16 @@ def log_audit_event(action: str, user_id: str = None, username: str = None,
 # ============= PRE-DEFINED AUDIT TYPES =============
 class AuditEvents:
     """Pre-defined audit event templates"""
-    
+
     @staticmethod
-    def user_login(user_id: str, username: str, status: str = "success", 
+    def user_login(user_id: str, username: str, status: str = "success",
                   ip_address: str = None, user_agent: str = None) -> AuditLog | None:
         """Log user login attempt"""
+        description = f"User login {status}"
+        if ip_address:
+            description += f" from IP {ip_address}"
+        if user_agent:
+            description += f" using {user_agent}"
         return log_audit_event(
             action="login",
             user_id=user_id,
@@ -256,13 +269,16 @@ class AuditEvents:
             target_name=username,
             status=status,
             source="web",
-            description=f"User login {status}"
+            description=description
         )
-    
+
     @staticmethod
     def create_entity(target_type: str, target_id: str, target_name: str,
-                     user_id: str = None, username: str = None) -> AuditLog | None:
+                     user_id: str = None, username: str = None,
+                     description: str = None) -> AuditLog | None:
         """Log creation of an entity"""
+        if description is None:
+            description = f"Created {target_type}: {target_name}"
         return log_audit_event(
             action="create",
             user_id=user_id,
@@ -271,13 +287,16 @@ class AuditEvents:
             target_id=target_id,
             target_name=target_name,
             status="success",
-            description=f"Created {target_type}: {target_name}"
+            description=description
         )
-    
+
     @staticmethod
     def update_entity(target_type: str, target_id: str, target_name: str,
-                     user_id: str = None, username: str = None) -> AuditLog | None:
+                     user_id: str = None, username: str = None,
+                     description: str = None) -> AuditLog | None:
         """Log update of an entity"""
+        if description is None:
+            description = f"Updated {target_type}: {target_name}"
         return log_audit_event(
             action="update",
             user_id=user_id,
@@ -286,13 +305,16 @@ class AuditEvents:
             target_id=target_id,
             target_name=target_name,
             status="success",
-            description=f"Updated {target_type}: {target_name}"
+            description=description
         )
-    
+
     @staticmethod
     def delete_entity(target_type: str, target_id: str, target_name: str,
-                     user_id: str = None, username: str = None) -> AuditLog | None:
+                     user_id: str = None, username: str = None,
+                     description: str = None) -> AuditLog | None:
         """Log deletion of an entity"""
+        if description is None:
+            description = f"Deleted {target_type}: {target_name}"
         return log_audit_event(
             action="delete",
             user_id=user_id,
@@ -301,5 +323,5 @@ class AuditEvents:
             target_id=target_id,
             target_name=target_name,
             status="success",
-            description=f"Deleted {target_type}: {target_name}"
+            description=description
         )

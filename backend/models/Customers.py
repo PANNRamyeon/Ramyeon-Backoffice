@@ -9,10 +9,11 @@ from pynamodb.attributes import (
     ListAttribute, MapAttribute, UTCDateTimeAttribute
 )
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
-from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
 from datetime import datetime
 import re
 import logging
+import os
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -95,13 +96,18 @@ class Customer(Model):
     class Meta:
         table_name = DYNAMO_TABLE_NAME  # RamyeonCornerDB (single table)
         region = AWS_REGION
-        
-        #if DYNAMODB_LOCAL:
-        #    host = DYNAMODB_LOCAL_HOST
-        
+
+        # Log the actual config (using os.getenv for local flag)
+        logger.info(f"Customer model config: DYNAMODB_LOCAL={os.getenv('DYNAMODB_LOCAL', 'false')}, "
+                    f"DYNAMODB_LOCAL_HOST={os.getenv('DYNAMODB_LOCAL_HOST', 'http://localhost:8000')}, "
+                    f"table={DYNAMO_TABLE_NAME}, region={AWS_REGION}")
+
+        if os.getenv('DYNAMODB_LOCAL', 'false').lower() == 'true':
+            host = os.getenv('DYNAMODB_LOCAL_HOST', 'http://localhost:8000')
+
         read_capacity_units = 10
         write_capacity_units = 10
-    
+
     # ============= PRIMARY KEYS =============
     pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="customers")
     sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "CUST-0001" (4-digit)
@@ -220,7 +226,7 @@ class Customer(Model):
                 raise ValueError(f"Invalid phone number format: {phone_number}")
             
             # Generate 4-digit SK using utils.py
-            sk = generate_sk('CUST-', 'customer_seq')
+            sk = generate_sk('CUST', 'customer_seq', width=4)   # prefix without hyphen, width 4
             
             # Create customer
             customer = cls(
@@ -319,7 +325,7 @@ class Customer(Model):
                 return existing
             
             # Create new customer
-            sk = generate_sk('CUST-', 'customer_seq')
+            sk = generate_sk('CUST', 'customer_seq', width=4)   
             
             customer = cls(
                 pk="customers",
@@ -408,21 +414,12 @@ class Customer(Model):
             return None
     
     @classmethod
-    def get_by_status(cls, status: str) -> list:
-        """
-        Get customers by status using GSI (excluding deleted)
-        
-        Args:
-            status: Status to filter by (active, inactive, suspended, banned)
-        
-        Returns:
-            list: List of customers with given status
-        """
+    def get_by_status(cls, status: str, include_deleted: bool = False) -> list:
         try:
             customers = []
-            for customer in cls.status_index.query(status):
-                if not customer.isDeleted:
-                    customers.append(customer)
+            filter_cond = None if include_deleted else (cls.isDeleted == False)
+            for customer in cls.status_index.query(status, filter_condition=filter_cond):
+                customers.append(customer)
             return customers
         except Exception as e:
             logger.error(f"Error getting customers by status {status}: {str(e)}")
@@ -440,46 +437,33 @@ class Customer(Model):
     
     @classmethod
     def search_customers(cls, search_term: str, limit: int = 20) -> list:
-        """
-        Search customers by name, email, or phone (partial, case-insensitive)
-        
-        Args:
-            search_term: Search term
-            limit: Maximum number of customers to return
-        
-        Returns:
-            list: List of matching customers
-        """
         try:
             customers = []
             search_term_lower = search_term.lower()
-            
-            # Scan all active customers
             for customer in cls.query("customers", limit=1000):
                 if customer.isDeleted:
                     continue
-                
-                # Check name
-                if (customer.full_name and search_term_lower in customer.full_name.lower()) or \
-                   (customer.username and search_term_lower in customer.username.lower()):
-                    customers.append(customer)
-                    if len(customers) >= limit:
-                        break
-                    continue
-                
-                # Check email
-                if customer.email and search_term_lower in customer.email.lower():
-                    customers.append(customer)
-                    if len(customers) >= limit:
-                        break
-                    continue
-                
-                # Check phone
-                if customer.phone_number and search_term_lower in customer.phone_number.lower():
-                    customers.append(customer)
-                    if len(customers) >= limit:
-                        break
-            
+                try:
+                    # Check name
+                    if (customer.full_name and search_term_lower in customer.full_name.lower()) or \
+                    (customer.username and search_term_lower in customer.username.lower()):
+                        customers.append(customer)
+                        if len(customers) >= limit:
+                            break
+                        continue
+                    if customer.email and search_term_lower in customer.email.lower():
+                        customers.append(customer)
+                        if len(customers) >= limit:
+                            break
+                        continue
+                    if customer.phone_number and search_term_lower in customer.phone_number.lower():
+                        customers.append(customer)
+                        if len(customers) >= limit:
+                            break
+                except Exception as e:
+                    # Log the customer ID that causes the error
+                    logger.error(f"Error processing customer {customer.sk}: {e}")
+                    raise  # re-raise to see the full traceback
             return customers
         except Exception as e:
             logger.error(f"Error searching customers: {str(e)}")
@@ -488,24 +472,21 @@ class Customer(Model):
     @classmethod
     def get_all_customers(cls, limit: int = 1000) -> list:
         """
-        Get all non-deleted customers
-        
-        Args:
-            limit: Maximum number of customers to return
-        
-        Returns:
-            list: List of all customers
+        Get all non-deleted customers using server-side filter.
         """
         try:
             customers = []
-            for customer in cls.query("customers", limit=limit):
-                if not customer.isDeleted:
-                    customers.append(customer)
+            for customer in cls.query(
+                "customers",
+                filter_condition=cls.isDeleted == False,
+                limit=limit
+            ):
+                customers.append(customer)
             return customers
         except Exception as e:
             logger.error(f"Error getting all customers: {str(e)}")
             return []
-    
+        
     @classmethod
     def authenticate(cls, email: str, password_hash: str) -> 'Customer | None':
         """
@@ -938,39 +919,33 @@ class CustomerManager:
     @staticmethod
     def get_customer_statistics() -> dict:
         """
-        Get customer statistics
-        
-        Returns:
-            dict: Customer statistics
+        Get customer statistics with detailed error logging.
         """
         try:
             customers = Customer.get_all_customers()
-            
             total_customers = len(customers)
             
-            # Status distribution
             status_counts = {"active": 0, "inactive": 0, "suspended": 0, "banned": 0}
-            
-            # Auth mode distribution
             auth_mode_counts = {"email_password": 0, "oauth": 0}
-            
-            # Email verification
             verified_count = 0
-            
-            # Loyalty points
             total_loyalty_points = 0.0
             customers_with_points = 0
             
             for customer in customers:
-                status_counts[customer.status] = status_counts.get(customer.status, 0) + 1
-                auth_mode_counts[customer.auth_mode] = auth_mode_counts.get(customer.auth_mode, 0) + 1
-                
-                if customer.email_verified:
-                    verified_count += 1
-                
-                if customer.loyalty_points > 0:
-                    total_loyalty_points += float(customer.loyalty_points)
-                    customers_with_points += 1
+                try:
+                    status_counts[customer.status] = status_counts.get(customer.status, 0) + 1
+                    auth_mode_counts[customer.auth_mode] = auth_mode_counts.get(customer.auth_mode, 0) + 1
+                    
+                    if customer.email_verified:
+                        verified_count += 1
+                    
+                    if customer.loyalty_points > 0:
+                        total_loyalty_points += float(customer.loyalty_points)
+                        customers_with_points += 1
+                except Exception as e:
+                    # Log the exact customer causing the error
+                    logger.error(f"Error processing customer {customer.sk}: {e}")
+                    raise  # Re-raise to see the full traceback
             
             return {
                 "total_customers": total_customers,
@@ -981,7 +956,6 @@ class CustomerManager:
                 "avg_loyalty_points": (total_loyalty_points / customers_with_points) if customers_with_points > 0 else 0,
                 "customers_with_loyalty_points": customers_with_points
             }
-            
         except Exception as e:
             logger.error(f"Error getting customer statistics: {str(e)}")
             return {}

@@ -318,6 +318,25 @@ class User(Model):
             logger.error(f"Error getting all users: {str(e)}")
             return []
     
+    @classmethod
+    def get_by_id(cls, user_id: str) -> Optional['User']:
+        """
+        Get user by its SK (USER-###) using direct key lookup.
+        
+        Args:
+            user_id: The user's SK (e.g., 'USER-001')
+            
+        Returns:
+            User instance or None if not found
+        """
+        try:
+            return cls.get('users', user_id)
+        except cls.DoesNotExist:
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by id {user_id}: {e}")
+            return None
+    
     # ============= FALLBACK SCAN METHODS (if GSI fails) =============
     
     @classmethod
