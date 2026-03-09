@@ -1,10 +1,7 @@
 import os
 import boto3
 from dotenv import load_dotenv
-import logging
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 load_dotenv()
 
 TABLE_NAME = os.getenv('DYNAMO_TABLE_NAME', 'RamyeonCornerDB')
@@ -21,10 +18,9 @@ if AWS_ACCESS_KEY and AWS_SECRET_KEY:
 dynamodb = boto3.resource('dynamodb', **client_kwargs)
 table = dynamodb.Table(TABLE_NAME)
 
-def delete_all_customers(dry_run=True):
+def delete_all_customers():
     last_key = None
     deleted = 0
-    total = 0
     while True:
         scan_kwargs = {
             'FilterExpression': 'PK = :pk',
@@ -35,30 +31,21 @@ def delete_all_customers(dry_run=True):
             scan_kwargs['ExclusiveStartKey'] = last_key
         response = table.scan(**scan_kwargs)
         items = response.get('Items', [])
-        total += len(items)
+        if not items:
+            break
         for item in items:
             sk = item['SK']
-            if not dry_run:
-                table.delete_item(Key={'PK': 'customers', 'SK': sk})
-                logger.info(f"Deleted {sk}")
-                deleted += 1
-            else:
-                logger.info(f"[DRY RUN] Would delete {sk}")
+            table.delete_item(Key={'PK': 'customers', 'SK': sk})
+            print(f"Deleted {sk}")
+            deleted += 1
         last_key = response.get('LastEvaluatedKey')
         if not last_key:
             break
-    logger.info(f"Found {total} customers.")
-    if dry_run:
-        logger.info("Dry run complete. Run with dry_run=False to delete.")
-    else:
-        logger.info(f"Deleted {deleted} customers.")
+    print(f"Total deleted: {deleted}")
 
 if __name__ == '__main__':
-    # First dry run to see what will be deleted
-    delete_all_customers(dry_run=True)
-    answer = input("Do you want to permanently delete ALL customers? (yes/no): ")
-    if answer.lower() == 'yes':
-        delete_all_customers(dry_run=False)
-        print("All customers deleted. You can now register a new one.")
+    confirm = input("This will permanently delete ALL customer data. Type 'yes' to confirm: ")
+    if confirm.lower() == 'yes':
+        delete_all_customers()
     else:
         print("Aborted.")

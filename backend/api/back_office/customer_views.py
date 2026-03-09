@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from app.services.identity.customer_service import CustomerService
+from models.Customers import CustomerManager
 from app.services.identity.auth_services import AuthService
 from app.decorators.authenticationDecorator import require_admin, require_authentication, get_authenticated_user_from_jwt
 import logging

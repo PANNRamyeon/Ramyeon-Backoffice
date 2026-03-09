@@ -5,8 +5,8 @@ Single Table Design using RamyeonCornerDB
 """
 from pynamodb.models import Model
 from pynamodb.attributes import (
-    UnicodeAttribute, NumberAttribute, BooleanAttribute,
-    ListAttribute, MapAttribute, UTCDateTimeAttribute
+    UTCDateTimeAttribute, UnicodeAttribute, NumberAttribute, BooleanAttribute,
+    ListAttribute, MapAttribute
 )
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
 from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
@@ -18,6 +18,28 @@ from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+class LenientUTCDateTimeAttribute(UTCDateTimeAttribute):
+    """
+    A UTCDateTimeAttribute that returns None if deserialization fails,
+    instead of raising an exception.
+    """
+    def deserialize(self, value):
+        try:
+            return super().deserialize(value)
+        except Exception as e:
+            logger.error(f"Failed to deserialize datetime '{value}': {e}. Returning None.")
+            return None
+        
+class LenientNumberAttribute(NumberAttribute):
+    """
+    A NumberAttribute that returns 0.0 if deserialization fails.
+    """
+    def deserialize(self, value):
+        try:
+            return super().deserialize(value)
+        except Exception as e:
+            logger.error(f"Failed to deserialize number '{value}': {e}. Returning 0.0.")
+            return 0.0
 
 # ============= NESTED MAP ATTRIBUTES =============
 class AuthProvider(MapAttribute):
@@ -32,7 +54,7 @@ class AuthProvider(MapAttribute):
     last_name = UnicodeAttribute(null=True)
     avatar_url = UnicodeAttribute(null=True)
     locale = UnicodeAttribute(null=True)
-    last_login = UTCDateTimeAttribute(null=True)  # Changed to UTCDateTimeAttribute
+    last_login = LenientUTCDateTimeAttribute(null=True)  # Changed to LenientUTCDateTimeAttribute
 
 
 # ============= GLOBAL SECONDARY INDEXES =============
@@ -62,6 +84,7 @@ class StatusIndex(GlobalSecondaryIndex):
     
     status = UnicodeAttribute(hash_key=True)
     sk = UnicodeAttribute(range_key=True, attr_name="SK")
+
 
 
 # ============= MAIN CUSTOMER MODEL =============
@@ -125,7 +148,7 @@ class Customer(Model):
     # ============= AUTHENTICATION =============
     password = UnicodeAttribute(null=True)  # Hashed password
     password_set = BooleanAttribute(default=False)
-    password_last_changed = UTCDateTimeAttribute(null=True)  # Enhanced security
+    password_last_changed = LenientUTCDateTimeAttribute(null=True)   # Enhanced security
     auth_mode = UnicodeAttribute(default="email_password")  # email_password, oauth
     
     # ============= AUTH PROVIDERS =============
@@ -135,18 +158,18 @@ class Customer(Model):
     phone_number = UnicodeAttribute(null=True)
     
     # ============= LOYALTY =============
-    loyalty_points = NumberAttribute(default=0.0)
+    loyalty_points = LenientNumberAttribute(default=0.0)
     
     # ============= ACTIVITY =============
-    last_purchase = UTCDateTimeAttribute(null=True)
+    last_purchase = LenientUTCDateTimeAttribute(null=True)
     
     # ============= STATUS =============
     isDeleted = BooleanAttribute(default=False)  # ERD casing
     status = UnicodeAttribute(default="active")  # active, inactive, suspended, banned
     
     # ============= AUDIT =============
-    date_created = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
-    updated_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    date_created = LenientUTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    updated_at = LenientUTCDateTimeAttribute(default_for_new=datetime.utcnow)
     source = UnicodeAttribute(null=True)  # web, mobile, pos, import, api
     
     # ============= VALIDATION METHODS =============
@@ -834,7 +857,7 @@ class Customer(Model):
             dict: Customer summary information
         """
         try:
-            return {
+                return {
                 "customer_id": self.sk,
                 "email": self.email,
                 "full_name": self.full_name,
@@ -880,8 +903,7 @@ class Customer(Model):
                 "last_purchase": self.last_purchase.isoformat() if self.last_purchase else None,
                 "password_last_changed": self.password_last_changed.isoformat() if self.password_last_changed else None
             }
-            
-            # Add auth providers if they exist
+
             if self.auth_providers:
                 customer_dict["auth_providers"] = [
                     {
@@ -897,9 +919,8 @@ class Customer(Model):
                     }
                     for provider in self.auth_providers
                 ]
-            
+
             return customer_dict
-            
         except Exception as e:
             logger.error(f"Error converting customer to dict: {str(e)}")
             return {}
@@ -917,49 +938,102 @@ class CustomerManager:
     """
     
     @staticmethod
-    def get_customer_statistics() -> dict:
+    def get_customer_statistics():
         """
-        Get customer statistics with detailed error logging.
+        Get customer statistics using a raw DynamoDB scan that bypasses
+        PynamoDB deserialization issues.
         """
-        try:
-            customers = Customer.get_all_customers()
-            total_customers = len(customers)
-            
-            status_counts = {"active": 0, "inactive": 0, "suspended": 0, "banned": 0}
-            auth_mode_counts = {"email_password": 0, "oauth": 0}
-            verified_count = 0
-            total_loyalty_points = 0.0
-            customers_with_points = 0
-            
-            for customer in customers:
-                try:
-                    status_counts[customer.status] = status_counts.get(customer.status, 0) + 1
-                    auth_mode_counts[customer.auth_mode] = auth_mode_counts.get(customer.auth_mode, 0) + 1
-                    
-                    if customer.email_verified:
-                        verified_count += 1
-                    
-                    if customer.loyalty_points > 0:
-                        total_loyalty_points += float(customer.loyalty_points)
-                        customers_with_points += 1
-                except Exception as e:
-                    # Log the exact customer causing the error
-                    logger.error(f"Error processing customer {customer.sk}: {e}")
-                    raise  # Re-raise to see the full traceback
-            
-            return {
-                "total_customers": total_customers,
-                "status_distribution": status_counts,
-                "auth_mode_distribution": auth_mode_counts,
-                "email_verified_percentage": (verified_count / total_customers * 100) if total_customers > 0 else 0,
-                "total_loyalty_points": total_loyalty_points,
-                "avg_loyalty_points": (total_loyalty_points / customers_with_points) if customers_with_points > 0 else 0,
-                "customers_with_loyalty_points": customers_with_points
+        import boto3
+        from app.utils import DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+
+        # Create boto3 client with the same configuration as the model
+        client_kwargs = {'region_name': AWS_REGION}
+        if DYNAMODB_LOCAL:
+            client_kwargs['endpoint_url'] = DYNAMODB_LOCAL_HOST
+            # Local DynamoDB uses dummy credentials
+            client_kwargs.update({
+                'aws_access_key_id': 'fake',
+                'aws_secret_access_key': 'fake'
+            })
+
+        dynamodb = boto3.resource('dynamodb', **client_kwargs)
+        table = dynamodb.Table(DYNAMO_TABLE_NAME)
+
+        # Scan for customer items (PK = 'customers')
+        items = []
+        last_key = None
+        while True:
+            scan_kwargs = {
+                'FilterExpression': 'PK = :pk',
+                'ExpressionAttributeValues': {':pk': 'customers'}
             }
-        except Exception as e:
-            logger.error(f"Error getting customer statistics: {str(e)}")
-            return {}
-    
+            if last_key:
+                scan_kwargs['ExclusiveStartKey'] = last_key
+            try:
+                response = table.scan(**scan_kwargs)
+            except Exception as e:
+                logger.error(f"DynamoDB scan failed: {e}")
+                return {}
+            items.extend(response.get('Items', []))
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+
+        # Initialize counters
+        total_customers = 0
+        status_counts = {"active": 0, "inactive": 0, "suspended": 0, "banned": 0}
+        auth_mode_counts = {"email_password": 0, "oauth": 0}
+        verified_count = 0
+        total_loyalty_points = 0.0
+        customers_with_points = 0
+
+        for item in items:
+            # Skip soft-deleted customers
+            if item.get('isDeleted', False):
+                continue
+
+            total_customers += 1
+
+            # Status
+            status = item.get('status', 'active')
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+            # Auth mode
+            auth_mode = item.get('auth_mode', 'email_password')
+            auth_mode_counts[auth_mode] = auth_mode_counts.get(auth_mode, 0) + 1
+
+            # Email verified
+            if item.get('email_verified', False):
+                verified_count += 1
+
+            # Loyalty points – safely attempt conversion
+            points_raw = item.get('loyalty_points')
+            if points_raw is not None:
+                try:
+                    # Handle both number (N) and string (S) types
+                    if isinstance(points_raw, (int, float)):
+                        points = float(points_raw)
+                    elif isinstance(points_raw, str):
+                        points = float(points_raw)
+                    else:
+                        continue
+                    if points > 0:
+                        total_loyalty_points += points
+                        customers_with_points += 1
+                except (ValueError, TypeError):
+                    # Silently skip corrupted points
+                    pass
+
+        return {
+            "total_customers": total_customers,
+            "status_distribution": status_counts,
+            "auth_mode_distribution": auth_mode_counts,
+            "email_verified_percentage": (verified_count / total_customers * 100) if total_customers > 0 else 0,
+            "total_loyalty_points": total_loyalty_points,
+            "avg_loyalty_points": (total_loyalty_points / customers_with_points) if customers_with_points > 0 else 0,
+            "customers_with_loyalty_points": customers_with_points
+        }
+        
     @staticmethod
     def get_top_loyalty_customers(limit: int = 10) -> list:
         """

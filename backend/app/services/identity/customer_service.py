@@ -6,7 +6,7 @@ from notifications.services import notification_service
 import csv
 import io
 from app.utils import DYNAMO_TABLE_NAME
-from models.Customers import Customer
+from models.Customers import Customer, CustomerManager
 from models.Sessions import SessionLog
 from pynamodb.exceptions import PynamoDBException
 from boto3.dynamodb.conditions import Key, Attr
@@ -355,15 +355,9 @@ class CustomerService:
 
     def get_customer_statistics(self):
         try:
-            # Very inefficient – consider using counters or separate aggregation
-            customers = list(Customer.scan())
-            total_customers = len(customers)
-            active_customers = len([c for c in customers if c.status == 'active' and not c.isDeleted])
-            return {
-                'total_customers': total_customers,
-                'active_customers': active_customers,
-            }
-        except PynamoDBException as e:
+            return CustomerManager.get_customer_statistics()
+        except Exception as e:
+            logger.error(f"Error in CustomerService.get_customer_statistics: {e}")
             raise Exception(f"Error getting customer statistics: {str(e)}")
 
     def update_loyalty_points(self, customer_id, points_to_add, reason="Purchase", current_user=None):
