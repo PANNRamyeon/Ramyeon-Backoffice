@@ -1,11 +1,11 @@
-# views/promotion_views.py
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from datetime import datetime, timezone
 from app.services.marketing.promotions_service import PromotionService
-from app.decorators.authenticationDecorator import require_admin, require_authentication, get_authenticated_user_from_jwt
+from app.decorators.authenticationDecorator import require_admin, require_authentication
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -23,36 +23,32 @@ class PromotionHealthCheckView(APIView):
             "timestamp": datetime.utcnow().isoformat()
         }, status=status.HTTP_200_OK)
 
+
 class PromotionListView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
-    @require_authentication
     def get(self, request):
-        """Get all promotions with filtering and pagination"""
+        """Get all promotions with filtering and pagination (token‑based)"""
         try:
+            # Initialize service with current user
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
             filters = {}
 
-            # Mapping frontend → backend filters
+            # Map frontend filters
             if request.GET.get('status'):
                 filters['status'] = request.GET.get('status')
-
             if request.GET.get('type'):
                 filters['type'] = request.GET.get('type')
-
             if request.GET.get('target_type'):
                 filters['target_type'] = request.GET.get('target_type')
-
             if request.GET.get('created_by'):
                 filters['created_by'] = request.GET.get('created_by')
+            search = request.GET.get('search') or request.GET.get('q')
+            if search:
+                filters['search_query'] = search
 
-            # Search should support ?search=
-            search_value = request.GET.get('search') or request.GET.get('q')
-            if search_value:
-                filters['search_query'] = search_value
-
-            # Date range
+            # Date range – note: these are not directly supported by get_all_promotions yet
+            # (could be added later via filter conditions)
             if request.GET.get('date_from') and request.GET.get('date_to'):
                 try:
                     filters['date_from'] = datetime.fromisoformat(request.GET.get('date_from'))
@@ -63,20 +59,17 @@ class PromotionListView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # Pagination
-            page = int(request.GET.get('page', 1))
+            # Pagination token (if any)
+            last_token = request.GET.get('next_page_token')
+            # last_token may be a JSON string; service expects a dict or None
+            last_evaluated_key = json.loads(last_token) if last_token else None
+
             limit = int(request.GET.get('limit', 20))
 
-            # Sorting
-            sort_by = request.GET.get('sort_by', 'created_at')
-            sort_order = request.GET.get('sort_order', 'desc')
-
-            result = self.promotion_service.get_all_promotions(
+            result = service.get_all_promotions(
                 filters=filters,
-                page=page,
                 limit=limit,
-                sort_by=sort_by,
-                sort_order=sort_order
+                last_evaluated_key=last_evaluated_key
             )
 
             if result['success']:
@@ -91,16 +84,16 @@ class PromotionListView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    
     @require_authentication
     def post(self, request):
         """Create new promotion"""
         try:
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
             promotion_data = request.data.copy()
-            
-            # Add creator information
-            promotion_data['created_by'] = request.current_user.get('user_id')
-            
+            promotion_data['created_by'] = user_id  # service already sets it, but keep for clarity
+
             # Convert date strings to timezone-aware UTC datetime objects
             for date_field in ['start_date', 'end_date']:
                 if date_field in promotion_data and isinstance(promotion_data[date_field], str):
@@ -115,14 +108,13 @@ class PromotionListView(APIView):
                                 date_str = date_str + '+00:00'
                             else:
                                 date_str = date_str + 'T00:00:00+00:00'
-                        
+
                         dt = datetime.fromisoformat(date_str)
-                        # Ensure timezone-aware (convert to UTC)
                         if dt.tzinfo is None:
                             dt = dt.replace(tzinfo=timezone.utc)
                         else:
                             dt = dt.astimezone(timezone.utc)
-                        
+
                         promotion_data[date_field] = dt
                     except (ValueError, AttributeError) as e:
                         logger.error(f"Error parsing {date_field}: {e}")
@@ -130,296 +122,261 @@ class PromotionListView(APIView):
                             {"error": f"Invalid {date_field} format. Use ISO format: {str(e)}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
-            
-            result = self.promotion_service.create_promotion(promotion_data)
-            
+
+            result = service.create_promotion(promotion_data)
+
             if result['success']:
                 return Response(result, status=status.HTTP_201_CREATED)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionListView.post: {e}")
             return Response(
-                {"error": f"Error creating promotion: {str(e)}"}, 
+                {"error": f"Error creating promotion: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+
 class PromotionDetailView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_authentication
     def get(self, request, promotion_id):
-        """Get promotion by PROM-#### ID"""
+        """Get promotion by PROM-##### ID"""
         try:
-            result = self.promotion_service.get_promotion_by_id(promotion_id)
-            
-            if result['success']:
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
+            result = service.get_promotion_by_id(promotion_id)
+
+            if result and result.get('success'):
                 return Response(result, status=status.HTTP_200_OK)
             else:
-                return Response(result, status=status.HTTP_404_NOT_FOUND)
-                
+                # If result is None or success=False, treat as 404
+                return Response(
+                    {"success": False, "error": "Promotion not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
         except Exception as e:
             logger.error(f"Error in PromotionDetailView.get: {e}")
             return Response(
-                {"error": f"Error retrieving promotion: {str(e)}"}, 
+                {"error": f"Error retrieving promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     @require_admin
     def put(self, request, promotion_id):
         """Update promotion"""
         try:
-            logger.info(f"[VIEW] Promotion update request for {promotion_id}")
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
             update_data = request.data.copy()
-            logger.debug(f"[VIEW] Raw update_data: {update_data}")
-            
-            # Convert date strings if provided - ensure timezone-aware UTC
+
+            # Convert date strings if provided
             for date_field in ['start_date', 'end_date']:
-                if date_field in update_data:
-                    logger.debug(f"[VIEW] Processing {date_field}: {update_data[date_field]} (type: {type(update_data[date_field])})")
-                    if isinstance(update_data[date_field], str):
-                        try:
-                            date_str = update_data[date_field]
-                            logger.debug(f"[VIEW] {date_field} is string: '{date_str}'")
-                            # Handle ISO format with or without timezone
-                            if date_str.endswith('Z'):
-                                date_str = date_str.replace('Z', '+00:00')
-                                logger.debug(f"[VIEW] {date_field} had 'Z', converted to: '{date_str}'")
-                            elif '+' not in date_str and date_str.count('-') >= 3:
-                                # If no timezone info, assume UTC
-                                if 'T' in date_str:
-                                    date_str = date_str + '+00:00'
-                                else:
-                                    date_str = date_str + 'T00:00:00+00:00'
-                                logger.debug(f"[VIEW] {date_field} had no timezone, added UTC: '{date_str}'")
-                            
-                            dt = datetime.fromisoformat(date_str)
-                            logger.debug(f"[VIEW] {date_field} parsed to datetime: {dt} (tzinfo: {dt.tzinfo})")
-                            
-                            # Ensure timezone-aware (convert to UTC)
-                            if dt.tzinfo is None:
-                                logger.debug(f"[VIEW] {date_field} is NAIVE, adding UTC timezone")
-                                dt = dt.replace(tzinfo=timezone.utc)
+                if date_field in update_data and isinstance(update_data[date_field], str):
+                    try:
+                        date_str = update_data[date_field]
+                        if date_str.endswith('Z'):
+                            date_str = date_str.replace('Z', '+00:00')
+                        elif '+' not in date_str and date_str.count('-') >= 3:
+                            if 'T' in date_str:
+                                date_str = date_str + '+00:00'
                             else:
-                                logger.debug(f"[VIEW] {date_field} is AWARE, converting to UTC")
-                                dt = dt.astimezone(timezone.utc)
-                            
-                            logger.debug(f"[VIEW] {date_field} final: {dt} (tzinfo: {dt.tzinfo})")
-                            update_data[date_field] = dt
-                        except (ValueError, AttributeError, TypeError) as e:
-                            logger.error(f"[VIEW] Error parsing {date_field}: {e}")
-                            import traceback
-                            logger.error(f"[VIEW] Traceback: {traceback.format_exc()}")
-                            return Response(
-                                {"error": f"Invalid {date_field} format: {str(e)}"},
-                                status=status.HTTP_400_BAD_REQUEST
-                            )
-                    elif isinstance(update_data[date_field], datetime):
-                        logger.debug(f"[VIEW] {date_field} is already datetime: {update_data[date_field]} (tzinfo: {update_data[date_field].tzinfo})")
-                        # Ensure it's timezone-aware UTC
-                        dt = update_data[date_field]
+                                date_str = date_str + 'T00:00:00+00:00'
+
+                        dt = datetime.fromisoformat(date_str)
                         if dt.tzinfo is None:
-                            logger.debug(f"[VIEW] {date_field} datetime is NAIVE, adding UTC")
-                            update_data[date_field] = dt.replace(tzinfo=timezone.utc)
+                            dt = dt.replace(tzinfo=timezone.utc)
                         else:
-                            logger.debug(f"[VIEW] {date_field} datetime is AWARE, converting to UTC")
-                            update_data[date_field] = dt.astimezone(timezone.utc)
-                        logger.debug(f"[VIEW] {date_field} after normalization: {update_data[date_field]} (tzinfo: {update_data[date_field].tzinfo})")
-            
-            logger.info(f"[VIEW] Calling promotion_service.update_promotion with normalized data")
-            logger.debug(f"[VIEW] Final update_data: {update_data}")
-            result = self.promotion_service.update_promotion(
-                promotion_id, 
-                update_data, 
-                request.current_user.get('user_id')
-            )
-            
+                            dt = dt.astimezone(timezone.utc)
+
+                        update_data[date_field] = dt
+                    except (ValueError, AttributeError) as e:
+                        logger.error(f"Error parsing {date_field}: {e}")
+                        return Response(
+                            {"error": f"Invalid {date_field} format: {str(e)}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+            result = service.update_promotion(promotion_id, update_data)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionDetailView.put: {e}")
             return Response(
-                {"error": f"Error updating promotion: {str(e)}"}, 
+                {"error": f"Error updating promotion: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
     @require_admin
     def delete(self, request, promotion_id):
-        """Soft delete promotion"""
+        """Soft delete promotion (default)"""
         try:
-            # Check if hard delete is requested
-            hard_delete = request.GET.get('hard', 'false').lower() == 'true'
-            
-            result = self.promotion_service.delete_promotion(
-                promotion_id, 
-                request.current_user.get('user_id'),
-                soft_delete=not hard_delete
-            )
-            
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
+            # Reason can be provided in request body or query param
+            reason = request.data.get('reason') or request.GET.get('reason', 'Deleted via API')
+
+            result = service.delete_promotion(promotion_id, reason)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionDetailView.delete: {e}")
             return Response(
-                {"error": f"Error deleting promotion: {str(e)}"}, 
+                {"error": f"Error deleting promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class ActivePromotionsView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     def get(self, request):
         """Get all currently active promotions"""
         try:
-            result = self.promotion_service.get_active_promotions()
-            
+            user_id = request.current_user.get('user_id') if hasattr(request, 'current_user') else "system"
+            service = PromotionService(current_user=user_id)
+
+            result = service.get_active_promotions()
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                
+
         except Exception as e:
             logger.error(f"Error in ActivePromotionsView.get: {e}")
             return Response(
-                {"error": f"Error retrieving active promotions: {str(e)}"}, 
+                {"error": f"Error retrieving active promotions: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class PromotionActivationView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_admin
     def post(self, request, promotion_id):
         """Activate a promotion"""
         try:
-            result = self.promotion_service.activate_promotion(
-                promotion_id, 
-                request.current_user.get('user_id')
-            )
-            
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
+            reason = request.data.get('reason')
+            result = service.activate_promotion(promotion_id, reason)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionActivationView.post: {e}")
             return Response(
-                {"error": f"Error activating promotion: {str(e)}"}, 
+                {"error": f"Error activating promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class PromotionDeactivationView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_admin
     def post(self, request, promotion_id):
         """Deactivate a promotion"""
         try:
-            result = self.promotion_service.deactivate_promotion(
-                promotion_id, 
-                request.current_user.get('user_id')
-            )
-            
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
+            reason = request.data.get('reason', 'Deactivated via API')
+            result = service.deactivate_promotion(promotion_id, reason)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionDeactivationView.post: {e}")
             return Response(
-                {"error": f"Error deactivating promotion: {str(e)}"}, 
+                {"error": f"Error deactivating promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class PromotionExpirationView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_admin
     def post(self, request, promotion_id):
-        """Manually expire a promotion"""
+        """Manually expire a promotion (deactivate with reason 'Expired manually')"""
         try:
-            result = self.promotion_service.expire_promotion(
-                promotion_id, 
-                request.current_user.get('user_id')
-            )
-            
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
+            result = service.expire_promotion(promotion_id)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionExpirationView.post: {e}")
             return Response(
-                {"error": f"Error expiring promotion: {str(e)}"}, 
+                {"error": f"Error expiring promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class PromotionApplicationView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_authentication
     def post(self, request):
         """Apply best available promotion to an order"""
         try:
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
             order_data = request.data
-            customer_id = request.current_user.get('user_id')
-            
+            customer_id = user_id
+
             # Validate order data
             if not order_data.get('items') or not order_data.get('total_amount'):
                 return Response(
                     {"error": "Order must include items and total_amount"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            result = self.promotion_service.apply_promotion_to_order(order_data, customer_id)
-            
+
+            result = service.apply_promotion_to_order(order_data, customer_id)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionApplicationView.post: {e}")
             return Response(
-                {"error": f"Error applying promotion: {str(e)}"}, 
+                {"error": f"Error applying promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class PromotionStatisticsView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_admin
     def get(self, request):
         """Get promotion statistics and analytics"""
         try:
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
             # Get date range if provided
             start_date = None
             end_date = None
-            
+
             if request.GET.get('start_date'):
                 try:
                     start_date = datetime.fromisoformat(request.GET.get('start_date'))
@@ -428,7 +385,7 @@ class PromotionStatisticsView(APIView):
                         {"error": "Invalid start_date format"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-            
+
             if request.GET.get('end_date'):
                 try:
                     end_date = datetime.fromisoformat(request.GET.get('end_date'))
@@ -437,186 +394,155 @@ class PromotionStatisticsView(APIView):
                         {"error": "Invalid end_date format"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-            
-            result = self.promotion_service.get_promotion_statistics(start_date, end_date)
-            
+
+            result = service.get_promotion_statistics(start_date, end_date)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionStatisticsView.get: {e}")
             return Response(
-                {"error": f"Error retrieving statistics: {str(e)}"}, 
+                {"error": f"Error retrieving statistics: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class PromotionAuditView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_admin
     def get(self, request, promotion_id):
         """Get audit history for a specific promotion"""
         try:
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
             limit = int(request.GET.get('limit', 50))
-            
-            result = self.promotion_service.get_promotion_audit_history(promotion_id, limit)
-            
+
+            result = service.get_promotion_audit_history(promotion_id, limit)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionAuditView.get: {e}")
             return Response(
-                {"error": f"Error retrieving audit history: {str(e)}"}, 
+                {"error": f"Error retrieving audit history: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class PromotionSearchView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_authentication
     def get(self, request):
         """Search promotions by name or description"""
         try:
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
             query = request.GET.get('q', '')
             if not query:
                 return Response(
                     {"error": "Query parameter 'q' is required"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # Build search filter
+
             filters = {'search_query': query}
-            
-            # Add pagination
-            page = int(request.GET.get('page', 1))
+            last_token = request.GET.get('next_page_token')
+            last_evaluated_key = json.loads(last_token) if last_token else None
             limit = int(request.GET.get('limit', 20))
-            
-            result = self.promotion_service.get_all_promotions(
+
+            result = service.get_all_promotions(
                 filters=filters,
-                page=page,
-                limit=limit
+                limit=limit,
+                last_evaluated_key=last_evaluated_key
             )
-            
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionSearchView.get: {e}")
             return Response(
-                {"error": f"Error searching promotions: {str(e)}"}, 
+                {"error": f"Error searching promotions: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
 class PromotionReportView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_admin
     def get(self, request, promotion_id):
-        """Generate detailed usage report for a promotion"""
-        try:
-            report = self.promotion_service._generate_usage_report(promotion_id)
-            
-            if report:
-                return Response({
-                    "success": True,
-                    "report": report
-                }, status=status.HTTP_200_OK)
-            else:
-                return Response(
-                    {"error": "Promotion not found or report unavailable"},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-                
-        except Exception as e:
-            logger.error(f"Error in PromotionReportView.get: {e}")
-            return Response(
-                {"error": f"Error generating report: {str(e)}"}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        """Generate detailed usage report for a promotion (placeholder)"""
+        # This view previously called a private method _generate_usage_report
+        # which is not part of the updated service. For now, return 501.
+        return Response(
+            {"error": "Report generation not yet implemented"},
+            status=status.HTTP_501_NOT_IMPLEMENTED
+        )
+
 
 class PromotionByNameView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
-    
     @require_authentication
     def get(self, request, promotion_name):
-        """Get promotion by name"""
+        """Get promotion by exact name (case‑insensitive)"""
         try:
-            # Search for promotions with matching name
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
             filters = {'search_query': promotion_name}
-            result = self.promotion_service.get_all_promotions(filters=filters)
-            
-            if result['success'] and result['promotions']:
+            result = service.get_all_promotions(filters=filters)
+
+            if result['success'] and result['data']['promotions']:
                 # Find exact match
-                exact_match = None
-                for promotion in result['promotions']:
-                    if promotion.get('name', '').lower() == promotion_name.lower():
-                        exact_match = promotion
-                        break
-                
-                if exact_match:
-                    return Response({
-                        'success': True,
-                        'promotion': exact_match
-                    }, status=status.HTTP_200_OK)
-            
+                for promo in result['data']['promotions']:
+                    if promo.get('name', '').lower() == promotion_name.lower():
+                        return Response({
+                            'success': True,
+                            'data': promo
+                        }, status=status.HTTP_200_OK)
+
             return Response(
-                {"error": "Promotion not found"}, 
+                {"success": False, "error": "Promotion not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
-            
+
         except Exception as e:
             logger.error(f"Error getting promotion by name {promotion_name}: {e}")
             return Response(
-                {"error": str(e)}, 
+                {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-class PromotionRestoreView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
 
+class PromotionRestoreView(APIView):
     @require_admin
     def post(self, request, promotion_id):
-        """Restore soft-deleted promotion"""
+        """Restore soft‑deleted promotion"""
         try:
-            result = self.promotion_service.restore_promotion(
-                promotion_id, 
-                request.current_user.get('user_id')
-            )
-            
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
+            result = service.restore_promotion(promotion_id)
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionRestoreView.post: {e}")
             return Response(
-                {"error": f"Error restoring promotion: {str(e)}"}, 
+                {"error": f"Error restoring promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-class PromotionHardDeleteView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
 
+class PromotionHardDeleteView(APIView):
     @require_admin
     def delete(self, request, promotion_id):
         """Permanently delete promotion - DANGEROUS"""
@@ -625,53 +551,56 @@ class PromotionHardDeleteView(APIView):
             confirm = request.GET.get('confirm', '').lower()
             if confirm != 'yes':
                 return Response({
-                    "error": "Permanent deletion requires confirmation", 
+                    "error": "Permanent deletion requires confirmation",
                     "message": "Add ?confirm=yes to permanently delete this promotion"
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            result = self.promotion_service.hard_delete_promotion(
-                promotion_id, 
-                request.current_user.get('user_id'),
+
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
+            result = service.hard_delete_promotion(
+                promotion_id,
                 confirmation_token="PERMANENT_DELETE_CONFIRMED"
             )
-            
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_400_BAD_REQUEST)
-                
+
         except Exception as e:
             logger.error(f"Error in PromotionHardDeleteView.delete: {e}")
             return Response(
-                {"error": f"Error permanently deleting promotion: {str(e)}"}, 
+                {"error": f"Error permanently deleting promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-class DeletedPromotionsView(APIView):
-    def __init__(self):
-        super().__init__()
-        self.promotion_service = PromotionService()
 
+class DeletedPromotionsView(APIView):
     @require_admin
     def get(self, request):
-        """Get all soft-deleted promotions - Admin only"""
+        """Get all soft‑deleted promotions - Admin only"""
         try:
-            page = int(request.GET.get('page', 1))
+            user_id = request.current_user.get('user_id')
+            service = PromotionService(current_user=user_id)
+
+            last_token = request.GET.get('next_page_token')
+            last_evaluated_key = json.loads(last_token) if last_token else None
             limit = int(request.GET.get('limit', 20))
-            
-            result = self.promotion_service.get_deleted_promotions(
-                page=page, 
-                limit=limit
+
+            result = service.get_deleted_promotions(
+                limit=limit,
+                last_evaluated_key=last_evaluated_key
             )
-            
+
             if result['success']:
                 return Response(result, status=status.HTTP_200_OK)
             else:
                 return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                
+
         except Exception as e:
             logger.error(f"Error in DeletedPromotionsView.get: {e}")
             return Response(
-                {"error": f"Error retrieving deleted promotions: {str(e)}"}, 
+                {"error": f"Error retrieving deleted promotions: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
