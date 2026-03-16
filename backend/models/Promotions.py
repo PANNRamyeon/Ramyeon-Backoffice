@@ -4,6 +4,7 @@ PK = "promotions", SK = "PROMO-#####" (5-digit format)
 Single Table Design using RamyeonCornerDB
 """
 import os
+import re
 from pynamodb.models import Model
 from pynamodb.attributes import (
     UnicodeAttribute, NumberAttribute, BooleanAttribute,
@@ -20,6 +21,24 @@ from app.utils import generate_sk, get_dynamo_table, DYNAMO_TABLE_NAME, AWS_REGI
 from models.Product import Product  # For product/category validation
 
 logger = logging.getLogger(__name__)
+
+
+# ============= CUSTOM DATETIME ATTRIBUTE TO FIX MALFORMED STRINGS =============
+
+class FixedUTCDateTimeAttribute(UTCDateTimeAttribute):
+    """
+    Custom UTCDateTimeAttribute that attempts to fix malformed datetime strings
+    (e.g., '000002025-10-12T16:48:54.458000') by stripping leading zeros from the year.
+    """
+    def deserialize(self, value):
+        if isinstance(value, str):
+            # Pattern: any number of leading zeros followed by a valid ISO datetime
+            match = re.search(r'0*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?)', value)
+            if match:
+                corrected = match.group(1)
+                logger.debug(f"Fixed malformed datetime: {value} -> {corrected}")
+                value = corrected
+        return super().deserialize(value)
 
 
 # ============= MAP ATTRIBUTES FOR COMPLEX FIELDS =============
@@ -42,7 +61,7 @@ class UsageHistoryItem(MapAttribute):
     branch_id = UnicodeAttribute(null=True)  # Which branch used the promotion
     discount_amount = NumberAttribute()  # Actual discount applied
     transaction_amount = NumberAttribute()  # Total transaction amount
-    timestamp = UTCDateTimeAttribute()
+    timestamp = FixedUTCDateTimeAttribute()  # <-- Use custom attribute
     pos_terminal_id = UnicodeAttribute(null=True)  # Which POS terminal
     items = UnicodeAttribute(null=True)  # JSON string of items in transaction
 
@@ -51,7 +70,7 @@ class AuditLogItem(MapAttribute):
     """MapAttribute for tracking promotion changes"""
     action = UnicodeAttribute()  # 'created', 'activated', 'modified', 'deactivated'
     user_id = UnicodeAttribute()
-    timestamp = UTCDateTimeAttribute()
+    timestamp = FixedUTCDateTimeAttribute()  # <-- Use custom attribute
     changes = UnicodeAttribute(null=True)  # JSON string of what changed
     reason = UnicodeAttribute(null=True)
 
@@ -126,8 +145,8 @@ class Promotion(Model):
     target_ids = ListAttribute(of=TargetIdItem, default=list)
     
     # ============= DATE ATTRIBUTES =============
-    start_date = UTCDateTimeAttribute()
-    end_date = UTCDateTimeAttribute()
+    start_date = FixedUTCDateTimeAttribute()   # <-- Use custom attribute
+    end_date = FixedUTCDateTimeAttribute()     # <-- Use custom attribute
     
     # ============= STATUS AND MANAGEMENT =============
     isDeleted = BooleanAttribute(default=False)
@@ -140,14 +159,14 @@ class Promotion(Model):
     
     # ============= AUDIT FIELDS =============
     created_by = UnicodeAttribute()
-    created_at = UTCDateTimeAttribute(default=datetime.utcnow)
+    created_at = FixedUTCDateTimeAttribute(default=datetime.utcnow)   # <-- Use custom attribute
     status = UnicodeAttribute(default="draft")  # 'draft', 'active', 'inactive', 'deactivated', 'expired'
-    deactivated_at = UTCDateTimeAttribute(null=True)
+    deactivated_at = FixedUTCDateTimeAttribute(null=True)   # <-- Use custom attribute
     deactivated_by = UnicodeAttribute(null=True)
     
     # ============= ENHANCED FIELDS =============
     pos_sync_status = UnicodeAttribute(default="synced")  # 'synced', 'pending', 'failed'
-    last_pos_sync = UTCDateTimeAttribute(null=True)
+    last_pos_sync = FixedUTCDateTimeAttribute(null=True)   # <-- Use custom attribute
     priority = NumberAttribute(default=1)  # Lower number = higher priority
     min_purchase_amount = NumberAttribute(null=True)  # Minimum cart value
     stackable = BooleanAttribute(default=True)  # Can combine with other promotions
@@ -156,7 +175,7 @@ class Promotion(Model):
     audit_log = ListAttribute(of=AuditLogItem, default=list)  # Track all changes
     seasonal_tag = UnicodeAttribute(null=True)  # e.g., 'christmas', 'summer', 'back_to_school'
     customer_segment = UnicodeAttribute(default="all")  # 'all', 'new', 'returning'
-    updated_at = UTCDateTimeAttribute(default=datetime.utcnow)  # Track updates
+    updated_at = FixedUTCDateTimeAttribute(default=datetime.utcnow)   # <-- Use custom attribute
     
     # ============= INDEXES FOR COMMON QUERIES =============
     
@@ -164,7 +183,7 @@ class Promotion(Model):
         """GSI for querying by status"""
         class Meta:
             index_name = 'PromotionStatusIndex'
-            read_capacity_units = 5  # High read for checkout checks
+            read_capacity_units = 5
             write_capacity_units = 2
             projection = AllProjection()
         
@@ -180,7 +199,7 @@ class Promotion(Model):
             projection = AllProjection()
         
         pk = UnicodeAttribute(hash_key=True)  # Will be set to 'promotions'
-        start_date = UTCDateTimeAttribute(range_key=True)
+        start_date = FixedUTCDateTimeAttribute(range_key=True)   # <-- Use custom attribute
     
     class TargetTypeIndex(GlobalSecondaryIndex):
         """GSI for querying by target type"""
@@ -209,6 +228,7 @@ class Promotion(Model):
     date_range_index = DateRangeIndex()
     target_type_index = TargetTypeIndex()
     seasonal_index = SeasonalIndex()
+    
     
     # ============= CLASS METHODS =============
     
