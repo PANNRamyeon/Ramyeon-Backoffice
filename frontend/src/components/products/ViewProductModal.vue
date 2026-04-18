@@ -41,7 +41,7 @@
               <div class="col-md-6">
                 <div class="detail-item">
                   <label class="form-label text-tertiary-medium">Product ID</label>
-                  <div class="detail-value font-monospace bg-light p-2 rounded">{{ product._id }}</div>
+                  <div class="detail-value font-monospace bg-light p-2 rounded">{{ product.product_id }}</div>
                 </div>
               </div>
               <div class="col-md-6">

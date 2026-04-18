@@ -125,3 +125,7 @@ jspm_packages/
 # Temporary folders
 tmp/
 temp/
+
+# Claude Code AI assistant files
+.claude/
+CLAUDE.md

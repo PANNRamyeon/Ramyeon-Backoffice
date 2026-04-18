@@ -458,7 +458,7 @@ class ApiProductsService {
     try {
       const product = await this.getProductById(productId)
       return {
-        productId: product.data._id,
+        productId: product.data.product_id,
         productName: product.data.product_name,
         currentStock: product.data.stock,
         totalStock: product.data.total_stock || product.data.stock,

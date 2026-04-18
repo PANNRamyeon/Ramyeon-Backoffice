@@ -133,8 +133,8 @@
                 <option value="">Uncategorized</option>
                 <option 
                   v-for="category in categories" 
-                  :key="category._id" 
-                  :value="category._id"
+                  :key="category.category_id"
+                  :value="category.category_id"
                 >
                   {{ category.category_name }}
                 </option>
@@ -306,8 +306,8 @@
                       <option value="">Select Supplier</option>
                       <option 
                         v-for="supplier in suppliers" 
-                        :key="supplier._id" 
-                        :value="supplier._id"
+                        :key="supplier.supplier_id"
+                        :value="supplier.supplier_id"
                       >
                         {{ supplier.supplier_name || supplier.name }}
                       </option>
@@ -643,7 +643,7 @@ export default {
 
     const availableSubcategories = computed(() => {
       if (!productForm.value.category_id) return []
-      const category = props.categories.find(c => c._id === productForm.value.category_id)
+      const category = props.categories.find(c => c.category_id === productForm.value.category_id)
       return category?.sub_categories || []
     })
 
@@ -825,7 +825,7 @@ export default {
         }
 
         if (isEditMode.value) {
-          result = await updateProduct(editingProduct.value._id, formData)
+          result = await updateProduct(editingProduct.value.product_id, formData)
         } else {
           result = await createProduct(formData)
         }

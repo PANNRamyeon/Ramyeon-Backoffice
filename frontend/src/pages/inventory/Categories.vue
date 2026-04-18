@@ -113,7 +113,7 @@
     <div v-if="!loading && !error" class="row g-3 mb-4">
       <div 
         v-for="category in displayedCategories" 
-        :key="category._id"
+        :key="category.category_id"
         class="col-6 col-md-3"
       >
         <CardTemplate
@@ -154,7 +154,7 @@
             <div class="d-flex gap-1 mt-2 category-card-actions">
               <button 
                 class="btn btn-view btn-sm"
-                @click.stop="viewCategory(category._id)"
+                @click.stop="viewCategory(category.category_id)"
                 :disabled="loading"
               >
                 <Eye :size="14" />
@@ -248,7 +248,7 @@ export default {
       return filteredCategories.value.filter(category => {
         // Filter out categories with names like "Uncategorized" or IDs starting with "UNCTGRY-"
         return !(
-          category._id?.startsWith('UNCTGRY-') ||
+          category.category_id?.startsWith('UNCTGRY-') ||
           category.category_name?.toLowerCase() === 'uncategorized'
         )
       })
@@ -256,8 +256,8 @@ export default {
 
     // Count uncategorized products
     const getUncategorizedCount = () => {
-      const uncategorizedCategory = categories.value.find(category => 
-        category._id?.startsWith('UNCTGRY-') || 
+      const uncategorizedCategory = categories.value.find(category =>
+        category.category_id?.startsWith('UNCTGRY-') ||
         category.category_name?.toLowerCase() === 'uncategorized'
       )
       
@@ -437,7 +437,7 @@ export default {
         
         if (!confirmed) return
 
-        await this.softDeleteCategory(category._id)
+        await this.softDeleteCategory(category.category_id)
         
         // Refresh uncategorized count since products might be moved there
         await this.fetchUncategorizedCount()

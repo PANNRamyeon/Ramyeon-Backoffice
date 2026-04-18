@@ -441,7 +441,7 @@ export default {
 
     openEditMode(categoryData) {
       this.isEditMode = true
-      this.editingCategoryId = categoryData._id || categoryData.id
+      this.editingCategoryId = categoryData.category_id || categoryData.id
 
       // Populate form with existing data
       this.formData = {

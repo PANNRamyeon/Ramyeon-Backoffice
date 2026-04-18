@@ -298,34 +298,56 @@ class CategoryService:
             logger.error(f"Error creating category: {e}", exc_info=True)
             raise Exception(f"Error creating category: {str(e)}")
         
+    def _build_product_count_map(self) -> dict:
+        """
+        Single DynamoDB query for all active products, returning a nested dict
+        { category_id: { subcategory_name: count } }.
+
+        Replaces per-category queries so the category list needs only 1 round-trip
+        instead of N (one per category).
+        """
+        try:
+            condition = (Product.isDeleted == False) & (Product.status == "active")
+            products = Product.query("products", filter_condition=condition)
+            counts: dict = {}
+            for p in products:
+                cat = getattr(p, 'category_id', None) or 'unknown'
+                sub = getattr(p, 'subcategory_name', None) or 'None'
+                if cat not in counts:
+                    counts[cat] = {}
+                counts[cat][sub] = counts[cat].get(sub, 0) + 1
+            return counts
+        except Exception as e:
+            logger.error(f"Error building product count map: {e}")
+            return {}
+
     def get_all_categories(self, include_deleted=False, limit=None, skip=None, include_product_counts=False):
         """Get all categories, optionally with product counts"""
         try:
             categories = Category.get_all_categories(include_deleted=include_deleted)
-            
+
             # Manual pagination (PynamoDB returns list for small datasets)
             if skip:
                 categories = categories[skip:]
             if limit:
                 categories = categories[:limit]
-            
+
+            # Build count map once (1 DynamoDB query) instead of once per category
+            count_map = self._build_product_count_map() if include_product_counts else None
+
             # Convert to dicts
             result = []
             for category in categories:
                 cat_dict = category.to_dict()
-                
-                # Add product counts only if requested (expensive operation)
-                if include_product_counts and 'sub_categories' in cat_dict:
+
+                if count_map is not None and cat_dict.get('sub_categories'):
+                    cat_counts = count_map.get(category.sk, {})
                     for subcategory in cat_dict['sub_categories']:
-                        subcategory['product_count'] = self.get_subcategory_product_count(
-                            category.sk,
-                            subcategory['name']
-                        )
-                elif 'sub_categories' in cat_dict:
-                    # Set count to None when not requested to indicate it's not calculated
+                        subcategory['product_count'] = cat_counts.get(subcategory['name'], 0)
+                elif cat_dict.get('sub_categories'):
                     for subcategory in cat_dict['sub_categories']:
                         subcategory['product_count'] = None
-                
+
                 result.append(cat_dict)
 
             return result

@@ -176,28 +176,57 @@ class Category(Model):
             raise
     
     @classmethod
+    def exists(cls, category_id: str) -> bool:
+        """
+        Return True if a category with this ID exists (supports CTGY-XXX and CAT-XXX).
+        """
+        if not category_id or not str(category_id).strip():
+            return False
+        try:
+            cls.get("category", category_id.strip())
+            return True
+        except cls.DoesNotExist:
+            pass
+        try:
+            if not category_id.strip().startswith('CTGY-'):
+                normalized = f"CTGY-{category_id.strip().zfill(3)}"
+                cls.get("category", normalized)
+                return True
+        except cls.DoesNotExist:
+            pass
+        except Exception:
+            pass
+        return False
+
+    @classmethod
     def get_by_id(cls, category_id: str) -> 'Category | None':
         """
         Get category by ID
         
         Args:
-            category_id: Format "CTGY-001" or just "001"
+            category_id: Format "CTGY-001", "CAT-001", or just "001"
         
         Returns:
             Category or None if not found
         """
         try:
-            # Ensure proper format
-            if not category_id.startswith('CTGY-'):
-                category_id = f"CTGY-{category_id.zfill(3)}"  # Pad to 3 digits if needed
-            
-            return cls.get("category", category_id)
+            return cls.get("category", category_id.strip())
+        except cls.DoesNotExist:
+            pass
+        except Exception as e:
+            logger.error(f"Error fetching category {category_id}: {str(e)}")
+            return None
+        try:
+            if not category_id.strip().startswith('CTGY-'):
+                normalized = f"CTGY-{category_id.strip().zfill(3)}"
+                return cls.get("category", normalized)
         except cls.DoesNotExist:
             logger.warning(f"Category not found: {category_id}")
             return None
         except Exception as e:
             logger.error(f"Error fetching category {category_id}: {str(e)}")
             return None
+        return None
     
     @classmethod
     def get_by_name(cls, category_name: str) -> 'Category | None':

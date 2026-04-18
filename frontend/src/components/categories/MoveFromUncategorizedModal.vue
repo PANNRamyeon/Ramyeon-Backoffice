@@ -129,17 +129,17 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="product in filteredProducts" :key="product._id">
+                <tr v-for="product in filteredProducts" :key="product.product_id">
                   <td>
                     <input
                       type="checkbox"
                       class="form-check-input"
-                      :value="product._id"
+                      :value="product.product_id"
                       v-model="selectedProducts"
                     />
                   </td>
                   <td>
-                    <code class="code-pill">{{ product._id }}</code>
+                    <code class="code-pill">{{ product.product_id }}</code>
                   </td>
                   <td>
                     <div class="fw-semibold text-primary">{{ product.product_name }}</div>
@@ -255,18 +255,18 @@ export default {
       return this.products.filter(product => {
         return (
           product.product_name?.toLowerCase().includes(term) ||
-          product._id?.toLowerCase().includes(term) ||
+          product.product_id?.toLowerCase().includes(term) ||
           product.SKU?.toLowerCase().includes(term)
         )
       })
     },
     areAllVisibleSelected() {
       if (!this.filteredProducts.length) return false
-      return this.filteredProducts.every(product => this.selectedProducts.includes(product._id))
+      return this.filteredProducts.every(product => this.selectedProducts.includes(product.product_id))
     },
     isIndeterminate() {
       const selectedOnPage = this.filteredProducts.filter(product =>
-        this.selectedProducts.includes(product._id)
+        this.selectedProducts.includes(product.product_id)
       )
       return selectedOnPage.length > 0 && selectedOnPage.length < this.filteredProducts.length
     }
@@ -313,11 +313,11 @@ export default {
         const response = await categoryApiService.GetUncategorizedCategory()
         const uncategorized = response?.uncategorized_category
 
-        if (!uncategorized?._id) {
+        if (!uncategorized?.category_id) {
           throw new Error('Unable to find the Uncategorized category.')
         }
 
-        this.uncategorizedCategoryId = uncategorized._id
+        this.uncategorizedCategoryId = uncategorized.category_id
         this.uncategorizedCategoryName = uncategorized.category_name || 'Uncategorized'
 
         const productsResponse = await categoryApiService.FindProdcategory({
@@ -341,7 +341,7 @@ export default {
     },
     toggleSelectAll(event) {
       if (event.target.checked) {
-        this.selectedProducts = this.filteredProducts.map(product => product._id)
+        this.selectedProducts = this.filteredProducts.map(product => product.product_id)
       } else {
         this.selectedProducts = []
       }
@@ -367,7 +367,7 @@ export default {
         )
 
         this.products = this.products.filter(
-          product => !this.selectedProducts.includes(product._id)
+          product => !this.selectedProducts.includes(product.product_id)
         )
         this.selectedProducts = []
 

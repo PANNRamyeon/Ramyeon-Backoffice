@@ -1,74 +1,99 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny
 from django.http import HttpResponse
-from django.views import View  # ← ADD THIS LINE
-from app.services.inventory.product_service import ProductService
+from django.views import View
+
+from datetime import datetime, timedelta
+
+from app.decorators.authenticationDecorator import require_authentication
+from app.services.inventory.product_service import (
+    ProductService,
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+)
+from app.utils.singleton import get_singleton
+from app.services.inventory.batch_service import BatchService
+from models.Product import Product, batch_update_stock
+
 import logging
-import json  # ← ADD THIS LINE
+import json
 
 logger = logging.getLogger(__name__)
 
 # ================ PRODUCT VIEWS ================
 
 class TestTemplateView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
-    
+    @require_authentication
     def get(self, request):
         return Response({"message": "TEST ENDPOINT WORKS!"}, status=200)
 
+
 class ProductListView(APIView):
+    @require_authentication
     def get(self, request):
-        """Get all products with optional filters and pagination"""
+        """Get products with optional filters and pagination (50 per page by default)."""
         try:
-            product_service = ProductService()
-            
-            # Get query parameters for filtering
-            filters = {}
-            if request.GET.get('category_id'):
-                filters['category_id'] = request.GET.get('category_id')
-            if request.GET.get('subcategory_name'):  # ADDED subcategory filtering
-                filters['subcategory_name'] = request.GET.get('subcategory_name')
-            if request.GET.get('status'):
-                filters['status'] = request.GET.get('status')
-            if request.GET.get('stock_level'):
-                filters['stock_level'] = request.GET.get('stock_level')
-            if request.GET.get('search'):
-                filters['search'] = request.GET.get('search')
-            
-            include_deleted = request.GET.get('include_deleted', 'false').lower() == 'true'
-            
-            products = product_service.get_all_products(
-                filters=filters if filters else None, 
-                include_deleted=include_deleted,
-                include_images=False  # Exclude images for faster loading in product list
-            )
-            
-            return Response({
-                'message': f'Found {len(products)} products',
-                'data': products
-            }, status=status.HTTP_200_OK)
+            category_id = request.GET.get('category_id')
+            status_filter = request.GET.get('status')
+            search_term = request.GET.get('search')
+            subcategory_name = request.GET.get('subcategory_name')
+            page_size = request.GET.get('page_size', DEFAULT_PAGE_SIZE)
+            page_token = request.GET.get('page_token')
+
+            try:
+                page_size = min(max(1, int(page_size)), MAX_PAGE_SIZE)
+            except (TypeError, ValueError):
+                page_size = DEFAULT_PAGE_SIZE
+
+            # All paths use server-side pagination: only one page is fetched from DynamoDB.
+            if search_term:
+                products, next_page_token = ProductService.search_products_by_name_paginated(
+                    search_term=search_term, page_size=page_size, page_token=page_token
+                )
+            elif category_id:
+                products, next_page_token = ProductService.get_products_by_category_paginated(
+                    category_id=category_id, page_size=page_size, page_token=page_token
+                )
+            elif status_filter:
+                products, next_page_token = ProductService.get_products_by_status_paginated(
+                    status=status_filter, page_size=page_size, page_token=page_token
+                )
+            else:
+                products, next_page_token = ProductService.get_products_paginated(
+                    page_size=page_size, page_token=page_token
+                )
+
+            if subcategory_name:
+                products = [p for p in products if getattr(p, "subcategory_name", None) == subcategory_name]
+
+            data = [p.to_dict() for p in products]
+            payload = {
+                'message': f'Found {len(data)} products',
+                'data': data,
+                'page_size': len(data),
+            }
+            if next_page_token:
+                payload['next_page_token'] = next_page_token
+            return Response(payload, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in ProductListView.get: {e}")
             return Response(
-                {"error": str(e)}, 
+                {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+    @require_authentication
     def post(self, request):
         """Create a new product"""
         try:
-            product_service = ProductService()
-            
             # Convert to plain dict
             product_data = dict(request.data)
-            
-            new_product = product_service.create_product(product_data)
+            new_product = ProductService.create_product(product_data)
+
             return Response({
                 'message': 'Product created successfully', 
-                'data': new_product
+                'data': new_product.to_dict()
             }, status=status.HTTP_201_CREATED)
         except ValueError as ve:
             return Response(
@@ -83,34 +108,31 @@ class ProductListView(APIView):
             )
 
 class ProductDetailView(APIView):
+    @require_authentication
     def get(self, request, product_id):
         """Get product by ID"""
         try:
-            product_service = ProductService()
             include_deleted = request.GET.get('include_deleted', 'false').lower() == 'true'
-            product = product_service.get_product_by_id(product_id, include_deleted)
+            product = ProductService.get_product_by_id(product_id, include_deleted=include_deleted)
             if not product:
                 return Response(
                     {"error": "Product not found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
-            return Response({
-                'data': product
-            }, status=status.HTTP_200_OK)
+            return Response({'data': product.to_dict()}, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in ProductDetailView.get: {e}")
             return Response(
                 {"error": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+    @require_authentication
     def put(self, request, product_id):
         """Update product - SIMPLIFIED (no complex category sync)"""
         try:
-            product_service = ProductService()
             product_data = request.data
-            
-            updated_product = product_service.update_product(product_id, product_data)
+            updated_product = ProductService.update_product(product_id, product_data)
             if not updated_product:
                 return Response(
                     {"error": "Product not found"}, 
@@ -118,7 +140,7 @@ class ProductDetailView(APIView):
                 )
             return Response({
                 'message': 'Product updated successfully', 
-                'data': updated_product
+                'data': updated_product.to_dict()
             }, status=status.HTTP_200_OK)
         except ValueError as ve:
             return Response(
@@ -131,7 +153,8 @@ class ProductDetailView(APIView):
                 {"error": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+    @require_authentication
     def delete(self, request, product_id):
         """Delete product (soft delete by default)"""
         try:
@@ -154,15 +177,13 @@ class ProductDetailView(APIView):
                 {"error": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
+    @require_authentication
     def patch(self, request, product_id):
         """Partial update product - SIMPLIFIED"""
         try:
-            product_service = ProductService()
             product_data = request.data
-            
-            # Note: Removed partial_update parameter since the refactored service doesn't need it
-            updated_product = product_service.update_product(product_id, product_data)
+            updated_product = ProductService.update_product(product_id, product_data)
             if not updated_product:
                 return Response(
                     {"error": "Product not found"}, 
@@ -170,7 +191,7 @@ class ProductDetailView(APIView):
                 )
             return Response({
                 'message': 'Product updated successfully', 
-                'data': updated_product
+                'data': updated_product.to_dict()
             }, status=status.HTTP_200_OK)
         except ValueError as ve:
             return Response(
@@ -185,16 +206,18 @@ class ProductDetailView(APIView):
             )
 
 class ProductRestoreView(APIView):
+    @require_authentication
     def post(self, request, product_id):
         """Restore a soft-deleted product"""
         try:
-            product_service = ProductService()
-            restored = product_service.restore_product(product_id)
-            if not restored:
+            product = Product.get_by_id(product_id, include_deleted=True)
+            if not product or not getattr(product, "isDeleted", False):
                 return Response(
                     {"error": "Product not found or not deleted"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
+
+            product.restore()
             return Response(
                 {"message": "Product restored successfully"}, 
                 status=status.HTTP_200_OK
@@ -207,161 +230,308 @@ class ProductRestoreView(APIView):
             )
 
 class ProductBySkuView(APIView):
+    @require_authentication
     def get(self, request, sku):
         """Get product by SKU"""
         try:
-            product_service = ProductService()
             include_deleted = request.GET.get('include_deleted', 'false').lower() == 'true'
-            product = product_service.get_product_by_sku(sku, include_deleted)
+            if include_deleted:
+                product = Product.get_by_sku(sku, include_deleted=True)
+            else:
+                product = ProductService.get_product_by_sku(sku)
             if not product:
                 return Response(
                     {"error": "Product not found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
-            return Response({
-                'data': product
-            }, status=status.HTTP_200_OK)
+            return Response({'data': product.to_dict()}, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in ProductBySkuView.get: {e}")
             return Response(
-                {"error": str(e)}, 
+                {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class ProductByBarcodeView(APIView):
+    @require_authentication
+    def get(self, request, barcode):
+        """Get product by barcode"""
+        try:
+            include_deleted = request.GET.get('include_deleted', 'false').lower() == 'true'
+            product = ProductService.get_product_by_barcode(barcode, include_deleted=include_deleted)
+            if not product:
+                return Response(
+                    {"error": "Product not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            return Response({'data': product.to_dict()}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error in ProductByBarcodeView.get: {e}")
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # ================ STOCK MANAGEMENT VIEWS ================
 
 class ProductStockUpdateView(APIView):
-    def put(self, request, product_id):
-        """Update product stock with operation types"""
+    """Stock updates are batch-aware: add creates a batch, remove uses FEFO, set reconciles with batches."""
+
+    def _parse_expiry(self, value):
+        """Parse expiry_date from request (ISO string or None). Returns naive UTC datetime or None."""
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
         try:
-            product_service = ProductService()
-            
+            s = value.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            return dt.replace(tzinfo=None) if dt.tzinfo else dt
+        except (ValueError, TypeError):
+            return None
+
+    @require_authentication
+    def put(self, request, product_id):
+        """Update product stock with operation types (add/remove/set). All operations are batch-aware."""
+        try:
             stock_data = {
-                'operation_type': request.data.get('operation_type', 'set'),
-                'quantity': request.data.get('quantity'),
-                'reason': request.data.get('reason', 'Manual adjustment')
+                "operation_type": request.data.get("operation_type", "set"),
+                "quantity": request.data.get("quantity"),
+                "reason": request.data.get("reason", "Manual adjustment"),
             }
-            
-            if stock_data['quantity'] is None:
+
+            if stock_data["quantity"] is None:
                 return Response(
-                    {"error": "Quantity is required"}, 
-                    status=status.HTTP_400_BAD_REQUEST
+                    {"error": "Quantity is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            
-            valid_operations = ['add', 'remove', 'set']
-            if stock_data['operation_type'] not in valid_operations:
+
+            valid_operations = ["add", "remove", "set"]
+            if stock_data["operation_type"] not in valid_operations:
                 return Response(
-                    {"error": f"Invalid operation_type. Must be one of: {valid_operations}"}, 
-                    status=status.HTTP_400_BAD_REQUEST
+                    {"error": f"Invalid operation_type. Must be one of: {valid_operations}"},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            
-            updated_product = product_service.update_stock(product_id, stock_data)
-            
-            if not updated_product:
+
+            product = ProductService.get_product_by_id(product_id)
+            if not product:
+                return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Use the product's actual SK for all batch operations so batches and sync match the table key
+            effective_product_id = product.sk
+
+            batch_svc = get_singleton(BatchService)
+            operation = stock_data["operation_type"]
+            quantity = int(stock_data["quantity"])
+            reason = stock_data.get("reason", "Manual adjustment")
+
+            if operation == "add":
+                # Create a new batch so expiry, cost, and supplier are tracked
+                expiry_date = self._parse_expiry(request.data.get("expiry_date"))
+                if not expiry_date:
+                    expiry_date = datetime.utcnow() + timedelta(days=365)
+                cost = request.data.get("cost_price")
+                if cost is not None:
+                    cost = float(cost)
+                else:
+                    cost = float(getattr(product, "cost_price", 0) or 0)
+                batch_data = {
+                    "product_id": effective_product_id,
+                    "quantity_received": quantity,
+                    "supplier_id": request.data.get("supplier_id") or "MANUAL",
+                    "batch_number": request.data.get("batch_number") or f"MANUAL-{datetime.utcnow().strftime('%Y-%m-%d-%H%M')}",
+                    "cost_price": cost,
+                    "expiry_date": expiry_date,
+                    "date_received": datetime.utcnow(),
+                }
+                if request.data.get("shipment_id"):
+                    batch_data["shipment_id"] = request.data.get("shipment_id")
+                created_batch = batch_svc.create_batch(batch_data)
+                updated_product = ProductService.get_product_by_id(effective_product_id)
                 return Response(
-                    {"error": "Product not found"}, 
-                    status=status.HTTP_404_NOT_FOUND
+                    {
+                        "message": "Stock added via new batch",
+                        "batch": created_batch,
+                        "data": updated_product.to_dict() if updated_product else None,
+                    },
+                    status=status.HTTP_200_OK,
                 )
-                
-            return Response({
-                'message': 'Stock updated successfully', 
-                'data': updated_product
-            }, status=status.HTTP_200_OK)
-            
+
+            if operation == "remove":
+                # Deduct from batches using FEFO (first-expired-first-out)
+                deductions = batch_svc.deduct_stock_fifo(
+                    product_id=effective_product_id,
+                    quantity_needed=quantity,
+                    reason=reason,
+                    adjusted_by=getattr(request, "user_id", None) or None,
+                    notes=reason,
+                )
+                updated_product = ProductService.get_product_by_id(effective_product_id)
+                return Response(
+                    {
+                        "message": "Stock removed from batches (FEFO)",
+                        "deductions": deductions,
+                        "data": updated_product.to_dict() if updated_product else None,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            # operation == 'set': reconcile with batch total
+            current_from_batches = batch_svc.get_total_stock_from_batches(effective_product_id)
+            if quantity == current_from_batches:
+                updated_product = ProductService.get_product_by_id(effective_product_id)
+                return Response(
+                    {"message": "Stock already at target", "data": updated_product.to_dict() if updated_product else None},
+                    status=status.HTTP_200_OK,
+                )
+            if quantity > current_from_batches:
+                add_qty = quantity - current_from_batches
+                expiry_date = self._parse_expiry(request.data.get("expiry_date")) or (datetime.utcnow() + timedelta(days=365))
+                cost = request.data.get("cost_price")
+                cost = float(cost) if cost is not None else float(getattr(product, "cost_price", 0) or 0)
+                batch_data = {
+                    "product_id": effective_product_id,
+                    "quantity_received": add_qty,
+                    "supplier_id": request.data.get("supplier_id") or "MANUAL",
+                    "batch_number": request.data.get("batch_number") or f"ADJUST-{datetime.utcnow().strftime('%Y-%m-%d-%H%M')}",
+                    "cost_price": cost,
+                    "expiry_date": expiry_date,
+                    "date_received": datetime.utcnow(),
+                }
+                batch_svc.create_batch(batch_data)
+                updated_product = ProductService.get_product_by_id(effective_product_id)
+                return Response(
+                    {
+                        "message": f"Stock set to {quantity} (added adjustment batch of {add_qty})",
+                        "data": updated_product.to_dict() if updated_product else None,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            # quantity < current_from_batches: deduct excess via FEFO
+            deduct_qty = current_from_batches - quantity
+            batch_svc.deduct_stock_fifo(
+                product_id=effective_product_id,
+                quantity_needed=deduct_qty,
+                reason=f"Stock set / correction: {reason}",
+                adjusted_by=getattr(request, "user_id", None) or None,
+                notes=reason,
+            )
+            updated_product = ProductService.get_product_by_id(effective_product_id)
+            return Response(
+                {
+                    "message": f"Stock set to {quantity} (deducted {deduct_qty} from batches)",
+                    "data": updated_product.to_dict() if updated_product else None,
+                },
+                status=status.HTTP_200_OK,
+            )
+
         except ValueError as ve:
             return Response(
-                {"error": str(ve)}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": str(ve)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as e:
             logger.error(f"Error in ProductStockUpdateView.put: {e}")
             return Response(
-                {"error": str(e)}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-    
+
+    @require_authentication
     def patch(self, request, product_id):
         """Alternative PATCH method for stock updates"""
         return self.put(request, product_id)
 
 class StockAdjustmentView(APIView):
+    @require_authentication
     def post(self, request, product_id):
-        """Adjust stock for sales (remove stock)"""
+        """Adjust stock for sales: deducts from batches using FEFO (first-expired-first-out)."""
         try:
-            product_service = ProductService()
-            quantity_sold = request.data.get('quantity_sold')
-            
+            quantity_sold = request.data.get("quantity_sold")
+
             if quantity_sold is None:
                 return Response(
-                    {"error": "quantity_sold is required"}, 
-                    status=status.HTTP_400_BAD_REQUEST
+                    {"error": "quantity_sold is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            
-            updated_product = product_service.adjust_stock_for_sale(product_id, quantity_sold)
-            
-            if not updated_product:
-                return Response(
-                    {"error": "Product not found"}, 
-                    status=status.HTTP_404_NOT_FOUND
-                )
-                
-            return Response({
-                'message': 'Stock adjusted for sale successfully', 
-                'data': updated_product
-            }, status=status.HTTP_200_OK)
-            
+
+            batch_svc = get_singleton(BatchService)
+            deductions = batch_svc.deduct_stock_fifo(
+                product_id=product_id,
+                quantity_needed=int(quantity_sold),
+                reason="sale",
+                adjusted_by=getattr(request, "user_id", None) or None,
+                notes="Sale adjustment",
+            )
+            updated_product = ProductService.get_product_by_id(product_id)
+
+            return Response(
+                {
+                    "message": "Stock adjusted for sale (FEFO deduction)",
+                    "deductions": deductions,
+                    "data": updated_product.to_dict() if updated_product else None,
+                },
+                status=status.HTTP_200_OK,
+            )
+
         except ValueError as ve:
             return Response(
-                {"error": str(ve)}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": str(ve)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as e:
             logger.error(f"Error in StockAdjustmentView.post: {e}")
             return Response(
-                {"error": str(e)}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 class RestockProductView(APIView):
+    @require_authentication
     def post(self, request, product_id):
-        """Restock product from supplier"""
+        """Restock product by creating a batch (from supplier). Accepts supplier_info and batch_info."""
         try:
-            product_service = ProductService()
-            quantity_received = request.data.get('quantity_received')
-            supplier_info = request.data.get('supplier_info')
-            
+            quantity_received = request.data.get("quantity_received")
+            supplier_info = request.data.get("supplier_info") or {}
+            batch_info = request.data.get("batch_info") or {}
+
             if quantity_received is None:
                 return Response(
-                    {"error": "quantity_received is required"}, 
-                    status=status.HTTP_400_BAD_REQUEST
+                    {"error": "quantity_received is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            
-            updated_product = product_service.restock_product(product_id, quantity_received, supplier_info)
-            
-            if not updated_product:
-                return Response(
-                    {"error": "Product not found"}, 
-                    status=status.HTTP_404_NOT_FOUND
-                )
-                
-            return Response({
-                'message': 'Product restocked successfully', 
-                'data': updated_product
-            }, status=status.HTTP_200_OK)
-            
+
+            result = ProductService.restock_product(
+                product_id=product_id,
+                quantity_received=int(quantity_received),
+                supplier_info=supplier_info,
+                batch_info=batch_info,
+            )
+
+            return Response(
+                {
+                    "message": "Product restocked (batch created)",
+                    "batch": result.get("batch"),
+                    "data": result.get("product"),
+                },
+                status=status.HTTP_200_OK,
+            )
+
         except ValueError as ve:
             return Response(
-                {"error": str(ve)}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": str(ve)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as e:
             logger.error(f"Error in RestockProductView.post: {e}")
             return Response(
-                {"error": str(e)}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 class BulkStockUpdateView(APIView):
+    @require_authentication
     def post(self, request):
         """Handle bulk stock updates for multiple products"""
         try:
@@ -373,9 +543,9 @@ class BulkStockUpdateView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            product_service = ProductService()
-            results = product_service.bulk_update_stock(stock_updates)
-            
+            # Use the Product model's batch_update_stock helper
+            results = batch_update_stock(stock_updates)
+
             return Response({
                 'message': 'Bulk stock update completed',
                 'results': results
@@ -389,31 +559,42 @@ class BulkStockUpdateView(APIView):
             )
         
 class StockHistoryView(APIView):
+    @require_authentication
     def get(self, request, product_id):
         """Get stock change history for a specific product"""
         try:
-            product_service = ProductService()
-            
-            product = product_service.get_product_by_id(product_id)
-            
+            product = ProductService.get_product_by_id(product_id, include_deleted=False)
             if not product:
                 return Response(
                     {'error': 'Product not found'}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            stock_history = product.get('stock_history', [])
-            
-            # Sort by most recent first
-            stock_history.sort(
-                key=lambda x: x.get('timestamp', ''), 
-                reverse=True
-            )
-            
+            # Derive a simple stock history from sync_logs with action 'stock_update'
+            stock_history = []
+            for log in getattr(product, "sync_logs", []):
+                try:
+                    if getattr(log, "action", "") != "stock_update":
+                        continue
+                    # Expect at least one detail item with total_stock change
+                    for detail in getattr(log, "details", []):
+                        if getattr(detail, "field", "") == "total_stock":
+                            stock_history.append({
+                                "timestamp": log.last_updated.isoformat() if log.last_updated else None,
+                                "old_stock": detail.old_value,
+                                "new_stock": detail.new_value,
+                                "source": log.source,
+                                "status": log.status,
+                            })
+                except Exception:
+                    continue
+
+            stock_history.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+
             return Response({
                 'product_id': product_id,
-                'product_name': product.get('product_name'),
-                'current_stock': product.get('stock'),
+                'product_name': product.product_name,
+                'current_stock': int(product.total_stock) if product.total_stock else 0,
                 'stock_history': stock_history
             }, status=status.HTTP_200_OK)
             
@@ -427,15 +608,15 @@ class StockHistoryView(APIView):
 # ================ PRODUCT REPORTS VIEWS ================
 
 class LowStockProductsView(APIView):
+    @require_authentication
     def get(self, request):
         """Get products with low stock"""
         try:
-            product_service = ProductService()
-            branch_id = request.GET.get('branch_id')
-            products = product_service.get_low_stock_products(branch_id)
+            products = ProductService.get_low_stock_products()
+            data = [p.to_dict() for p in products]
             return Response({
-                'message': f'Found {len(products)} products with low stock',
-                'data': products
+                'message': f'Found {len(data)} products with low stock',
+                'data': data,
             }, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in LowStockProductsView.get: {e}")
@@ -445,15 +626,16 @@ class LowStockProductsView(APIView):
             )
 
 class ExpiringProductsView(APIView):
+    @require_authentication
     def get(self, request):
         """Get products expiring within specified days"""
         try:
-            product_service = ProductService()
             days_ahead = int(request.GET.get('days_ahead', 30))
-            products = product_service.get_expiring_products(days_ahead)
+            products = ProductService.get_expiring_soon_products(days=days_ahead)
+            data = [p.to_dict() for p in products]
             return Response({
-                'message': f'Found {len(products)} products expiring within {days_ahead} days',
-                'data': products
+                'message': f'Found {len(data)} products expiring within {days_ahead} days',
+                'data': data,
             }, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in ExpiringProductsView.get: {e}")
@@ -463,21 +645,26 @@ class ExpiringProductsView(APIView):
             )
 
 class ProductsByCategoryView(APIView):
+    @require_authentication
     def get(self, request, category_id):
         """Get products by category with optional subcategory filter"""
         try:
-            product_service = ProductService()
             subcategory_name = request.GET.get('subcategory_name')  # ADDED subcategory filtering
-            
-            products = product_service.get_products_by_category(category_id, subcategory_name)
-            
-            message = f'Found {len(products)} products in category'
+
+            products = ProductService.get_products_by_category(category_id)
+
+            if subcategory_name:
+                products = [p for p in products if getattr(p, "subcategory_name", None) == subcategory_name]
+
+            data = [p.to_dict() for p in products]
+
+            message = f'Found {len(data)} products in category'
             if subcategory_name:
                 message += f' > {subcategory_name}'
                 
             return Response({
                 'message': message,
-                'data': products
+                'data': data,
             }, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in ProductsByCategoryView.get: {e}")
@@ -487,14 +674,15 @@ class ProductsByCategoryView(APIView):
             )
 
 class DeletedProductsView(APIView):
+    @require_authentication
     def get(self, request):
         """Get all soft-deleted products"""
         try:
-            product_service = ProductService()
-            products = product_service.get_deleted_products()
+            products = ProductService.get_products_by_status(status="deleted", include_deleted=True)
+            data = [p.to_dict() for p in products]
             return Response({
-                'message': f'Found {len(products)} deleted products',
-                'data': products
+                'message': f'Found {len(data)} deleted products',
+                'data': data,
             }, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in DeletedProductsView.get: {e}")
@@ -506,6 +694,7 @@ class DeletedProductsView(APIView):
 # ================ PRODUCT SYNC VIEWS ================
 
 class ProductSyncView(APIView):
+    @require_authentication
     def post(self, request):
         """Sync products between local and cloud"""
         try:
@@ -538,6 +727,7 @@ class ProductSyncView(APIView):
 # ================ PRODUCT IMPORT/EXPORT VIEWS ================
 
 class BulkCreateProductsView(APIView):
+    @require_authentication
     def post(self, request):
         """Create multiple products in batch"""
         try:
@@ -581,6 +771,7 @@ class BulkCreateProductsView(APIView):
             )
 
 class ProductImportView(APIView):
+    @require_authentication
     def post(self, request):
         """Import products from CSV/Excel file"""
         try:
@@ -629,6 +820,7 @@ class ProductImportView(APIView):
         
         
 class ProductExportView(APIView):
+    @require_authentication
     def get(self, request):
         """Export products to CSV/Excel (with uncategorized filter support)"""
         try:
@@ -784,6 +976,7 @@ class ProductExportView(APIView):
             return Response({"error": f"Export failed: {str(e)}"},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @require_authentication
     def get(self, request):
         """Export products to CSV/Excel - FIXED VERSION"""
         try:
@@ -931,7 +1124,8 @@ class ProductExportView(APIView):
 
 class ImportTemplateView(View):  # ← Inherit from View, not APIView!
     """Generate import template file - Using Django View instead of DRF APIView"""
-   
+
+    @require_authentication
     def get(self, request):
         """Generate import template file"""
         print("=" * 100)
@@ -975,6 +1169,7 @@ class ImportTemplateView(View):  # ← Inherit from View, not APIView!
             )
         
 class BulkDeleteProductsView(APIView):
+    @require_authentication
     def post(self, request):
         try:
             product_ids = request.data.get('product_ids', [])
@@ -1007,6 +1202,7 @@ class BulkDeleteProductsView(APIView):
 class ProductDetailsExportCSVView(APIView):
     """Export a single product and related data as a CSV"""
 
+    @require_authentication
     def get(self, request, product_id):
         try:
             product_service = ProductService()

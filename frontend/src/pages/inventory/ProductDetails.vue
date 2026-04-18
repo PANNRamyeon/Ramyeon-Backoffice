@@ -28,7 +28,7 @@
       </div>
 
       <!-- Product Not Found State -->
-      <div v-else-if="!currentProduct || !currentProduct._id" class="flex items-center justify-center h-full">
+      <div v-else-if="!currentProduct || !currentProduct.product_id" class="flex items-center justify-center h-full">
         <div class="text-center">
           <div class="text-6xl mb-4">📦</div>
           <h2 class="text-2xl font-bold mb-2 text-primary">Product Not Found</h2>
@@ -43,7 +43,7 @@
       </div>
 
       <!-- Product Content - Only show when we have a valid product -->
-      <div v-else-if="currentProduct._id" class="h-full">
+      <div v-else-if="currentProduct.product_id" class="h-full">
         <!-- Success Message -->
         <div v-if="successMessage" class="mx-6 mt-4 status-success rounded-md">
           {{ successMessage }}
@@ -203,19 +203,19 @@ export default {
 
     // Methods
     const handleEdit = () => {
-      if (currentProduct.value && currentProduct.value._id) {
+      if (currentProduct.value && currentProduct.value.product_id) {
         addProductModal.value?.openEdit?.(currentProduct.value)
       }
     }
 
     const handleStockAdjustment = () => {
-      if (currentProduct.value && currentProduct.value._id) {
+      if (currentProduct.value && currentProduct.value.product_id) {
         stockUpdateModal.value?.openStock?.(currentProduct.value)
       }
     }
 
     const handleImageUpload = () => {
-      if (currentProduct.value && currentProduct.value._id) {
+      if (currentProduct.value && currentProduct.value.product_id) {
         addProductModal.value?.openEdit?.(currentProduct.value)
       }
     }
@@ -232,7 +232,7 @@ export default {
       const confirmed = confirm(`Are you sure you want to delete "${currentProduct.value.product_name}"?`)
       if (confirmed) {
         try {
-          await deleteProduct(currentProduct.value._id)
+          await deleteProduct(currentProduct.value.product_id)
           router.push('/products')
         } catch (err) {
           console.error('❌ Error deleting product:', err)
@@ -241,13 +241,13 @@ export default {
     }
 
     const handleExport = async () => {
-      if (!currentProduct.value || !currentProduct.value._id) {
+      if (!currentProduct.value || !currentProduct.value.product_id) {
         console.warn('⚠️ No product loaded for export');
         return;
       }
 
       try {
-        await exportProductDetails(currentProduct.value._id);
+        await exportProductDetails(currentProduct.value.product_id);
       } catch (err) {
         console.error('❌ Error exporting product details:', err);
       }

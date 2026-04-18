@@ -29,7 +29,7 @@ class CounterService:
             ('subcategories', 'SUB', 5),
             ('users', 'USER', 4),
             ('customers', 'CUST', 5),
-            ('batches', 'BAT', 6),
+            ('batches', 'BATCH', 6),
             ('shipments', 'SHIP', 5),
             ('notifications', 'NOTIF', 6),
             ('online_transactions', 'ONLINE', 6),

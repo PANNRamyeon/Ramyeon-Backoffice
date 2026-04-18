@@ -9,10 +9,13 @@ from pynamodb.attributes import (
     UnicodeAttribute, NumberAttribute, BooleanAttribute,
     ListAttribute, MapAttribute, UTCDateTimeAttribute
 )
+from app.custom_attributes import FixedUTCDateTimeAttribute
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
+from pynamodb.exceptions import AttributeDeserializationError, UpdateError
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import logging
+import traceback
 
 # Import existing utils for consistency
 from app.utils import get_dynamo_table, DYNAMO_TABLE_NAME, AWS_REGION
@@ -21,15 +24,183 @@ from app.utils.counters import counter_service
 logger = logging.getLogger(__name__)
 
 
+def _category_exists(category_id: str) -> bool:
+    """Check that category_id exists in Category table (avoids circular import)."""
+    if not category_id or not str(category_id).strip():
+        return False
+    try:
+        from models.Categories import Category
+        return Category.exists(category_id.strip())
+    except Exception as e:
+        logger.warning("Category existence check failed: %s", e)
+        return False
+
+# DynamoDB type keys (must match pynamodb.constants)
+_DDB_MAP = "M"
+_DDB_LIST = "L"
+
+
+def _sanitize_details_list(raw_details: dict) -> dict:
+    """Keep only Map (M) elements in details list so strict deserialization never sees L."""
+    if not isinstance(raw_details, dict) or _DDB_LIST not in raw_details:
+        return raw_details
+    lst = raw_details[_DDB_LIST]
+    if not isinstance(lst, list):
+        return raw_details
+    filtered = [x for x in lst if isinstance(x, dict) and _DDB_MAP in x]
+    return {_DDB_LIST: filtered}
+
+
+class TolerantListAttribute(ListAttribute):
+    """
+    ListAttribute that skips elements which are not Map (M) when deserializing.
+    Use for sync_logs.details where some legacy records have L (list) elements
+    instead of M (map), causing AttributeDeserializationError.
+    """
+
+    def deserialize(self, values):
+        if not self.element_type:
+            return super().deserialize(values)
+        # Unwrap raw DynamoDB list format if present: {"L": [ ... ]}
+        if isinstance(values, dict) and _DDB_LIST in values:
+            values = values[_DDB_LIST]
+        if not isinstance(values, (list, tuple)):
+            return []
+        element_attr = self.element_type()
+        if isinstance(element_attr, MapAttribute):
+            element_attr._make_attribute()
+        deserialized_lst = []
+        for idx, attribute_value in enumerate(values):
+            if not isinstance(attribute_value, dict):
+                continue
+            if _DDB_MAP not in attribute_value:
+                continue
+            try:
+                element_attr.attr_name = f"{self.attr_name}[{idx}]" if self.attr_name else f"[{idx}]"
+                value = element_attr.deserialize(element_attr.get_value(attribute_value))
+                deserialized_lst.append(value)
+            except Exception:
+                continue
+        return deserialized_lst
+
+
+class TolerantSyncLogListAttribute(ListAttribute):
+    """
+    ListAttribute for Product.sync_logs that sanitizes each entry's 'details' list
+    (keeps only Map elements) before deserializing, so legacy L elements never reach
+    SyncLogItem and cannot cause AttributeDeserializationError.
+    """
+
+    def deserialize(self, values):
+        if not self.element_type:
+            return super().deserialize(values)
+        if isinstance(values, dict) and _DDB_LIST in values:
+            values = values[_DDB_LIST]
+        if not isinstance(values, (list, tuple)):
+            return []
+        deserialized_lst = []
+        for idx, attribute_value in enumerate(values):
+            if not isinstance(attribute_value, dict) or _DDB_MAP not in attribute_value:
+                continue
+            inner = attribute_value[_DDB_MAP]
+            if not isinstance(inner, dict):
+                continue
+            inner = dict(inner)
+            if "details" in inner:
+                inner["details"] = _sanitize_details_list(inner["details"])
+            wrapped = {_DDB_MAP: inner}
+            element_attr = self.element_type()
+            if isinstance(element_attr, MapAttribute):
+                element_attr._make_attribute()
+            element_attr.attr_name = f"{self.attr_name}[{idx}]" if self.attr_name else f"[{idx}]"
+            try:
+                value = element_attr.deserialize(element_attr.get_value(wrapped))
+                deserialized_lst.append(value)
+            except Exception:
+                continue
+        return deserialized_lst
+
+
+def _log_products_raw_for_debug(model_cls, exc: Exception) -> None:
+    """
+    Query products at raw DynamoDB level and log each item's SK and sync_logs
+    structure so we can identify which record causes deserialization errors
+    (e.g. 'details' attribute from type L).
+    """
+    try:
+        from decouple import config as decouple_config
+        import boto3
+        from boto3.dynamodb.conditions import Key, Attr
+
+        table_name = decouple_config("DYNAMO_TABLE_NAME", default="RamyeonCornerDB")
+        region = decouple_config("AWS_REGION_NAME", default="ap-southeast-1")
+        dynamodb = boto3.resource(
+            "dynamodb",
+            region_name=region,
+            aws_access_key_id=decouple_config("AWS_ACCESS_KEY_ID", default=""),
+            aws_secret_access_key=decouple_config("AWS_SECRET_ACCESS_KEY", default=""),
+        )
+        table = dynamodb.Table(table_name)
+        paginator = table.meta.client.get_paginator("query")
+        page_iter = paginator.paginate(
+            TableName=table_name,
+            KeyConditionExpression="PK = :pk",
+            FilterExpression="(attribute_not_exists(#del) OR #del = :false) AND (#st = :active)",
+            ExpressionAttributeNames={"#del": "isDeleted", "#st": "status"},
+            ExpressionAttributeValues={":pk": "products", ":false": False, ":active": "active"},
+        )
+        logged = 0
+        for page in page_iter:
+            for item in page.get("Items", []):
+                if logged >= 3:
+                    break
+                sk = item.get("SK", "?")
+                sync_logs = item.get("sync_logs", [])
+                details_info = []
+                for i, log in enumerate(sync_logs[:2]):
+                    if isinstance(log, dict):
+                        details = log.get("details")
+                        if details is not None:
+                            details_type = type(details).__name__
+                            elem_types = []
+                            if isinstance(details, list):
+                                for j, d in enumerate(details[:3]):
+                                    elem_types.append(type(d).__name__)
+                            details_info.append(f"log[{i}].details type={details_type} elem_types={elem_types}")
+                logger.info(
+                    "Product raw SK=%s | sync_logs len=%s | %s (exception: %s)",
+                    sk,
+                    len(sync_logs),
+                    "; ".join(details_info) or "no sync_logs",
+                    str(exc)[:120],
+                )
+                logged += 1
+        if logged > 0:
+            logger.info("Logged %s raw product(s) for debug. Ensure TolerantListAttribute is used for sync_logs.details.", logged)
+    except Exception as inner:
+        logger.warning("Could not log raw products for debug: %s", inner, exc_info=True)
+
+
 # ============= MAP ATTRIBUTES FOR COMPLEX FIELDS =============
 
 class SyncLogDetailItem(MapAttribute):
-    """MapAttribute for sync_logs.details items with POS-specific fields"""
-    field = UnicodeAttribute()
+    """MapAttribute for sync_logs.details items with POS-specific fields.
+    All attributes optional so legacy/varied payloads (reason-only, updated_fields, etc.) deserialize."""
+    field = UnicodeAttribute(null=True)
     old_value = UnicodeAttribute(null=True)
     new_value = UnicodeAttribute(null=True)
     terminal_id = UnicodeAttribute(null=True)  # POS terminal that made the change
     transaction_id = UnicodeAttribute(null=True)  # POS transaction ID
+    # Keys used elsewhere in add_sync_log / sync_logs so DynamoDB maps deserialize without error
+    reason = UnicodeAttribute(null=True)
+    updated_fields = UnicodeAttribute(null=True)
+    restored_at = UnicodeAttribute(null=True)
+    restored_by = UnicodeAttribute(null=True)
+    filename = UnicodeAttribute(null=True)
+    size = UnicodeAttribute(null=True)  # stored as string in details
+    type = UnicodeAttribute(null=True)   # image type etc.
+    sync_time = UnicodeAttribute(null=True)
+    deleted_by = UnicodeAttribute(null=True)
 
 
 class SyncLogObjectItem(MapAttribute):
@@ -42,17 +213,17 @@ class SyncLogObjectItem(MapAttribute):
 class SyncLogItem(MapAttribute):
     """MapAttribute for sync_logs items optimized for POS sync"""
     object = ListAttribute(of=SyncLogObjectItem, default=list)
-    last_updated = UTCDateTimeAttribute()
+    last_updated = FixedUTCDateTimeAttribute()
     source = UnicodeAttribute()  # 'pos_terminal_1', 'pos_terminal_2', 'admin_panel'
     status = UnicodeAttribute()  # 'success', 'failed', 'pending'
-    details = ListAttribute(of=SyncLogDetailItem, default=list)
+    details = TolerantListAttribute(of=SyncLogDetailItem, default=list)  # Tolerant: skips L elements
     action = UnicodeAttribute()  # 'create', 'update', 'stock_adjustment', 'sale'
     sync_id = UnicodeAttribute(null=True)  # Unique ID for this sync operation
 
 
 class DeletionLog(MapAttribute):
     """MapAttribute for deletion_log"""
-    deleted_at = UTCDateTimeAttribute()
+    deleted_at = FixedUTCDateTimeAttribute()
     deleted_by = UnicodeAttribute()
     reason = UnicodeAttribute()
     terminal_id = UnicodeAttribute(null=True)  # Which POS terminal performed deletion
@@ -141,10 +312,10 @@ class Product(Model):
     
     # ============= STATUS AND METADATA =============
     status = UnicodeAttribute(default="active")  # 'active', 'inactive', 'discontinued', 'out_of_stock', 'low_stock'
-    date_received = UTCDateTimeAttribute()
+    date_received = FixedUTCDateTimeAttribute()
     isDeleted = BooleanAttribute(default=False)
-    created_at = UTCDateTimeAttribute(default=datetime.utcnow)
-    updated_at = UTCDateTimeAttribute(default=datetime.utcnow)
+    created_at = FixedUTCDateTimeAttribute(default=datetime.utcnow)
+    updated_at = FixedUTCDateTimeAttribute(default=datetime.utcnow)
     
     # ============= IMAGE INFORMATION =============
     image_url = UnicodeAttribute(null=True)
@@ -153,30 +324,43 @@ class Product(Model):
     image_type = UnicodeAttribute(null=True)  # e.g., 'image/jpeg', 'image/png'
     
     # ============= AUDIT AND SYNC LOGS =============
-    sync_logs = ListAttribute(of=SyncLogItem, default=list)
+    sync_logs = TolerantSyncLogListAttribute(of=SyncLogItem, default=list)
     deletion_log = DeletionLog(null=True)
     
     # ============= ENHANCED FIELDS FOR POS & REAL-TIME SYNC =============
     pos_sync_status = UnicodeAttribute(default="synced")  # 'synced', 'pending', 'failed', 'out_of_sync'
-    last_pos_sync = UTCDateTimeAttribute(null=True)
+    last_pos_sync = FixedUTCDateTimeAttribute(null=True)
     pos_metadata = UnicodeAttribute(null=True)  # JSON string for POS-specific data
-    last_stock_update = UTCDateTimeAttribute(null=True)
+    last_stock_update = FixedUTCDateTimeAttribute(null=True)
     version = NumberAttribute(default=1)  # For optimistic concurrency control
     
     # ============= INDEXES FOR COMMON QUERIES =============
-    
-    class SKUIndex(GlobalSecondaryIndex):
-        """GSI for fast SKU lookups (critical for POS)"""
+    # Prioritized: name and barcode. No SKU index (search by SKU uses main table fallback).
+
+    class ProductNameIndex(GlobalSecondaryIndex):
+        """GSI for lookup/search by product name (exact or begins_with)."""
         class Meta:
-            index_name = 'ProductSKUIndex'
-            read_capacity_units = 5  # Higher for frequent POS lookups
+            index_name = 'ProductNameIndex'
+            read_capacity_units = 5
             write_capacity_units = 3
             projection = AllProjection()
-        
-        pk = UnicodeAttribute(hash_key=True)  # Will be set to 'products'
-        SKU = UnicodeAttribute(range_key=True)
-    
-    sku_index = SKUIndex()
+
+        pk = UnicodeAttribute(hash_key=True)  # 'products'
+        product_name = UnicodeAttribute(range_key=True)
+
+    class BarcodeIndex(GlobalSecondaryIndex):
+        """GSI for fast lookup by barcode."""
+        class Meta:
+            index_name = 'ProductBarcodeIndex'
+            read_capacity_units = 5
+            write_capacity_units = 3
+            projection = AllProjection()
+
+        pk = UnicodeAttribute(hash_key=True)  # 'products'
+        barcode = UnicodeAttribute(range_key=True)
+
+    name_index = ProductNameIndex()
+    barcode_index = BarcodeIndex()
     
     # ============= CLASS METHODS =============
     
@@ -212,6 +396,8 @@ class Product(Model):
                 raise ValueError("SKU is required")
             if not category_id:
                 raise ValueError("category_id is required")
+            if not _category_exists(category_id):
+                raise ValueError("Category does not exist. Use an existing category_id (e.g. CTGY-001, CAT-001).")
             if cost_price is None or cost_price < 0:
                 raise ValueError("cost_price must be non-negative")
             if selling_price is None or selling_price < 0:
@@ -278,89 +464,196 @@ class Product(Model):
     @classmethod
     def get_by_id(cls, product_id: str, include_deleted: bool = False) -> 'Product | None':
         """
-        Get product by ID
+        Get product by ID. Tries the given id, then alternate forms (PROD-14 vs PROD-00014)
+        so that both zero-padded and non-padded IDs find the same product.
         
         Args:
-            product_id: Format "PROD-00001" or just "00001"
+            product_id: Format "PROD-00001", "PROD-1", or "00001"
             include_deleted: Whether to include soft-deleted products
         
         Returns:
             Product or None if not found
         """
+        if not product_id or not str(product_id).strip():
+            return None
+        product_id = str(product_id).strip()
+        # Ensure PROD- prefix for first attempt
+        try_id = product_id if product_id.upper().startswith("PROD-") else f"PROD-{product_id.zfill(5)}"
         try:
-            # Ensure proper format
-            if not product_id.startswith('PROD-'):
-                product_id = f"PROD-{product_id.zfill(5)}"  # Pad to 5 digits if needed
-            
-            product = cls.get("products", product_id)
-            
-            # Check if deleted and if we should return it
+            product = cls.get("products", try_id)
             if product.isDeleted and not include_deleted:
-                logger.warning(f"Product {product_id} is soft-deleted")
+                logger.warning(f"Product {try_id} is soft-deleted")
                 return None
-            
             return product
         except cls.DoesNotExist:
-            logger.warning(f"Product not found: {product_id}")
+            pass
+        except Exception as e:
+            logger.error(f"Error fetching product {product_id}: {str(e)}")
+            return None
+        # Try alternate formats (PROD-00014 <-> PROD-14) so either form finds the product
+        try:
+            if try_id.upper().startswith("PROD-"):
+                num_part = try_id[5:].lstrip("0") or "0"
+                n = int(num_part)
+                for alt_id in (f"PROD-{n:05d}", f"PROD-{n}"):
+                    if alt_id != try_id:
+                        try:
+                            product = cls.get("products", alt_id)
+                            if product.isDeleted and not include_deleted:
+                                return None
+                            return product
+                        except cls.DoesNotExist:
+                            continue
+            return None
+        except (ValueError, cls.DoesNotExist):
+            logger.warning(f"Product not found: {product_id} (tried {try_id} and alternates)")
             return None
         except Exception as e:
             logger.error(f"Error fetching product {product_id}: {str(e)}")
             return None
     
     @classmethod
-    def get_by_sku(cls, sku: str, include_deleted: bool = False) -> 'Product | None':
+    def _get_by_sku_fallback(cls, sku: str, include_deleted: bool) -> 'Product | None':
+        """Query main table by SKU (PynamoDB filter)."""
+        condition = cls.SKU == sku
+        if not include_deleted:
+            condition = condition & (cls.isDeleted == False)
+        for product in cls.query("products", filter_condition=condition):
+            return product
+        return None
+
+    @classmethod
+    def _get_by_sku_raw(cls, sku: str, include_deleted: bool) -> 'Product | None':
         """
-        Get product by SKU using GSI
-        
-        Args:
-            sku: SKU to search for
-            include_deleted: Whether to include soft-deleted products
-        
-        Returns:
-            Product or None if not found
+        Find product by SKU using boto3 query; matches 'SKU' or 'sku' and loads by PK+SK.
+        Use when PynamoDB filter fails (e.g. attribute name/casing in table differs).
         """
         try:
-            # Query the SKU index
-            for product in cls.sku_index.query(
-                "products",
-                cls.SKU == sku,
-                limit=1
-            ):
-                if not include_deleted and product.isDeleted:
-                    continue
-                return product
+            from decouple import config as decouple_config
+            import boto3
+            from boto3.dynamodb.conditions import Key
+
+            table_name = decouple_config("DYNAMO_TABLE_NAME", default="RamyeonCornerDB")
+            region = decouple_config("AWS_REGION_NAME", default="ap-southeast-1")
+            dynamodb = boto3.resource(
+                "dynamodb",
+                region_name=region,
+                aws_access_key_id=decouple_config("AWS_ACCESS_KEY_ID", default=""),
+                aws_secret_access_key=decouple_config("AWS_SECRET_ACCESS_KEY", default=""),
+            )
+            table = dynamodb.Table(table_name)
+            kwargs = {"KeyConditionExpression": Key("PK").eq("products")}
+            while True:
+                response = table.query(**kwargs)
+                for item in response.get("Items", []):
+                    sku_val = item.get("SKU") or item.get("sku")
+                    if sku_val != sku:
+                        continue
+                    if not include_deleted and item.get("isDeleted"):
+                        continue
+                    sk_val = item.get("SK")
+                    if sk_val:
+                        return cls.get("products", sk_val)
+                if "LastEvaluatedKey" not in response:
+                    break
+                kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
             return None
         except Exception as e:
-            logger.error(f"Error fetching product by SKU '{sku}': {str(e)}")
+            logger.warning("_get_by_sku_raw failed for %s: %s", sku, e)
             return None
+
+    @classmethod
+    def get_by_sku(cls, sku: str, include_deleted: bool = False) -> 'Product | None':
+        """
+        Get product by SKU. No SKU GSI; uses main table filter then raw boto3 fallback.
+        """
+        if not sku or not str(sku).strip():
+            return None
+        sku = sku.strip()
+        product = cls._get_by_sku_fallback(sku, include_deleted)
+        if product is not None:
+            return product
+        return cls._get_by_sku_raw(sku, include_deleted)
     
+    @classmethod
+    def _get_by_barcode_raw(cls, barcode: str, include_deleted: bool) -> 'Product | None':
+        """
+        Find product by barcode using boto3; matches 'barcode' or 'Barcode', handles string/number.
+        Use when GSI or PynamoDB filter fails (e.g. index missing or barcode stored as number).
+        """
+        try:
+            from decouple import config as decouple_config
+            import boto3
+            from boto3.dynamodb.conditions import Key
+
+            table_name = decouple_config("DYNAMO_TABLE_NAME", default="RamyeonCornerDB")
+            region = decouple_config("AWS_REGION_NAME", default="ap-southeast-1")
+            dynamodb = boto3.resource(
+                "dynamodb",
+                region_name=region,
+                aws_access_key_id=decouple_config("AWS_ACCESS_KEY_ID", default=""),
+                aws_secret_access_key=decouple_config("AWS_SECRET_ACCESS_KEY", default=""),
+            )
+            table = dynamodb.Table(table_name)
+            barcode_str = str(barcode).strip()
+            kwargs = {"KeyConditionExpression": Key("PK").eq("products")}
+            while True:
+                response = table.query(**kwargs)
+                for item in response.get("Items", []):
+                    candidate = item.get("barcode") or item.get("Barcode")
+                    if candidate is None:
+                        continue
+                    if str(candidate).strip() != barcode_str:
+                        continue
+                    if not include_deleted and item.get("isDeleted"):
+                        continue
+                    sk_val = item.get("SK")
+                    if sk_val:
+                        return cls.get("products", sk_val)
+                if "LastEvaluatedKey" not in response:
+                    break
+                kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+            return None
+        except Exception as e:
+            logger.warning("_get_by_barcode_raw failed for %s: %s", barcode, e)
+            return None
+
     @classmethod
     def get_by_barcode(cls, barcode: str, include_deleted: bool = False) -> 'Product | None':
         """
-        Get product by barcode using GSI
-        
-        Args:
-            barcode: Barcode to search for
-            include_deleted: Whether to include soft-deleted products
-        
-        Returns:
-            Product or None if not found
+        Get product by barcode. Uses ProductBarcodeIndex when available; else main table filter; else raw boto3.
         """
+        if not barcode or not str(barcode).strip():
+            return None
+        barcode = barcode.strip()
+        product = None
         try:
-            # Query the products partition (scan with filter)
+            for p in cls.barcode_index.query(
+                "products",
+                cls.barcode == barcode,
+                limit=1
+            ):
+                if not include_deleted and p.isDeleted:
+                    continue
+                product = p
+                break
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "index" in err_msg or "validation" in err_msg:
+                logger.debug("BarcodeIndex unavailable, using main table filter for barcode=%s", barcode)
+            else:
+                logger.error("Error fetching product by barcode '%s': %s", barcode, e)
+        if product is not None:
+            return product
+        try:
             condition = cls.barcode == barcode
             if not include_deleted:
                 condition = condition & (cls.isDeleted == False)
-            
-            for product in cls.query(
-                "products",
-                filter_condition=condition
-            ):
-                return product
-            return None
+            for p in cls.query("products", filter_condition=condition):
+                return p
         except Exception as e:
-            logger.error(f"Error fetching product by barcode '{barcode}': {str(e)}")
-            return None
+            logger.debug("Fallback get_by_barcode (PynamoDB filter) failed for %s: %s", barcode, e)
+        return cls._get_by_barcode_raw(barcode, include_deleted)
     
     @classmethod
     def search_by_name(cls, search_term: str, limit: int = 20) -> list:
@@ -395,19 +688,12 @@ class Product(Model):
     @classmethod
     def query_by_category(cls, category_id: str, status: str = "active") -> list:
         """
-        Query products by category using GSI
-        
-        Args:
-            category_id: Category to filter by
-            status: Product status to filter by (default: 'active')
-        
-        Returns:
-            list: List of products in the category
+        Query products by category (filter on main table).
+        For paginated access use query_by_category_paginated.
         """
         try:
-            return list(cls.query(
-                "products",
-            ))
+            condition = (cls.isDeleted == False) & (cls.status == status) & (cls.category_id == category_id)
+            return list(cls.query("products", filter_condition=condition))
         except Exception as e:
             logger.error(f"Error querying products by category: {str(e)}")
             return []
@@ -440,19 +726,132 @@ class Product(Model):
     @classmethod
     def get_all_active_products(cls) -> list:
         """
-        Get all active, non-deleted products
-        
-        Returns:
-            list: List of all active products
+        Get all active, non-deleted products.
+        Skips any item that fails deserialization and logs details for debugging.
         """
+        result = []
         try:
-            return list(cls.query(
+            for product in cls.query(
                 "products",
                 filter_condition=(cls.isDeleted == False) & (cls.status == "active")
-            ))
+            ):
+                result.append(product)
         except Exception as e:
-            logger.error(f"Error getting all active products: {str(e)}")
-            return []
+            logger.error(
+                "Error getting all active products: %s | type=%s",
+                str(e),
+                type(e).__name__,
+                exc_info=True,
+            )
+            logger.error("Traceback: %s", traceback.format_exc())
+            # Log raw product items to find which one has invalid 'details' (type L)
+            _log_products_raw_for_debug(cls, e)
+        return result
+
+    @classmethod
+    def get_all_active_products_paginated(cls, limit: int = 50, last_evaluated_key=None):
+        """
+        Get a page of active, non-deleted products for pagination.
+
+        Args:
+            limit: Max number of items per page (default 50).
+            last_evaluated_key: DynamoDB key for the next page (from previous response).
+
+        Returns:
+            tuple: (list of Product, next_last_evaluated_key or None).
+        """
+        try:
+            it = cls.query(
+                "products",
+                filter_condition=(cls.isDeleted == False) & (cls.status == "active"),
+                limit=limit,
+                last_evaluated_key=last_evaluated_key,
+            )
+            result = list(it)
+            next_key = getattr(it, "last_evaluated_key", None)
+            return result, next_key
+        except Exception as e:
+            logger.error(
+                "Error getting paginated active products: %s | type=%s",
+                str(e),
+                type(e).__name__,
+                exc_info=True,
+            )
+            _log_products_raw_for_debug(cls, e)
+            return [], None
+
+    @classmethod
+    def query_by_status_paginated(cls, status: str, limit: int = 50, last_evaluated_key=None, include_deleted: bool = False):
+        """
+        One page of products by status; does not load the full result set.
+        Returns (list of Product, next_last_evaluated_key or None).
+        """
+        try:
+            condition = cls.status == status
+            if not include_deleted:
+                condition = condition & (cls.isDeleted == False)
+            it = cls.query(
+                "products",
+                filter_condition=condition,
+                limit=limit,
+                last_evaluated_key=last_evaluated_key,
+            )
+            result = list(it)
+            next_key = getattr(it, "last_evaluated_key", None)
+            return result, next_key
+        except Exception as e:
+            logger.error("Error in query_by_status_paginated: %s", e, exc_info=True)
+            return [], None
+
+    @classmethod
+    def query_by_category_paginated(cls, category_id: str, status: str = "active", limit: int = 50, last_evaluated_key=None):
+        """
+        One page of products by category_id (and status); does not load the full result set.
+        Returns (list of Product, next_last_evaluated_key or None).
+        """
+        try:
+            condition = (cls.isDeleted == False) & (cls.status == status) & (cls.category_id == category_id)
+            it = cls.query(
+                "products",
+                filter_condition=condition,
+                limit=limit,
+                last_evaluated_key=last_evaluated_key,
+            )
+            result = list(it)
+            next_key = getattr(it, "last_evaluated_key", None)
+            return result, next_key
+        except Exception as e:
+            logger.error("Error in query_by_category_paginated: %s", e, exc_info=True)
+            return [], None
+
+    @classmethod
+    def search_products_by_name_paginated(cls, search_term: str, limit: int = 50, last_evaluated_key=None):
+        """
+        One page of products whose name contains search_term (case-insensitive).
+        Fetches one chunk from DynamoDB (up to read_limit items), filters in memory,
+        returns up to `limit` matches and a token for the next chunk. Never loads
+        the full table. Returns (list of Product, next_last_evaluated_key or None).
+        """
+        if not (search_term and search_term.strip()):
+            return [], None
+        search_term_lower = search_term.strip().lower()
+        try:
+            read_limit = min(limit * 4, 200)
+            it = cls.query(
+                "products",
+                filter_condition=(cls.isDeleted == False) & (cls.status == "active"),
+                limit=read_limit,
+                last_evaluated_key=last_evaluated_key,
+            )
+            result = []
+            for product in it:
+                if search_term_lower in (product.product_name or "").lower():
+                    result.append(product)
+            next_key = getattr(it, "last_evaluated_key", None)
+            return result[:limit], next_key
+        except Exception as e:
+            logger.error("Error in search_products_by_name_paginated: %s", e, exc_info=True)
+            return [], None
     
     @classmethod
     def get_low_stock_products(cls) -> list:
@@ -621,8 +1020,11 @@ class Product(Model):
             if new_stock < 0:
                 raise ValueError(f"Insufficient stock. Available: {self.total_stock}, Requested: {-quantity_change}")
             
-            # Update with optimistic locking
-            current_version = self.version
+            # Update with optimistic locking.
+            # Legacy/migrated items may not have `version` set in DynamoDB yet; treat that as 0.
+            current_version = getattr(self, "version", None)
+            if current_version is None:
+                current_version = 0
             self.total_stock = new_stock
             self.version = current_version + 1
             self.last_stock_update = datetime.utcnow()
@@ -639,8 +1041,13 @@ class Product(Model):
                 self.status = "active"
                 self.pos_sync_status = "pending"  # Flag for POS sync
             
-            # Save with condition to prevent concurrent updates
-            self.save(condition=(Product.version == current_version))
+            # Save with condition to prevent concurrent updates.
+            # If this item did not previously have a version attribute, allow the first write.
+            if current_version == 0:
+                condition = (Product.version.does_not_exist()) | (Product.version == 0)
+            else:
+                condition = (Product.version == current_version)
+            self.save(condition=condition)
             
             # Prepare sync details
             details = [
@@ -674,6 +1081,73 @@ class Product(Model):
             
         except Exception as e:
             logger.error(f"Failed to update stock for {self.sk}: {str(e)}")
+            raise
+
+    def set_total_stock_absolute(
+        self,
+        new_total_stock: int,
+        source: str = "system",
+        reason: str | None = None,
+        oldest_expiry: Optional[str] = None,
+        newest_expiry: Optional[str] = None,
+    ) -> 'Product':
+        """
+        Set Product.total_stock to an absolute value (e.g., recomputed from batches),
+        using optimistic locking.
+
+        This is used to keep total_stock consistent with batch quantities,
+        especially when excluding expired batches.
+        """
+        try:
+            new_total_stock = int(new_total_stock or 0)
+            if new_total_stock < 0:
+                new_total_stock = 0
+
+            current_version = getattr(self, "version", None)
+            if current_version is None:
+                current_version = 0
+
+            self.total_stock = new_total_stock
+            self.version = current_version + 1
+            self.last_stock_update = datetime.utcnow()
+            self.updated_at = datetime.utcnow()
+
+            if oldest_expiry is not None:
+                self.oldest_batch_expiry = oldest_expiry
+            if newest_expiry is not None:
+                self.newest_batch_expiry = newest_expiry
+
+            # Update status based on new stock
+            if self.total_stock == 0:
+                self.status = "out_of_stock"
+                self.pos_sync_status = "pending"
+            elif self.low_stock_threshold and self.total_stock <= self.low_stock_threshold:
+                self.status = "low_stock"
+                self.pos_sync_status = "pending"
+            elif self.status in ["out_of_stock", "low_stock"] and self.total_stock > (self.low_stock_threshold or 0):
+                self.status = "active"
+                self.pos_sync_status = "pending"
+
+            if current_version == 0:
+                condition = (Product.version.does_not_exist()) | (Product.version == 0)
+            else:
+                condition = (Product.version == current_version)
+
+            self.save(condition=condition)
+            logger.info(
+                f"total_stock set for {self.sk}: {self.total_stock} (source={source})"
+                + (f" reason={reason}" if reason else "")
+            )
+            return self
+        except UpdateError as e:
+            # Version conflict is expected when syncing from batches; caller uses direct update fallback
+            if "ConditionalCheckFailedException" in str(e):
+                logger.info("Version conflict updating total_stock for %s (sync will use direct update)", self.sk)
+            else:
+                logger.error(f"Failed to set total_stock for {self.sk}: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to set total_stock for {self.sk}: {str(e)}")
             raise
     
     def add_sync_log(self, source: str, status: str, action: str, 
@@ -883,6 +1357,13 @@ class Product(Model):
             Product: Updated product instance
         """
         try:
+            if "category_id" in kwargs:
+                new_category_id = kwargs["category_id"]
+                if not new_category_id or not str(new_category_id).strip():
+                    raise ValueError("category_id cannot be empty.")
+                if not _category_exists(new_category_id):
+                    raise ValueError("Category does not exist. Use an existing category_id (e.g. CTGY-001, CAT-001).")
+
             updated_fields = []
             
             for key, value in kwargs.items():

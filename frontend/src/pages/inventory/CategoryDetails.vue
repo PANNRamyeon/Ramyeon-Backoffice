@@ -190,18 +190,18 @@
         </template>
 
         <template #body>
-          <tr v-for="product in paginatedProducts" :key="product._id">
+          <tr v-for="product in paginatedProducts" :key="product.product_id">
             <td>
-              <input 
-                type="checkbox" 
-                class="form-check-input" 
-                :value="product._id"
+              <input
+                type="checkbox"
+                class="form-check-input"
+                :value="product.product_id"
                 v-model="selectedProducts"
               />
             </td>
             <td>
               <code class="text-tertiary surface-tertiary px-2 py-1 rounded">
-                {{ product._id }}
+                {{ product.product_id }}
               </code>
             </td>
             <td>
@@ -211,7 +211,7 @@
                <select 
                   class="form-select form-select-sm input-complete"
                   :value="product.subcategory_name || 'None'"  
-                  @change="handleUpdateProductSubcategory(product._id, $event.target.value)"
+                  @change="handleUpdateProductSubcategory(product.product_id, $event.target.value)"
                   :disabled="moveProductLoading"
                 >
                   <option 
@@ -278,7 +278,7 @@
     <AddSubcategoryModal ref="addSubcategoryModal" @subcategory-added="onSubcategoryAdded" />
     <MoveFromUncategorizedModal
       ref="moveFromUncategorizedModal"
-      :target-category-id="currentCategory?._id"
+      :target-category-id="currentCategory?.category_id"
       :target-category-name="currentCategory?.category_name"
       :subcategories="currentCategory?.sub_categories || []"
       @products-moved="handleProductsMoved"
@@ -359,13 +359,13 @@ export default {
     })
 
     const isAllSelected = computed(() => {
-      const currentPageProductIds = paginatedProducts.value.map(p => p._id)
-      return currentPageProductIds.length > 0 && 
+      const currentPageProductIds = paginatedProducts.value.map(p => p.product_id)
+      return currentPageProductIds.length > 0 &&
             currentPageProductIds.every(id => selectedProducts.value.includes(id))
     })
 
     const isIndeterminate = computed(() => {
-      const currentPageProductIds = paginatedProducts.value.map(p => p._id)
+      const currentPageProductIds = paginatedProducts.value.map(p => p.product_id)
       const selectedOnPage = currentPageProductIds.filter(id => selectedProducts.value.includes(id))
       return selectedOnPage.length > 0 && selectedOnPage.length < currentPageProductIds.length
     })
@@ -422,7 +422,7 @@ export default {
     }
 
     const toggleSelectAll = () => {
-      const currentPageProductIds = paginatedProducts.value.map(p => p._id)
+      const currentPageProductIds = paginatedProducts.value.map(p => p.product_id)
       
       if (isAllSelected.value) {
         selectedProducts.value = selectedProducts.value.filter(id => !currentPageProductIds.includes(id))
@@ -437,7 +437,7 @@ export default {
         await moveProductToCategory(productId, categoryId.value, newSubcategory)
         
         // Update local state
-        const product = categoryProducts.value.find(p => p._id === productId)
+        const product = categoryProducts.value.find(p => p.product_id === productId)
         if (product) {
           product.subcategory_name = newSubcategory
         }
@@ -456,15 +456,15 @@ export default {
         
         if (!confirmed) return
         
-        await bulkMoveProductsToUncategorized([product._id])
-        
+        await bulkMoveProductsToUncategorized([product.product_id])
+
         // Remove from local state
-        const productIndex = categoryProducts.value.findIndex(p => p._id === product._id)
+        const productIndex = categoryProducts.value.findIndex(p => p.product_id === product.product_id)
         if (productIndex > -1) {
           categoryProducts.value.splice(productIndex, 1)
         }
-        
-        selectedProducts.value = selectedProducts.value.filter(id => id !== product._id)
+
+        selectedProducts.value = selectedProducts.value.filter(id => id !== product.product_id)
         
       } catch (err) {
         console.error(`Failed to move product: ${err.message}`)
@@ -481,8 +481,8 @@ export default {
         await bulkMoveProductsToUncategorized(selectedProducts.value)
         
         // Remove from local state
-        categoryProducts.value = categoryProducts.value.filter(product => 
-          !selectedProducts.value.includes(product._id)
+        categoryProducts.value = categoryProducts.value.filter(product =>
+          !selectedProducts.value.includes(product.product_id)
         )
         
         selectedProducts.value = []
@@ -504,7 +504,7 @@ export default {
     const handleAddSubCategory = () => {
       if (addSubcategoryModal.value) {
         addSubcategoryModal.value.openModal(
-          currentCategory.value._id,
+          currentCategory.value.category_id,
           currentCategory.value.category_name || 'Unknown Category'
         )
       } else {
@@ -526,7 +526,7 @@ export default {
     }
 
     const openMoveFromUncategorizedModal = () => {
-      if (moveFromUncategorizedModal.value && currentCategory.value?._id) {
+      if (moveFromUncategorizedModal.value && currentCategory.value?.category_id) {
         moveFromUncategorizedModal.value.openModal()
       }
     }
@@ -596,7 +596,7 @@ export default {
 
         // Convert to CSV rows
         const rows = productsToExport.map(product => [
-          product._id,
+          product.product_id,
           `"${product.product_name}"`,
           `"${currentCategory.value.category_name}"`,
           `"${product.subcategory_name || 'None'}"`,

@@ -6,6 +6,8 @@ import json
 import logging
 from datetime import datetime, timedelta
 
+import boto3
+from app.utils import DYNAMO_TABLE_NAME, AWS_REGION
 from app.utils.singleton import get_singleton
 from app.services.inventory.batch_service import BatchService
 from app.services.inventory.product_service import ProductService
@@ -13,6 +15,94 @@ from models.Supplier import Supplier
 from models.Shipment import Shipment
 
 logger = logging.getLogger(__name__)
+
+
+def _supplier_exists(supplier_id):
+    """
+    Check if a supplier exists and is not deleted using raw DynamoDB get_item.
+    Avoids full PynamoDB deserialization (e.g. sync_logs.details) which can fail
+    on legacy/malformed data.
+    """
+    if not supplier_id:
+        return False
+    try:
+        client = boto3.client("dynamodb", region_name=AWS_REGION)
+        r = client.get_item(
+            TableName=DYNAMO_TABLE_NAME,
+            Key={
+                "PK": {"S": "suppliers"},
+                "SK": {"S": str(supplier_id).strip()},
+            },
+            ProjectionExpression="PK, SK, #del",
+            ExpressionAttributeNames={"#del": "isDeleted"},
+        )
+        item = r.get("Item")
+        if not item:
+            return False
+        is_deleted = item.get("isDeleted", {}).get("BOOL", False)
+        return not is_deleted
+    except Exception as e:
+        logger.warning("Raw supplier existence check failed for %s: %s", supplier_id, e)
+        return False
+
+
+def _get_supplier_dict(supplier_id):
+    """
+    Lightweight helper to get supplier info from DynamoDB Supplier model.
+    Returns a dict or None if not found/invalid.
+    On deserialization errors (e.g. malformed sync_logs/details), falls back to
+    raw get_item with basic fields so callers still get minimal supplier info.
+    """
+    if not supplier_id:
+        return None
+    try:
+        supplier = Supplier.get("suppliers", supplier_id)
+        return supplier.to_dict()
+    except Supplier.DoesNotExist:
+        return None
+    except Exception as e:
+        logger.warning(
+            "Full supplier deserialize failed for %s (%s); trying raw get_item.",
+            supplier_id,
+            e,
+        )
+        try:
+            client = boto3.client("dynamodb", region_name=AWS_REGION)
+            r = client.get_item(
+                TableName=DYNAMO_TABLE_NAME,
+                Key={
+                    "PK": {"S": "suppliers"},
+                    "SK": {"S": str(supplier_id).strip()},
+                },
+                ProjectionExpression="SK, #name, #cp, #phone, #email, #addr, #del",
+                ExpressionAttributeNames={
+                    "#name": "supplier_name",
+                    "#cp": "contact_person",
+                    "#phone": "phone_number",
+                    "#email": "email",
+                    "#addr": "address",
+                    "#del": "isDeleted",
+                },
+            )
+            item = r.get("Item")
+            if not item:
+                return None
+            if item.get("isDeleted", {}).get("BOOL", False):
+                return None
+            def _s(a):
+                return a.get("S") if a else None
+            return {
+                "supplier_id": _s(item.get("SK")),
+                "supplier_name": _s(item.get("supplier_name")),
+                "contact_person": _s(item.get("contact_person")),
+                "phone_number": _s(item.get("phone_number")),
+                "email": _s(item.get("email")),
+                "address": _s(item.get("address")),
+                "isDeleted": False,
+            }
+        except Exception as raw_err:
+            logger.error("Raw supplier fetch failed for %s: %s", supplier_id, raw_err)
+            return None
 
 
 def _parse_expiry(value):
@@ -24,23 +114,6 @@ def _parse_expiry(value):
     try:
         return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
     except (ValueError, TypeError):
-        return None
-
-
-def _get_supplier_dict(supplier_id):
-    """
-    Lightweight helper to get supplier info from DynamoDB Supplier model.
-    Returns a dict or None if not found/invalid.
-    """
-    if not supplier_id:
-        return None
-    try:
-        supplier = Supplier.get("suppliers", supplier_id)
-        return supplier.to_dict()
-    except Supplier.DoesNotExist:
-        return None
-    except Exception as e:
-        logger.error(f"Error fetching supplier {supplier_id} from DynamoDB: {e}")
         return None
 
 
@@ -74,10 +147,9 @@ class CreateBatchView(BatchView):
                         'error': f'Missing required field: {field}'
                     }, status=400)
             
-            # Validate supplier_id if provided (via DynamoDB Supplier model)
+            # Validate supplier_id if provided (raw existence check to avoid deserialization errors)
             if data.get('supplier_id'):
-                supplier = _get_supplier_dict(data['supplier_id'])
-                if not supplier or supplier.get('isDeleted'):
+                if not _supplier_exists(data['supplier_id']):
                     return JsonResponse({
                         'success': False,
                         'error': f"Supplier with ID {data['supplier_id']} not found"
@@ -266,6 +338,11 @@ class UpdateBatchQuantityView(BatchView):
                 'data': updated_batch
             })
             
+        except ValueError as e:
+            return JsonResponse({
+                'success': False,
+                'error': str(e)
+            }, status=400)
         except Exception as e:
             logger.error(f"Error updating batch quantity: {str(e)}")
             return JsonResponse({
@@ -524,19 +601,21 @@ class ProcessBatchAdjustmentView(BatchView):
 @method_decorator(csrf_exempt, name='dispatch')
 class CheckExpiryAlertsView(BatchView):
     def post(self, request):
-        """Check for expiring batches and send alerts"""
+        """Check for expiring batches, send alerts, and return the expiring batch list"""
         try:
             data = json.loads(request.body) if request.body else {}
-            days_ahead = data.get('days_ahead', 7)
-            
-            alert_count = self.batch_service.check_and_alert_expiring_batches(days_ahead)
-            
+            days_ahead = data.get('days_ahead', 30)
+
+            result = self.batch_service.check_and_alert_expiring_batches(days_ahead)
+
             return JsonResponse({
                 'success': True,
-                'message': f'Expiry check completed',
+                'message': 'Expiry check completed',
                 'data': {
-                    'alerts_sent': alert_count,
-                    'days_ahead': days_ahead
+                    'alerts_sent': result['alerts_sent'],
+                    'days_ahead': days_ahead,
+                    'expiring_batches': result['expiring_batches'],
+                    'count': len(result['expiring_batches']),
                 }
             })
             
@@ -718,60 +797,6 @@ class BatchStatisticsView(BatchView):
             
         except Exception as e:
             logger.error(f"Error getting batch statistics: {str(e)}")
-            return JsonResponse({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-
-@method_decorator(csrf_exempt, name='dispatch')
-class ActivateBatchView(BatchView):
-    def post(self, request):
-        """Activate a pending batch (change status from pending to active)"""
-        try:
-            data = json.loads(request.body)
-            
-            batch_number = data.get('batch_number')
-            product_id = data.get('product_id')
-            supplier_id = data.get('supplier_id')
-            
-            if not all([batch_number, product_id, supplier_id]):
-                return JsonResponse({
-                    'success': False,
-                    'error': 'batch_number, product_id, and supplier_id are required'
-                }, status=400)
-            
-            # Optional fields
-            quantity_received = data.get('quantity_received')
-            cost_price = data.get('cost_price')
-            expiry_date = data.get('expiry_date')
-            date_received = data.get('date_received')
-            notes = data.get('notes')
-            
-            activated_batch = self.batch_service.activate_batch(
-                batch_number=batch_number,
-                product_id=product_id,
-                supplier_id=supplier_id,
-                quantity_received=quantity_received,
-                cost_price=cost_price,
-                expiry_date=expiry_date,
-                date_received=date_received,
-                notes=notes
-            )
-            
-            if not activated_batch:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Failed to activate batch'
-                }, status=500)
-            
-            return JsonResponse({
-                'success': True,
-                'message': 'Batch activated successfully',
-                'data': activated_batch
-            })
-            
-        except Exception as e:
-            logger.error(f"Error activating batch: {str(e)}")
             return JsonResponse({
                 'success': False,
                 'error': str(e)

@@ -5,6 +5,8 @@ Uses singleton pattern. Usage: get_singleton(ShipmentService)
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
+from app.utils.singleton import get_singleton
+from app.services.inventory.batch_service import BatchService
 from models.Shipment import Shipment
 from models.Batches import Batch
 from models.Product import Product
@@ -72,6 +74,11 @@ class ShipmentService:
                 received_by=shipment_data.get("received_by"),
             )
             logger.info(f"Shipment created: {shipment.sk}")
+            if getattr(shipment, "status", None) == "received":
+                try:
+                    get_singleton(BatchService).activate_batches_for_shipment(shipment.sk)
+                except Exception as act_err:
+                    logger.warning("Activate batches for new shipment %s: %s", shipment.sk, act_err)
             return shipment.to_dict()
         except ValueError as e:
             logger.error(f"Validation error creating shipment: {e}")
@@ -171,6 +178,11 @@ class ShipmentService:
 
             shipment.updated_at = datetime.utcnow()
             shipment.save()
+            if getattr(shipment, "status", None) == "received":
+                try:
+                    get_singleton(BatchService).activate_batches_for_shipment(shipment_id)
+                except Exception as act_err:
+                    logger.warning("Activate batches for shipment %s: %s", shipment_id, act_err)
             return shipment.to_dict()
         except Exception as e:
             logger.error(f"Error updating shipment {shipment_id}: {e}")
