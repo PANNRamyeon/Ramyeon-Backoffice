@@ -297,7 +297,7 @@ class ApiProductsService {
 
   async moveProductToCategory(productId, newCategoryId, newSubcategoryName = null) {
     try {
-      const response = await api.put('/category/product-management/', {
+      const response = await api.put(`/categories/${newCategoryId}/products/`, {
         product_id: productId,
         new_category_id: newCategoryId,
         new_subcategory_name: newSubcategoryName
@@ -310,7 +310,7 @@ class ApiProductsService {
 
   async bulkMoveProductsToCategory(productIds, newCategoryId, newSubcategoryName = null) {
     try {
-      const response = await api.post('/category/product-management/', {
+      const response = await api.post(`/categories/${newCategoryId}/products/`, {
         product_ids: productIds,
         new_category_id: newCategoryId,
         new_subcategory_name: newSubcategoryName

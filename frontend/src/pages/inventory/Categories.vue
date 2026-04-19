@@ -200,6 +200,14 @@
 
     <!-- Add Category Modal -->
     <AddCategoryModal ref="addCategoryModal" @category-added="onCategoryAdded" />
+
+    <!-- Delete Confirmation Modal -->
+    <DeleteConfirmationModal
+      ref="deleteModal"
+      :isLoading="deleteLoading"
+      @confirm="confirmDeleteCategory"
+      @cancel="categoryToDelete = null"
+    />
   </div>
 </template>
 
@@ -207,19 +215,22 @@
 import { ref, nextTick, computed } from 'vue'
 import CardTemplate from '@/components/common/CardTemplate.vue'
 import AddCategoryModal from '@/components/categories/AddCategoryModal.vue'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 import { useCategories } from '@/composables/api/useCategories'
 
 export default {
   name: 'Categories',
   components: {
     CardTemplate,
-    AddCategoryModal
+    AddCategoryModal,
+    DeleteConfirmationModal
   },
 
   setup() {
     const searchInput = ref(null)
     const searchMode = ref(false)
     const uncategorizedCount = ref(0)
+    const categoryToDelete = ref(null)
     
     // Use the categories composable
     const {
@@ -347,6 +358,7 @@ export default {
       searchInput,
       searchMode,
       uncategorizedCount,
+      categoryToDelete,
       
       // State from composable
       categories,
@@ -428,22 +440,25 @@ export default {
     },
 
     // Delete handler
-    async handleDeleteCategory(category) {
-      try {
-        const confirmed = confirm(
-          `Are you sure you want to delete "${category.category_name}"?\n\n` +
-          `This will move the category to trash. Products will be moved to Uncategorized.`
-        )
-        
-        if (!confirmed) return
+    handleDeleteCategory(category) {
+      this.categoryToDelete = category
+      this.$refs.deleteModal.openModal({
+        title: 'Delete Category',
+        message: `Are you sure you want to delete <strong>"${category.category_name}"</strong>? This will move the category to trash and products will be moved to Uncategorized.`,
+        confirmText: 'Delete'
+      })
+    },
 
-        await this.softDeleteCategory(category.category_id)
-        
-        // Refresh uncategorized count since products might be moved there
+    async confirmDeleteCategory() {
+      if (!this.categoryToDelete) return
+      try {
+        await this.softDeleteCategory(this.categoryToDelete.category_id)
         await this.fetchUncategorizedCount()
-        
       } catch (error) {
         console.error('Error deleting category:', error)
+      } finally {
+        this.$refs.deleteModal.closeModal()
+        this.categoryToDelete = null
       }
     },
 

@@ -1,5 +1,6 @@
 from models.Product import Product
 from models.Batches import Batch
+from models.Categories import Category
 from pynamodb.exceptions import DoesNotExist, PutError, DeleteError, UpdateError
 from app.utils.singleton import get_singleton
 import base64
@@ -54,6 +55,7 @@ class ProductService:
             # The create_product method on the model already handles validation and creation logic.
             product = Product.create_product(**data)
             logger.info(f"Successfully created product {product.sk}")
+            Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
             return product
         except (PutError, ValueError) as e:
             logger.error(f"Error creating product: {str(e)}")
@@ -221,11 +223,21 @@ class ProductService:
         product = ProductService.get_product_by_id(product_id)
         if not product:
             raise ValueError(f"Product with ID {product_id} not found.")
-        
+
+        old_category_id = product.category_id
+        old_subcategory_name = product.subcategory_name
+
         try:
             # The update_product method in the model handles the update logic
             product.update_product(**data)
             logger.info(f"Successfully updated product {product_id}")
+
+            new_category_id = data.get('category_id', old_category_id)
+            new_subcategory_name = data.get('subcategory_name', old_subcategory_name)
+            if old_category_id != new_category_id or old_subcategory_name != new_subcategory_name:
+                Category.adjust_subcategory_count(old_category_id, old_subcategory_name, -1)
+                Category.adjust_subcategory_count(new_category_id, new_subcategory_name, +1)
+
             # Re-fetch the instance to ensure the returned object is up-to-date
             return ProductService.get_product_by_id(product_id)
         except UpdateError as e:
@@ -345,15 +357,17 @@ class ProductService:
         if not product:
             raise ValueError(f"Product with ID {product_id} not found.")
 
+        category_id = product.category_id
+        subcategory_name = product.subcategory_name
+
         try:
             if hard_delete:
-                # This is the standard pynamodb delete method
                 product.delete()
                 logger.info(f"Successfully hard-deleted product {product_id}")
             else:
-                # This uses the custom soft_delete method from the model
                 product.soft_delete(deleted_by=deleted_by, reason=reason)
                 logger.info(f"Successfully soft-deleted product {product_id}")
+            Category.adjust_subcategory_count(category_id, subcategory_name, -1)
             return True
         except (DeleteError, UpdateError, ValueError) as e:
             logger.error(f"Error deleting product {product_id}: {str(e)}")

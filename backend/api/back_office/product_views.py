@@ -15,6 +15,7 @@ from app.services.inventory.product_service import (
 from app.utils.singleton import get_singleton
 from app.services.inventory.batch_service import BatchService
 from models.Product import Product, batch_update_stock
+from models.Categories import Category
 
 import logging
 import json
@@ -218,8 +219,9 @@ class ProductRestoreView(APIView):
                 )
 
             product.restore()
+            Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
             return Response(
-                {"message": "Product restored successfully"}, 
+                {"message": "Product restored successfully"},
                 status=status.HTTP_200_OK
             )
         except Exception as e:

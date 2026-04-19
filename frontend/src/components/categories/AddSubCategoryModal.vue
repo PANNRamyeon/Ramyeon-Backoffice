@@ -129,6 +129,7 @@
 
 <script>
 import categoryApiService from '@/services/apiCategory'
+import { useToast } from '@/composables/ui/useToast'
 import { Plus } from 'lucide-vue-next'
 
 export default {
@@ -164,11 +165,13 @@ export default {
     }
   },
   mounted() {
-    // Initialize Bootstrap modal
+    const { success, error } = useToast()
+    this.$toast = { success, error }
+
     if (typeof window !== 'undefined' && window.bootstrap) {
       this.modalInstance = new window.bootstrap.Modal(this.$refs.modal, {
-        backdrop: 'static', // Prevent closing by clicking backdrop
-        keyboard: true      // Allow closing with Escape key
+        backdrop: 'static',
+        keyboard: true
       })
     }
   },
@@ -314,16 +317,11 @@ export default {
      * Show success message (you can customize this based on your notification system)
      */
     showSuccessMessage(message) {
-      // Replace with your notification system
-      // this.$toast.success(message)
+      this.$toast?.success(message)
     },
 
-    /**
-     * Show error message (you can customize this based on your notification system)
-     */
     showErrorMessage(message) {
-      // Replace with your notification system
-      // this.$toast.error(message)
+      this.$toast?.error(message)
     }
   }
 }

@@ -160,8 +160,11 @@ class TokenBlacklist(Model):
             return False
         except Exception as e:
             logger.error(f"Error checking token blacklist: {str(e)}")
-            # Fail secure - if we can't check, assume it's blacklisted
-            return True
+            # Fail open: the JWT signature is still validated separately.
+            # Treating a DynamoDB error as "blacklisted" logs out every user
+            # during any transient DB hiccup, which is worse than briefly
+            # allowing a revoked token through.
+            return False
     
     @classmethod
     def revoke_user_tokens(cls, user_id: str, reason: str = "security",

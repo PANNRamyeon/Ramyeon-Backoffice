@@ -79,7 +79,7 @@
                   </div>
                   <div class="mb-3">
                     <label class="form-label text-primary fw-semibold">Status:</label>
-                    <span :class="getStatusClass(currentCategory.status)">
+                    <span :class="getStatusClass(currentCategory.status)" class="ms-2">
                       {{ currentCategory.status?.charAt(0).toUpperCase() + currentCategory.status?.slice(1) || 'N/A' }}
                     </span>
                   </div>
@@ -276,6 +276,7 @@
     <!-- Modals -->
     <AddCategoryModal ref="editCategoryModal" @category-updated="onCategoryUpdated" />
     <AddSubcategoryModal ref="addSubcategoryModal" @subcategory-added="onSubcategoryAdded" />
+    <DeleteConfirmationModal ref="deleteModal" @confirm="confirmRemove" />
     <MoveFromUncategorizedModal
       ref="moveFromUncategorizedModal"
       :target-category-id="currentCategory?.category_id"
@@ -293,6 +294,7 @@ import DataTable from '@/components/common/TableTemplate.vue'
 import AddSubcategoryModal from '@/components/categories/AddSubCategoryModal.vue'
 import AddCategoryModal from '@/components/categories/AddCategoryModal.vue'
 import MoveFromUncategorizedModal from '@/components/categories/MoveFromUncategorizedModal.vue'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 import { useCategories } from '@/composables/api/useCategories'
 import { useProducts } from '@/composables/api/useProducts'
 
@@ -302,7 +304,8 @@ export default {
     DataTable,
     AddCategoryModal,
     AddSubcategoryModal,
-    MoveFromUncategorizedModal
+    MoveFromUncategorizedModal,
+    DeleteConfirmationModal
   },
   
   setup() {
@@ -338,6 +341,8 @@ export default {
     const editCategoryModal = ref(null)
     const addSubcategoryModal = ref(null)
     const moveFromUncategorizedModal = ref(null)
+    const deleteModal = ref(null)
+    const pendingRemoval = ref(null) // { type: 'single', product } | { type: 'bulk' }
 
     // Computed properties
     const loading = computed(() => categoriesLoading.value || productsLoading.value)
@@ -447,48 +452,44 @@ export default {
       }
     }
 
-    const removeProductFromCategory = async (product) => {
-      try {
-        const confirmed = confirm(
-          `Are you sure you want to remove "${product.product_name}" from the "${currentCategory.value.category_name}" category?\n\n` +
-          `The product will be moved back to the "Uncategorized" category.`
-        )
-        
-        if (!confirmed) return
-        
-        await bulkMoveProductsToUncategorized([product.product_id])
-
-        // Remove from local state
-        const productIndex = categoryProducts.value.findIndex(p => p.product_id === product.product_id)
-        if (productIndex > -1) {
-          categoryProducts.value.splice(productIndex, 1)
-        }
-
-        selectedProducts.value = selectedProducts.value.filter(id => id !== product.product_id)
-        
-      } catch (err) {
-        console.error(`Failed to move product: ${err.message}`)
-      }
+    const removeProductFromCategory = (product) => {
+      pendingRemoval.value = { type: 'single', product }
+      deleteModal.value?.openModal({
+        title: 'Remove Product',
+        message: `Are you sure you want to remove <strong>"${product.product_name}"</strong> from this category? It will be moved to "Uncategorized".`,
+        confirmText: 'Remove'
+      })
     }
 
-    const removeSelectedFromCategory = async () => {
+    const removeSelectedFromCategory = () => {
       if (selectedProducts.value.length === 0) return
-      
-      const confirmed = confirm(`Are you sure you want to remove ${selectedProducts.value.length} product(s) from this category?`)
-      if (!confirmed) return
-      
+      pendingRemoval.value = { type: 'bulk' }
+      deleteModal.value?.openModal({
+        title: 'Remove Products',
+        message: `Are you sure you want to remove <strong>${selectedProducts.value.length} product(s)</strong> from this category? They will be moved to "Uncategorized".`,
+        confirmText: 'Remove'
+      })
+    }
+
+    const confirmRemove = async () => {
+      const pending = pendingRemoval.value
+      if (!pending) return
       try {
-        await bulkMoveProductsToUncategorized(selectedProducts.value)
-        
-        // Remove from local state
-        categoryProducts.value = categoryProducts.value.filter(product =>
-          !selectedProducts.value.includes(product.product_id)
-        )
-        
-        selectedProducts.value = []
-        
+        if (pending.type === 'single') {
+          await bulkMoveProductsToUncategorized([pending.product.product_id])
+          const idx = categoryProducts.value.findIndex(p => p.product_id === pending.product.product_id)
+          if (idx > -1) categoryProducts.value.splice(idx, 1)
+          selectedProducts.value = selectedProducts.value.filter(id => id !== pending.product.product_id)
+        } else {
+          await bulkMoveProductsToUncategorized(selectedProducts.value)
+          categoryProducts.value = categoryProducts.value.filter(p => !selectedProducts.value.includes(p.product_id))
+          selectedProducts.value = []
+        }
       } catch (err) {
-        console.error(`Bulk move failed: ${err.message}`)
+        console.error(`Failed to remove product(s): ${err.message}`)
+      } finally {
+        pendingRemoval.value = null
+        deleteModal.value?.closeModal()
       }
     }
 
@@ -662,11 +663,12 @@ export default {
       filteredProducts, paginatedProducts, isAllSelected, isIndeterminate,
       
       // Refs
-      editCategoryModal, addSubcategoryModal, moveFromUncategorizedModal,
+      editCategoryModal, addSubcategoryModal, moveFromUncategorizedModal, deleteModal,
 
       // Methods
       handleRetryLoad, applyFilter, handlePageChange, toggleSelectAll,
       handleUpdateProductSubcategory, removeProductFromCategory, removeSelectedFromCategory,
+      confirmRemove,
       handleEditCategory, handleAddSubCategory, onCategoryUpdated, onSubcategoryAdded,
       openMoveFromUncategorizedModal, handleProductsMoved,
       

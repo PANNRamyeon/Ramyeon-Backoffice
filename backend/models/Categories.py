@@ -74,6 +74,7 @@ class SubCategoryItem(MapAttribute):
     status = UnicodeAttribute(default="active")
     sort_order = NumberAttribute(default=0)
     icon = UnicodeAttribute(null=True)  # Icon/Image URL for subcategory
+    product_count = NumberAttribute(default=0, null=True)  # Denormalized count — updated on product create/move/delete
 
 
 # ============= MAIN CATEGORY MODEL =============
@@ -288,23 +289,52 @@ class Category(Model):
     def get_all_categories(cls, include_deleted: bool = False) -> list:
         """
         Get all categories
-        
+
         Args:
             include_deleted: Include soft-deleted categories
-        
+
         Returns:
             list: List of all categories
         """
         try:
-            categories = []
-            for category in cls.query("category"):
-                if include_deleted or not category.isDeleted:
-                    categories.append(category)
-            return categories
+            if include_deleted:
+                return list(cls.query("category"))
+            return list(cls.query("category", filter_condition=(cls.isDeleted == False)))
         except Exception as e:
             logger.error(f"Error getting all categories: {str(e)}")
             return []
     
+    def update_subcategory_count(self, subcategory_name: str, delta: int) -> bool:
+        """
+        Adjust product_count on a subcategory in-place and save.
+        Returns True if the subcategory was found, False otherwise.
+        """
+        import uuid
+        for sub in self.sub_categories:
+            if sub.name == subcategory_name:
+                if not sub.subcategory_id:
+                    sub.subcategory_id = f"SUB-{uuid.uuid4().hex[:6].upper()}"
+                sub.product_count = max(0, int(sub.product_count or 0) + delta)
+                self.last_updated = datetime.utcnow()
+                self.save()
+                return True
+        return False
+
+    @classmethod
+    def adjust_subcategory_count(cls, category_id: str, subcategory_name: str, delta: int) -> None:
+        """
+        Fetch a category and adjust a subcategory's stored product_count by delta.
+        Errors are logged and swallowed — a missed count is recoverable via sync.
+        """
+        try:
+            if not category_id or not subcategory_name:
+                return
+            category = cls.get_by_id(category_id)
+            if category:
+                category.update_subcategory_count(subcategory_name, delta)
+        except Exception as e:
+            logger.warning(f"Could not adjust subcategory count {category_id}/{subcategory_name}: {e}")
+
     @classmethod
     def get_category_count(cls, include_deleted: bool = False) -> int:
         """
@@ -761,7 +791,8 @@ class Category(Model):
                         "icon": sc.icon,
                         "sort_order": sc.sort_order,
                         "status": sc.status,
-                        "created_at": sc.created_at.isoformat() if sc.created_at else None
+                        "created_at": sc.created_at.isoformat() if sc.created_at else None,
+                        "product_count": int(sc.product_count or 0)
                     }
                     for sc in sorted_subcategories
                 ]
