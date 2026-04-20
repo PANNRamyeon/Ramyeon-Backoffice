@@ -122,21 +122,27 @@ urlpatterns = [
     
     # ==================== PROMOTIONS ====================
     path('promotions/health/', promotion_views.PromotionHealthCheckView.as_view(), name='promotions-health'),
-    path('promotions/', promotion_views.PromotionListView.as_view(), name='promotions-list'),
+    
+    # Specific named endpoints (must come BEFORE detail pattern)
     path('promotions/active/', promotion_views.ActivePromotionsView.as_view(), name='promotions-active'),
     path('promotions/deleted/', promotion_views.DeletedPromotionsView.as_view(), name='promotions-deleted'),
     path('promotions/statistics/', promotion_views.PromotionStatisticsView.as_view(), name='promotions-statistics'),
-    path('promotions/audit/', promotion_views.PromotionAuditView.as_view(), name='promotions-audit'),
     path('promotions/search/', promotion_views.PromotionSearchView.as_view(), name='promotions-search'),
-    path('promotions/report/', promotion_views.PromotionReportView.as_view(), name='promotions-report'),
     path('promotions/by-name/', promotion_views.PromotionByNameView.as_view(), name='promotions-by-name'),
+    path('promotions/apply/', promotion_views.PromotionApplicationView.as_view(), name='promotions-apply'),
+    
+    # Detail and nested actions
     path('promotions/<str:promotion_id>/', promotion_views.PromotionDetailView.as_view(), name='promotions-detail'),
     path('promotions/<str:promotion_id>/activate/', promotion_views.PromotionActivationView.as_view(), name='promotions-activate'),
     path('promotions/<str:promotion_id>/deactivate/', promotion_views.PromotionDeactivationView.as_view(), name='promotions-deactivate'),
     path('promotions/<str:promotion_id>/expire/', promotion_views.PromotionExpirationView.as_view(), name='promotions-expire'),
-    path('promotions/<str:promotion_id>/apply/', promotion_views.PromotionApplicationView.as_view(), name='promotions-apply'),
     path('promotions/<str:promotion_id>/restore/', promotion_views.PromotionRestoreView.as_view(), name='promotions-restore'),
     path('promotions/<str:promotion_id>/hard-delete/', promotion_views.PromotionHardDeleteView.as_view(), name='promotions-hard-delete'),
+    path('promotions/<str:promotion_id>/audit/', promotion_views.PromotionAuditView.as_view(), name='promotions-audit'),
+    path('promotions/<str:promotion_id>/report/', promotion_views.PromotionReportView.as_view(), name='promotions-report'),
+    
+    # List/Create (should come last among promotions/ prefixes)
+    path('promotions/', promotion_views.PromotionListView.as_view(), name='promotions-list'),
     
     # ==================== SESSIONS ====================
     path('sessions/', session_views.SessionLogsView.as_view(), name='sessions-list'),

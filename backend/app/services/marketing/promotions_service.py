@@ -91,14 +91,17 @@ class PromotionService:
             logger.error(f"Error listing promotions: {str(e)}")
             raise Exception(f"Database error: {str(e)}")
 
-    def get_promotion_by_id(self, promotion_id: str, include_deleted: bool = False) -> Optional[Dict]:
-        """Fetch a single promotion by its ID (PROMO-##### or just #####)."""
+    def get_promotion_by_id(self, promotion_id: str, include_deleted: bool = False) -> Dict:
+        """Fetch a single promotion by its ID."""
         try:
             promotion = Promotion.get_by_id(promotion_id, include_deleted=include_deleted)
-            return promotion.to_dict() if promotion else None
+            if promotion:
+                return {"success": True, "data": promotion.to_dict()}
+            else:
+                return {"success": False, "error": "Promotion not found"}
         except PynamoDBException as e:
             logger.error(f"Error fetching promotion {promotion_id}: {str(e)}")
-            raise Exception(f"Database error: {str(e)}")
+            return {"success": False, "error": "Database error"}
 
     def create_promotion(self, promo_data: Dict) -> Dict:
         """
@@ -507,9 +510,31 @@ class PromotionService:
             return {"success": False, "error": str(e)}
 
     def get_deleted_promotions(self, limit: int = 20, last_evaluated_key: Optional[Dict] = None) -> Dict:
-        """Return only soft‑deleted promotions."""
-        return self.get_all_promotions(
-            filters={"include_deleted": True},
-            limit=limit,
-            last_evaluated_key=last_evaluated_key,
-        )
+        """
+        Return only soft‑deleted promotions (isDeleted = True).
+        """
+        try:
+            # Query promotions with filter condition isDeleted == True
+            query = Promotion.query(
+                "promotions",
+                filter_condition=Promotion.isDeleted == True,
+                limit=limit,
+                last_evaluated_key=last_evaluated_key
+            )
+            promotions = list(query)
+            next_token = query.last_evaluated_key
+
+            return {
+                "success": True,
+                "data": {
+                    "promotions": [p.to_dict() for p in promotions],
+                    "next_page_token": next_token,
+                    "limit": limit
+                }
+            }
+        except PynamoDBException as e:
+            logger.error(f"Error getting deleted promotions: {str(e)}")
+            return {"success": False, "error": "Database error"}
+        except Exception as e:
+            logger.error(f"Unexpected error getting deleted promotions: {str(e)}")
+            return {"success": False, "error": str(e)}

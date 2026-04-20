@@ -137,20 +137,17 @@ class PromotionListView(APIView):
 class PromotionDetailView(APIView):
     # @require_authentication   # COMMENTED FOR TESTING
     def get(self, request, promotion_id):
-        """Get promotion by PROM-##### ID"""
+        """Get promotion by ID"""
         try:
             user_id = "test_admin"
             service = PromotionService(current_user=user_id)
 
             result = service.get_promotion_by_id(promotion_id)
 
-            if result and result.get('success'):
+            if result.get('success'):
                 return Response(result, status=status.HTTP_200_OK)
             else:
-                return Response(
-                    {"success": False, "error": "Promotion not found"},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                return Response(result, status=status.HTTP_404_NOT_FOUND)
 
         except Exception as e:
             logger.error(f"Error in PromotionDetailView.get: {e}")
@@ -158,7 +155,7 @@ class PromotionDetailView(APIView):
                 {"error": f"Error retrieving promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+        
     # @require_admin   # COMMENTED FOR TESTING
     def put(self, request, promotion_id):
         """Update promotion"""
@@ -478,23 +475,31 @@ class PromotionReportView(APIView):
 
 
 class PromotionByNameView(APIView):
-    # @require_authentication   # COMMENTED FOR TESTING
-    def get(self, request, promotion_name):
-        """Get promotion by exact name (case‑insensitive)"""
+    # @require_admin   # COMMENTED FOR TESTING
+    def get(self, request):
+        """Get promotion by exact name (case‑insensitive) via query parameter `name`."""
+        promotion_name = request.GET.get('name')
+        if not promotion_name:
+            return Response(
+                {"success": False, "error": "Missing 'name' query parameter"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
             user_id = "test_admin"
             service = PromotionService(current_user=user_id)
 
-            filters = {'search_query': promotion_name}
-            result = service.get_all_promotions(filters=filters)
-
-            if result['success'] and result['data']['promotions']:
-                for promo in result['data']['promotions']:
-                    if promo.get('name', '').lower() == promotion_name.lower():
-                        return Response({
-                            'success': True,
-                            'data': promo
-                        }, status=status.HTTP_200_OK)
+            # Use a scan with case‑insensitive filter
+            # Note: DynamoDB does not support case‑insensitive queries natively.
+            # We'll fetch all promotions and filter in Python (since total promotions is small).
+            # For large datasets, consider adding a lowercased name attribute and GSI.
+            all_promos, _ = service.get_promotions(limit=1000)  # Adjust limit as needed
+            for promo in all_promos:
+                if promo.get('name', '').strip().lower() == promotion_name.strip().lower():
+                    return Response({
+                        'success': True,
+                        'data': promo
+                    }, status=status.HTTP_200_OK)
 
             return Response(
                 {"success": False, "error": "Promotion not found"},
@@ -502,9 +507,9 @@ class PromotionByNameView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"Error getting promotion by name {promotion_name}: {e}")
+            logger.error(f"Error in PromotionByNameView: {e}")
             return Response(
-                {"error": str(e)},
+                {"error": f"Error retrieving promotion: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

@@ -11,7 +11,7 @@ from pynamodb.attributes import (
     ListAttribute, MapAttribute, UTCDateTimeAttribute
 )
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 import logging
 import json
@@ -28,25 +28,35 @@ logger = logging.getLogger(__name__)
 class FixedUTCDateTimeAttribute(UTCDateTimeAttribute):
     """
     Custom UTCDateTimeAttribute that attempts to fix malformed datetime strings
-    (e.g., '000002025-10-12T16:48:54.458000') by stripping leading zeros from the year.
+    (e.g., '000002025-10-12T16:48:54.458000') by stripping leading zeros from the year
+    and ensuring the string is in the expected format (YYYY-MM-DDTHH:MM:SS.ffffff+0000).
     """
     def deserialize(self, value):
         if isinstance(value, str):
-            # Pattern: any number of leading zeros followed by a valid ISO datetime
-            match = re.search(r'0*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?)', value)
+            # Remove leading zeros before the year, capturing the datetime part (without timezone)
+            match = re.search(r'0*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)(?:[+-]\d{2}:\d{2}|Z)?', value)
             if match:
                 corrected = match.group(1)
-                logger.debug(f"Fixed malformed datetime: {value} -> {corrected}")
-                value = corrected
+                try:
+                    # Try parsing with fromisoformat (handles +00:00 and Z)
+                    dt = datetime.fromisoformat(corrected)
+                except ValueError:
+                    # If no timezone, assume UTC
+                    dt = datetime.fromisoformat(corrected + '+00:00')
+                # Format to the exact expected format: YYYY-MM-DDTHH:MM:SS.ffffff+0000
+                iso = dt.isoformat(timespec='microseconds')
+                if iso.endswith('+00:00'):
+                    iso = iso.replace('+00:00', '+0000')
+                elif iso.endswith('Z'):
+                    iso = iso.replace('Z', '+0000')
+                else:
+                    # In case something else, append +0000
+                    iso += '+0000'
+                value = iso
         return super().deserialize(value)
 
 
 # ============= MAP ATTRIBUTES FOR COMPLEX FIELDS =============
-
-class DiscountConfigItem(MapAttribute):
-    """MapAttribute for discount_config items with promotion type"""
-    promotion_type = UnicodeAttribute()  # 'percentage', 'fixed_amount'
-
 
 class TargetIdItem(MapAttribute):
     """MapAttribute for target_ids items"""
@@ -88,11 +98,9 @@ class Promotion(Model):
     - description (String)
     - type (String)
     - discount_value (String)
-    - discount_config (array)
-        - promotion_type (String)
+    - promotion_type (String)           # 'percentage' or 'fixed_amount'
     - target_type (String)
     - target_ids (array)
-        - category_id (String)
     - start_date (ISODATE)
     - end_date (ISODATE)
     - isDeleted (boolean)
@@ -136,9 +144,7 @@ class Promotion(Model):
     description = UnicodeAttribute()
     type = UnicodeAttribute()  # Main type: 'discount', 'bundle', 'flash_sale'
     discount_value = UnicodeAttribute()  # String for flexibility: "10%" or "5.00"
-    
-    # ============= DISCOUNT CONFIGURATION =============
-    discount_config = ListAttribute(of=DiscountConfigItem, default=list)
+    promotion_type = UnicodeAttribute()  # 'percentage' or 'fixed_amount'
     
     # ============= TARGET INFORMATION =============
     target_type = UnicodeAttribute()  # 'category', 'product', 'all'
@@ -159,14 +165,14 @@ class Promotion(Model):
     
     # ============= AUDIT FIELDS =============
     created_by = UnicodeAttribute()
-    created_at = FixedUTCDateTimeAttribute(default=datetime.utcnow)   # <-- Use custom attribute
+    created_at = FixedUTCDateTimeAttribute(default=lambda: datetime.now(timezone.utc))
     status = UnicodeAttribute(default="draft")  # 'draft', 'active', 'inactive', 'deactivated', 'expired'
-    deactivated_at = FixedUTCDateTimeAttribute(null=True)   # <-- Use custom attribute
+    deactivated_at = FixedUTCDateTimeAttribute(null=True)
     deactivated_by = UnicodeAttribute(null=True)
     
     # ============= ENHANCED FIELDS =============
     pos_sync_status = UnicodeAttribute(default="synced")  # 'synced', 'pending', 'failed'
-    last_pos_sync = FixedUTCDateTimeAttribute(null=True)   # <-- Use custom attribute
+    last_pos_sync = FixedUTCDateTimeAttribute(null=True)
     priority = NumberAttribute(default=1)  # Lower number = higher priority
     min_purchase_amount = NumberAttribute(null=True)  # Minimum cart value
     stackable = BooleanAttribute(default=True)  # Can combine with other promotions
@@ -175,7 +181,7 @@ class Promotion(Model):
     audit_log = ListAttribute(of=AuditLogItem, default=list)  # Track all changes
     seasonal_tag = UnicodeAttribute(null=True)  # e.g., 'christmas', 'summer', 'back_to_school'
     customer_segment = UnicodeAttribute(default="all")  # 'all', 'new', 'returning'
-    updated_at = FixedUTCDateTimeAttribute(default=datetime.utcnow)   # <-- Use custom attribute
+    updated_at = FixedUTCDateTimeAttribute(default=lambda: datetime.now(timezone.utc))
     
     # ============= INDEXES FOR COMMON QUERIES =============
     
@@ -187,7 +193,7 @@ class Promotion(Model):
             write_capacity_units = 2
             projection = AllProjection()
         
-        pk = UnicodeAttribute(hash_key=True)  # Will be set to 'promotions'
+        pk = UnicodeAttribute(hash_key=True, attr_name="PK")  # Will be set to 'promotions'
         status = UnicodeAttribute(range_key=True)
     
     class DateRangeIndex(GlobalSecondaryIndex):
@@ -198,8 +204,8 @@ class Promotion(Model):
             write_capacity_units = 2
             projection = AllProjection()
         
-        pk = UnicodeAttribute(hash_key=True)  # Will be set to 'promotions'
-        start_date = FixedUTCDateTimeAttribute(range_key=True)   # <-- Use custom attribute
+        pk = UnicodeAttribute(hash_key=True, attr_name="PK")
+        start_date = FixedUTCDateTimeAttribute(range_key=True)
     
     class TargetTypeIndex(GlobalSecondaryIndex):
         """GSI for querying by target type"""
@@ -209,7 +215,7 @@ class Promotion(Model):
             write_capacity_units = 2
             projection = AllProjection()
         
-        pk = UnicodeAttribute(hash_key=True)  # Will be set to 'promotions'
+        pk = UnicodeAttribute(hash_key=True, attr_name="PK")
         target_type = UnicodeAttribute(range_key=True)
     
     class SeasonalIndex(GlobalSecondaryIndex):
@@ -220,7 +226,7 @@ class Promotion(Model):
             write_capacity_units = 1
             projection = AllProjection()
         
-        pk = UnicodeAttribute(hash_key=True)  # Will be set to 'promotions'
+        pk = UnicodeAttribute(hash_key=True, attr_name="PK")
         seasonal_tag = UnicodeAttribute(range_key=True)
     
     # Index instances
@@ -235,7 +241,7 @@ class Promotion(Model):
     @classmethod
     def create_promotion(cls, name: str, description: str, discount_value: str,
                         start_date: datetime, end_date: datetime, created_by: str,
-                        target_type: str = "all", **kwargs) -> 'Promotion':
+                        target_type: str = "all", promotion_type: str = None, **kwargs) -> 'Promotion':
         """
         Create a new promotion with auto-generated 5-digit SK
         
@@ -247,6 +253,7 @@ class Promotion(Model):
             end_date: When promotion ends (required)
             created_by: User who created the promotion (required)
             target_type: Type of targeting ('category', 'product', 'all') (default: 'all')
+            promotion_type: 'percentage' or 'fixed_amount'. If not provided, auto-detected from discount_value.
             **kwargs: Additional promotion attributes
         
         Returns:
@@ -274,21 +281,23 @@ class Promotion(Model):
             if target_type not in ['category', 'product', 'all']:
                 raise ValueError("Target type must be 'category', 'product', or 'all'")
             
-            # Validate discount value format
-            cls._validate_discount_value(discount_value, kwargs.get('discount_config', []))
+            # Auto-detect promotion_type if not provided
+            if not promotion_type:
+                if discount_value.endswith('%'):
+                    promotion_type = 'percentage'
+                else:
+                    promotion_type = 'fixed_amount'
+            elif promotion_type not in ['percentage', 'fixed_amount']:
+                raise ValueError("promotion_type must be 'percentage' or 'fixed_amount'")
+            
+            # Validate discount value format and consistency with promotion_type
+            cls._validate_discount_value(discount_value, promotion_type)
             
             # Generate 5-digit SK using utils.py
-            sk_value = generate_sk('PROMO-', 'promo_seq')
-            
-            # Create discount config if not provided
-            discount_config = kwargs.get('discount_config', [])
-            if not discount_config:
-                # Auto-detect promotion type from discount value
-                if discount_value.endswith('%'):
-                    discount_config = [DiscountConfigItem(promotion_type='percentage')]
-                else:
-                    discount_config = [DiscountConfigItem(promotion_type='fixed_amount')]
-                kwargs['discount_config'] = discount_config
+            from app.utils import counter_service
+            raw_seq = counter_service.get_next_id(collection_name='promo_seq', prefix='', width=5)
+            next_seq = raw_seq.lstrip('-')
+            sk_value = f"PROMO-{next_seq}"
             
             # Create and save promotion
             promotion = cls(
@@ -297,12 +306,13 @@ class Promotion(Model):
                 name=name.strip(),
                 description=description.strip(),
                 discount_value=discount_value,
+                promotion_type=promotion_type,
                 start_date=start_date,
                 end_date=end_date,
                 created_by=created_by,
                 target_type=target_type,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 **kwargs
             )
             
@@ -360,25 +370,18 @@ class Promotion(Model):
     
     @classmethod
     def get_active_promotions(cls, target_type: str = None, 
-                             target_id: str = None) -> List['Promotion']:
+                            target_id: str = None) -> List['Promotion']:
         """
-        Get all currently active promotions
-        
-        Args:
-            target_type: Filter by target type ('category', 'product', 'all')
-            target_id: Filter by specific target ID
-        
-        Returns:
-            list: List of active promotions
+        Get all currently active promotions using PromotionStatusIndex GSI
         """
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             active_promotions = []
             
-            # Query by status first (active promotions)
+            # Correct GSI query: hash key PK = "promotions", range key status = "active"
             for promotion in cls.status_index.query(
-                "promotions",
-                cls.status == "active",
+                hash_key="promotions",
+                range_key_condition=(cls.status == "active"),
                 filter_condition=(cls.isDeleted == False)
             ):
                 # Check date range
@@ -395,7 +398,6 @@ class Promotion(Model):
             
             # Sort by priority (lower number = higher priority)
             active_promotions.sort(key=lambda x: x.priority)
-            
             return active_promotions
             
         except Exception as e:
@@ -405,31 +407,20 @@ class Promotion(Model):
     @classmethod
     def get_expiring_soon_promotions(cls, days: int = 7) -> List['Promotion']:
         """
-        Get promotions that will expire soon
-        
-        Args:
-            days: Number of days to look ahead
-        
-        Returns:
-            list: List of promotions expiring soon
+        Get promotions that will expire soon (scan-based, no GSI required)
         """
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             cutoff_date = now + timedelta(days=days)
+            expiring = []
             
-            expiring_promotions = []
-            
-            # Use date range index
-            for promotion in cls.date_range_index.query(
-                "promotions",
-                cls.start_date <= cutoff_date,
+            # Scan active promotions
+            for promo in cls.scan(
                 filter_condition=(cls.isDeleted == False) & (cls.status == "active")
             ):
-                if promotion.end_date <= cutoff_date and promotion.end_date >= now:
-                    expiring_promotions.append(promotion)
-            
-            return expiring_promotions
-            
+                if promo.end_date <= cutoff_date and promo.end_date >= now:
+                    expiring.append(promo)
+            return expiring
         except Exception as e:
             logger.error(f"Error getting expiring soon promotions: {str(e)}")
             return []
@@ -437,37 +428,19 @@ class Promotion(Model):
     @classmethod
     def get_seasonal_promotions(cls, seasonal_tag: str = None) -> List['Promotion']:
         """
-        Get seasonal promotions
-        
-        Args:
-            seasonal_tag: Specific seasonal tag (e.g., 'christmas')
-        
-        Returns:
-            list: List of seasonal promotions
+        Get seasonal promotions (scan-based)
         """
         try:
-            seasonal_promotions = []
-            
+            seasonal = []
+            filter_cond = (cls.isDeleted == False) & (cls.status == "active")
             if seasonal_tag:
-                # Query by seasonal tag
-                for promotion in cls.seasonal_index.query(
-                    "promotions",
-                    cls.seasonal_tag == seasonal_tag,
-                    filter_condition=(cls.isDeleted == False) & (cls.status == "active")
-                ):
-                    seasonal_promotions.append(promotion)
+                filter_cond &= (cls.seasonal_tag == seasonal_tag)
             else:
-                # Get all seasonal promotions
-                for promotion in cls.query(
-                    "promotions",
-                    filter_condition=(cls.isDeleted == False) & 
-                                    (cls.status == "active") &
-                                    (cls.seasonal_tag != None)
-                ):
-                    seasonal_promotions.append(promotion)
+                filter_cond &= (cls.seasonal_tag != None)
             
-            return seasonal_promotions
-            
+            for promo in cls.scan(filter_condition=filter_cond):
+                seasonal.append(promo)
+            return seasonal
         except Exception as e:
             logger.error(f"Error getting seasonal promotions: {str(e)}")
             return []
@@ -475,32 +448,19 @@ class Promotion(Model):
     @classmethod
     def get_promotions_by_target(cls, target_type: str, target_id: str = None) -> List['Promotion']:
         """
-        Get promotions by target type and optional target ID
-        
-        Args:
-            target_type: Type of target ('category', 'product', 'all')
-            target_id: Specific target ID
-        
-        Returns:
-            list: List of matching promotions
+        Get promotions by target type and optional target ID (scan-based)
         """
         try:
             promotions = []
-            
-            # Query by target type
-            for promotion in cls.target_type_index.query(
-                "promotions",
-                cls.target_type == target_type,
+            # Scan all active promotions
+            for promo in cls.scan(
                 filter_condition=(cls.isDeleted == False) & (cls.status == "active")
             ):
-                if target_id:
-                    if cls._matches_target(promotion, target_id):
-                        promotions.append(promotion)
-                else:
-                    promotions.append(promotion)
-            
+                if promo.target_type == target_type:
+                    if target_id and not cls._matches_target(promo, target_id):
+                        continue
+                    promotions.append(promo)
             return promotions
-            
         except Exception as e:
             logger.error(f"Error getting promotions by target: {str(e)}")
             return []
@@ -560,27 +520,31 @@ class Promotion(Model):
         return False
     
     @classmethod
-    def _validate_discount_value(cls, discount_value: str, discount_config: List[DiscountConfigItem]) -> None:
-        """Validate discount value format"""
+    def _validate_discount_value(cls, discount_value: str, promotion_type: str) -> None:
+        """Validate discount value format and consistency with promotion_type"""
         if not discount_value:
             raise ValueError("Discount value cannot be empty")
         
-        # Check if it's a percentage
-        if discount_value.endswith('%'):
+        if promotion_type == 'percentage':
+            if not discount_value.endswith('%'):
+                raise ValueError("Percentage discount must end with '%'")
             try:
                 percentage = float(discount_value[:-1])
                 if not 0 < percentage <= 100:
                     raise ValueError("Percentage must be between 0 and 100")
             except ValueError:
                 raise ValueError("Invalid percentage format")
-        else:
-            # Check if it's a fixed amount
+        elif promotion_type == 'fixed_amount':
+            if discount_value.endswith('%'):
+                raise ValueError("Fixed amount discount should not end with '%'")
             try:
                 amount = float(discount_value)
                 if amount <= 0:
                     raise ValueError("Fixed amount must be greater than 0")
             except ValueError:
                 raise ValueError("Invalid fixed amount format")
+        else:
+            raise ValueError("Invalid promotion_type; must be 'percentage' or 'fixed_amount'")
     
     # ============= INSTANCE METHODS =============
     
@@ -592,7 +556,7 @@ class Promotion(Model):
             bool: True if promotion is active
         """
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             
             # Basic checks
             if self.isDeleted:
@@ -632,13 +596,11 @@ class Promotion(Model):
             
             discount_amount = 0.0
             
-            # Parse discount value
-            if self.discount_value.endswith('%'):
-                # Percentage discount
+            # Parse discount value based on promotion_type
+            if self.promotion_type == 'percentage':
                 percentage = float(self.discount_value[:-1])
                 discount_amount = original_amount * (percentage / 100)
-            else:
-                # Fixed amount discount
+            else:  # fixed_amount
                 discount_amount = float(self.discount_value)
             
             # Ensure discount doesn't exceed original amount
@@ -661,13 +623,13 @@ class Promotion(Model):
         """
         try:
             # Validate dates
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             if self.end_date <= now:
                 raise ValueError("Cannot activate promotion that has already ended")
             
             old_status = self.status
             self.status = "active"
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
             self.pos_sync_status = "pending"  # Flag for POS sync
             
             # Clear deactivation fields if previously deactivated
@@ -712,9 +674,9 @@ class Promotion(Model):
             
             old_status = self.status
             self.status = "deactivated"
-            self.deactivated_at = datetime.utcnow()
+            self.deactivated_at = datetime.now(timezone.utc)
             self.deactivated_by = deactivated_by
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
             self.pos_sync_status = "pending"  # Flag for POS sync
             
             self.save()
@@ -768,7 +730,7 @@ class Promotion(Model):
             # Update counters
             self.current_usage += 1
             self.total_revenue_impact += discount_amount
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
             
             # Add to usage history
             history_item = UsageHistoryItem(
@@ -777,7 +739,7 @@ class Promotion(Model):
                 branch_id=branch_id,
                 discount_amount=discount_amount,
                 transaction_amount=transaction_amount,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 pos_terminal_id=pos_terminal_id,
                 items=json.dumps(items) if items else None
             )
@@ -822,9 +784,11 @@ class Promotion(Model):
                     old_value = getattr(self, key)
                     
                     # Handle special cases
-                    if key == 'discount_value':
-                        # Validate new discount value
-                        self._validate_discount_value(value, self.discount_config)
+                    if key == 'discount_value' or key == 'promotion_type':
+                        # Validate the pair
+                        disc_val = value if key == 'discount_value' else self.discount_value
+                        promo_type = value if key == 'promotion_type' else self.promotion_type
+                        self._validate_discount_value(disc_val, promo_type)
                     
                     if key == 'start_date' or key == 'end_date':
                         # Validate date range
@@ -842,7 +806,7 @@ class Promotion(Model):
                         changes[key] = {"old": old_value, "new": value}
             
             if updated_fields:
-                self.updated_at = datetime.utcnow()
+                self.updated_at = datetime.now(timezone.utc)
                 self.pos_sync_status = "pending"  # Flag for POS sync
                 self.save()
                 
@@ -881,7 +845,7 @@ class Promotion(Model):
             
             self.isDeleted = True
             self.status = "deactivated"
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
             self.pos_sync_status = "pending"  # Flag for POS sync
             
             # Add to audit log
@@ -916,7 +880,7 @@ class Promotion(Model):
         try:
             self.isDeleted = False
             self.status = "draft"  # Restored promotions go back to draft
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
             self.pos_sync_status = "pending"  # Flag for POS sync
             
             self.save()
@@ -946,8 +910,8 @@ class Promotion(Model):
         """
         try:
             self.pos_sync_status = "synced"
-            self.last_pos_sync = datetime.utcnow()
-            self.updated_at = datetime.utcnow()
+            self.last_pos_sync = datetime.now(timezone.utc)
+            self.updated_at = datetime.now(timezone.utc)
             self.save()
             
             logger.info(f"Promotion {self.sk} marked as POS synced")
@@ -969,7 +933,7 @@ class Promotion(Model):
         """
         try:
             self.pos_sync_status = "pending"
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
             self.save()
             
             if reason:
@@ -1005,7 +969,7 @@ class Promotion(Model):
                 target_name=target_name
             )
             self.target_ids.append(target_item)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
             self.pos_sync_status = "pending"  # Flag for POS sync
             
             self.save()
@@ -1040,7 +1004,7 @@ class Promotion(Model):
             
             if removed:
                 self.target_ids = new_target_ids
-                self.updated_at = datetime.utcnow()
+                self.updated_at = datetime.now(timezone.utc)
                 self.pos_sync_status = "pending"  # Flag for POS sync
                 self.save()
                 
@@ -1069,7 +1033,7 @@ class Promotion(Model):
             audit_item = AuditLogItem(
                 action=action,
                 user_id=user_id,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 changes=changes,
                 reason=reason
             )
@@ -1079,6 +1043,7 @@ class Promotion(Model):
                 self.audit_log = self.audit_log[-99:]
             
             self.audit_log.append(audit_item)
+            self.save()
             
         except Exception as e:
             logger.error(f"Failed to add audit log for promotion {self.sk}: {str(e)}")
@@ -1097,10 +1062,7 @@ class Promotion(Model):
                 "description": self.description,
                 "type": self.type,
                 "discount_value": self.discount_value,
-                "discount_config": [
-                    {"promotion_type": item.promotion_type}
-                    for item in self.discount_config
-                ],
+                "promotion_type": self.promotion_type,
                 "target_type": self.target_type,
                 "target_ids": [
                     {"target_id": item.target_id, "target_name": item.target_name}
@@ -1128,8 +1090,8 @@ class Promotion(Model):
                 "customer_segment": self.customer_segment,
                 "updated_at": self.updated_at.isoformat() if self.updated_at else None,
                 "is_active": self.is_active(),
-                "days_remaining": (self.end_date.date() - datetime.utcnow().date()).days 
-                                if self.end_date and datetime.utcnow().date() <= self.end_date.date() 
+                "days_remaining": (self.end_date.date() - datetime.now(timezone.utc).date()).days 
+                                if self.end_date and datetime.now(timezone.utc).date() <= self.end_date.date() 
                                 else 0,
                 "usage_percentage": (self.current_usage / self.usage_limit * 100) 
                                   if self.usage_limit and self.usage_limit > 0 
@@ -1173,6 +1135,7 @@ class Promotion(Model):
                 "name": self.name,
                 "type": self.type,
                 "discount_value": self.discount_value,
+                "promotion_type": self.promotion_type,
                 "target_type": self.target_type,
                 "start_date": self.start_date.isoformat() if self.start_date else None,
                 "end_date": self.end_date.isoformat() if self.end_date else None,
@@ -1200,7 +1163,7 @@ class Promotion(Model):
                 "name": self.name,
                 "type": self.type,
                 "discount_value": self.discount_value,
-                "discount_type": self.discount_config[0].promotion_type if self.discount_config else "percentage",
+                "discount_type": self.promotion_type,  # 'percentage' or 'fixed_amount'
                 "target_type": self.target_type,
                 "target_ids": [item.target_id for item in self.target_ids],
                 "start_date": self.start_date.isoformat() if self.start_date else None,
@@ -1258,7 +1221,7 @@ def validate_promotion_id(promotion_id: str) -> bool:
 
 def validate_promotion_data(name: str, description: str, discount_value: str,
                            start_date: datetime, end_date: datetime, 
-                           created_by: str) -> tuple[bool, str]:
+                           created_by: str, promotion_type: str = None) -> tuple[bool, str]:
     """
     Validate promotion data before creation
     
@@ -1269,6 +1232,7 @@ def validate_promotion_data(name: str, description: str, discount_value: str,
         start_date: Start date to validate
         end_date: End date to validate
         created_by: Created by user to validate
+        promotion_type: 'percentage' or 'fixed_amount'. Auto-detected if None.
     
     Returns:
         tuple: (is_valid, error_message)
@@ -1288,18 +1252,18 @@ def validate_promotion_data(name: str, description: str, discount_value: str,
     if not discount_value:
         return False, "Discount value is required"
     
-    # Validate discount value format
-    try:
+    # Auto-detect promotion_type if not provided
+    if not promotion_type:
         if discount_value.endswith('%'):
-            percentage = float(discount_value[:-1])
-            if not 0 < percentage <= 100:
-                return False, "Percentage must be between 0 and 100"
+            promotion_type = 'percentage'
         else:
-            amount = float(discount_value)
-            if amount <= 0:
-                return False, "Fixed amount must be greater than 0"
-    except ValueError:
-        return False, "Invalid discount value format"
+            promotion_type = 'fixed_amount'
+    
+    # Validate discount value format with promotion_type
+    try:
+        Promotion._validate_discount_value(discount_value, promotion_type)
+    except ValueError as e:
+        return False, str(e)
     
     if not start_date or not end_date:
         return False, "Start date and end date are required"
@@ -1516,6 +1480,7 @@ class PromotionManager:
                         "name": promotion.name,
                         "type": promotion.type,
                         "discount_value": promotion.discount_value,
+                        "promotion_type": promotion.promotion_type,
                         "discount_amount": discount_amount,
                         "priority": promotion.priority,
                         "stackable": promotion.stackable,
@@ -1617,7 +1582,7 @@ class PromotionManager:
             dict: Promotion effectiveness report
         """
         try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
             
             promotions = Promotion.get_all_promotions()
             report = {
