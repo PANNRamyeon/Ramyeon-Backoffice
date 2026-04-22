@@ -393,3 +393,93 @@ class CustomerLoyaltyView(APIView):
         except Exception as e:
             logger.error(f"Error updating loyalty points for customer {customer_id}: {e}")
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class CustomerQRGenerateView(APIView):
+    """
+    Generate a dynamic QR token for a customer.
+    Authentication required (customer themselves or admin).
+    """
+    def __init__(self):
+        self.customer_service = CustomerService()
+
+    @require_authentication
+    def get(self, request, customer_id):
+        try:
+            # Authorization: only the customer themselves or admin can generate QR
+            user_ctx = getattr(request, 'current_user', {})
+            requester_id = user_ctx.get('user_id')
+            requester_role = user_ctx.get('role')
+
+            if requester_role != 'admin' and requester_id != customer_id:
+                return Response(
+                    {"error": "You can only generate QR codes for your own account"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            expiry_hours = int(request.query_params.get('expiry_hours', 24))
+            if expiry_hours < 1 or expiry_hours > 168:  # 1 week max
+                return Response(
+                    {"error": "expiry_hours must be between 1 and 168"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            token = self.customer_service.generate_qr_token_for_customer(
+                customer_id, expiry_hours
+            )
+            if not token:
+                return Response(
+                    {"error": "Customer not found or inactive"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            return Response({
+                "qr_token": token,
+                "expires_in_hours": expiry_hours,
+                "customer_id": customer_id,
+                "note": "Use this token to generate a QR code. Scan endpoint: POST /api/qr/verify"
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error generating QR token for customer {customer_id}: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CustomerQRVerifyView(APIView):
+    """
+    Verify a scanned QR token and return customer information.
+    Public endpoint (no authentication required) - token itself is proof.
+    """
+    def __init__(self):
+        self.customer_service = CustomerService()
+
+    def post(self, request):
+        try:
+            token = request.data.get('token')
+            if not token:
+                return Response(
+                    {"error": "Token is required in request body"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            customer_data = self.customer_service.verify_qr_token(token)
+            if not customer_data:
+                return Response(
+                    {"error": "Invalid or expired QR token"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
+            # Return minimal info needed for POS/loyalty
+            return Response({
+                "valid": True,
+                "customer": {
+                    "customer_id": customer_data.get("customer_id"),
+                    "full_name": customer_data.get("full_name"),
+                    "email": customer_data.get("email"),
+                    "loyalty_points": customer_data.get("loyalty_points"),
+                    "status": customer_data.get("status")
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error verifying QR token: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

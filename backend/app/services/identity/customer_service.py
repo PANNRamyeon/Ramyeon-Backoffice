@@ -1,11 +1,14 @@
 from datetime import datetime
 import bcrypt
 import logging
+from typing import Optional  # <-- Add this
+
 from ..core.audit_service import AuditLogService
 from notifications.services import notification_service
 import csv
 import io
 from app.utils import DYNAMO_TABLE_NAME
+from app.utils.qr_utils import generate_customer_qr_token, verify_customer_qr_token  # <-- Add this
 from models.Customers import Customer, CustomerManager
 from models.Sessions import SessionLog
 from pynamodb.exceptions import PynamoDBException
@@ -424,3 +427,82 @@ class CustomerService:
 
     def import_customers_from_csv(self, file_path, current_user=None):
         raise NotImplementedError("import_customers_from_csv is not implemented for DynamoDB")
+    
+
+      # ==================== QR Code Methods ====================
+        # ==================== QR Code Methods ====================
+    def generate_qr_token_for_customer(self, customer_id: str, expiry_hours: int = 24) -> Optional[str]:
+        """
+        Generate a dynamic QR token for a customer.
+
+        Args:
+            customer_id: Customer SK
+            expiry_hours: Token validity in hours
+
+        Returns:
+            str: JWT token, or None if customer doesn't exist
+        """
+        try:
+            # Verify customer exists and is active
+            customer = Customer.get_by_id(customer_id)
+            if not customer or customer.isDeleted:
+                logger.warning(f"QR token requested for non-existent/deleted customer: {customer_id}")
+                return None
+
+            token = generate_customer_qr_token(customer.sk, expiry_hours)
+            logger.info(f"Generated QR token for customer {customer_id}")
+            return token
+        except Exception as e:
+            logger.error(f"Error generating QR token for customer {customer_id}: {e}")
+            raise Exception(f"Failed to generate QR token: {str(e)}")
+
+    def verify_qr_token(self, token: str) -> Optional[dict]:
+        """
+        Verify a QR token and return customer summary if valid.
+
+        Args:
+            token: JWT string
+
+        Returns:
+            dict: Customer summary (from to_dict) or None if invalid/expired
+        """
+        try:
+            customer_id = verify_customer_qr_token(token)
+            if not customer_id:
+                return None
+
+            customer = Customer.get_by_id(customer_id)
+            if not customer or customer.isDeleted:
+                logger.warning(f"QR token verified but customer not found/deleted: {customer_id}")
+                return None
+
+            return customer.to_dict()
+        except Exception as e:
+            logger.error(f"Error verifying QR token: {e}")
+            raise Exception(f"QR verification failed: {str(e)}")
+
+    def verify_qr_token(self, token: str) -> Optional[dict]:
+        """
+        Verify a QR token and return customer summary if valid.
+
+        Args:
+            token: JWT string
+
+        Returns:
+            dict: Customer summary (from to_dict) or None if invalid/expired
+        """
+        try:
+            from app.utils.qr_utils import verify_customer_qr_token
+            customer_id = verify_customer_qr_token(token)
+            if not customer_id:
+                return None
+
+            customer = Customer.get_by_id(customer_id)
+            if not customer or customer.isDeleted:
+                logger.warning(f"QR token verified but customer not found/deleted: {customer_id}")
+                return None
+
+            return customer.to_dict()
+        except Exception as e:
+            logger.error(f"Error verifying QR token: {e}")
+            raise Exception(f"QR verification failed: {str(e)}")

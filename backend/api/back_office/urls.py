@@ -53,6 +53,10 @@ urlpatterns = [
     path('customers/<str:customer_id>/hard-delete/', customer_views.CustomerHardDeleteView.as_view(), name='customers-hard-delete'),
     path('customers/<str:customer_id>/loyalty/', customer_views.CustomerLoyaltyView.as_view(), name='customers-loyalty'),
     
+    #CUSTOMER QR CODE ENDPOINTS
+    path('customers/<str:customer_id>/qr', customer_views.CustomerQRGenerateView.as_view(), name='customer-qr-generate'),
+    path('qr/verify', customer_views.CustomerQRVerifyView.as_view(), name='customer-qr-verify'),
+
     # ==================== PRODUCTS ====================
     path('products/test/', product_views.TestTemplateView.as_view(), name='products-test'),
     path('products/', product_views.ProductListView.as_view(), name='products-list'),
@@ -144,6 +148,9 @@ urlpatterns = [
     # List/Create (should come last among promotions/ prefixes)
     path('promotions/', promotion_views.PromotionListView.as_view(), name='promotions-list'),
     
+    #QR code endpoint (must come after detail pattern to avoid conflicts)
+    path('promotions/<str:promotion_id>/qr/', promotion_views.PromotionQRView.as_view(), name='promotions-qr'),
+
     # ==================== SESSIONS ====================
     path('sessions/', session_views.SessionLogsView.as_view(), name='sessions-list'),
     path('sessions/active/', session_views.ActiveSessionsView.as_view(), name='sessions-active'),

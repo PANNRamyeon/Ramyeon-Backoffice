@@ -6,6 +6,12 @@ from app.services.marketing.promotions_service import PromotionService
 # from app.decorators.authenticationDecorator import require_admin, require_authentication  # COMMENTED FOR TESTING
 import logging
 import json
+import qrcode
+from io import BytesIO
+from django.http import HttpResponse
+from rest_framework.permissions import AllowAny
+from django.views.decorators.cache import cache_page
+from django.utils.decorators import method_decorator
 
 logger = logging.getLogger(__name__)
 
@@ -598,3 +604,53 @@ class DeletedPromotionsView(APIView):
                 {"error": f"Error retrieving deleted promotions: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+@method_decorator(cache_page(60 * 15), name='dispatch')
+class PromotionQRView(APIView):
+    """
+    Generate a QR code for a promotion.
+    The QR code contains a deep-link URL to apply the promotion.
+    """
+    permission_classes = [AllowAny]  # QR codes may be public (e.g., on flyers)
+
+    def get(self, request, promotion_id):
+        # Validate promotion exists
+        service = PromotionService(current_user="system")
+        result = service.get_promotion_by_id(promotion_id)
+        if not result.get('success'):
+            return Response(
+                {"error": "Promotion not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        promotion = result['data']
+
+        # Build the content to encode
+        # Option A: Deep-link URL to your frontend/web app
+        base_url = request.build_absolute_uri('/').rstrip('/')
+        # Adjust path to match your frontend route
+        apply_url = f"{base_url}/apply?promo={promotion_id}"
+
+        # Option B: Just the promotion ID or a custom promo code
+        # qr_content = promotion.get('promo_code', promotion_id)
+
+        # Generate QR code
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(apply_url)   # or qr_content
+        qr.make(fit=True)
+
+        # Create image
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        # Save to in-memory bytes buffer
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        buffer.seek(0)
+
+        # Return as PNG response
+        return HttpResponse(buffer.getvalue(), content_type="image/png")
