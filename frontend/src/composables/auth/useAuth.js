@@ -14,10 +14,7 @@ export function useAuth() {
   const refreshToken = computed(() => localStorage.getItem('refresh_token'))
   const isAdmin = computed(() => user.value?.role === 'admin')
 
-  const isAuthenticated = computed(() => {
-    const token = localStorage.getItem('access_token')
-    return !!token
-  })
+  const isAuthenticated = computed(() => !!tokenRef.value)
 
   // Sync token function
   const syncToken = () => {
@@ -64,13 +61,9 @@ export function useAuth() {
     error.value = null
 
     try {
-      const response = await apiService.login(email, password)
+      await apiService.login(email, password)
 
-      // Sync token
       syncToken()
-      await nextTick()
-
-      // ✅ Fetch full user data after login
       await fetchCurrentUser()
 
       return true
@@ -144,11 +137,6 @@ export function useAuth() {
       user.value = null
     }
   }, { immediate: true })
- 
-  // Initialize on composable creation
-  nextTick(() => {
-    initializeAuth()
-  })
  
   return {
     // State (readonly to prevent direct mutation)

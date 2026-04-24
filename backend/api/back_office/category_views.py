@@ -421,7 +421,7 @@ class CategoryProductManagementView(APIView):
     """New view for managing products within categories using proxy methods"""
     
     @require_authentication
-    def put(self, request):
+    def put(self, request, category_id):
         """Move product to different category or subcategory"""
         try:
             category_service = get_singleton(CategoryService)
@@ -457,8 +457,8 @@ class CategoryProductManagementView(APIView):
             logger.error(f"Error moving product: {e}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @require_authentication  
-    def post(self, request):
+    @require_authentication
+    def post(self, request, category_id):
         """Bulk move products to category/subcategory"""
         try:
             category_service = get_singleton(CategoryService)

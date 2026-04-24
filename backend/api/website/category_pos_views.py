@@ -76,7 +76,7 @@ class POSProductBatchView(APIView):
                         'product_name': product.get('product_name'),
                         'SKU': product.get('SKU'),
                         'selling_price': product.get('selling_price', 0),
-                        'stock': product.get('stock', 0),
+                        'stock': product.get('total_stock', product.get('stock', 0)),
                         'low_stock_threshold': product.get('low_stock_threshold', 0),
                         'unit': product.get('unit', ''),
                         'barcode': product.get('barcode'),
@@ -128,7 +128,7 @@ class POSBarcodeView(APIView):
                 'product_name': product.get('product_name'),
                 'SKU': product.get('SKU'),
                 'selling_price': product.get('selling_price', 0),
-                'stock': product.get('stock', 0),
+                'stock': product.get('total_stock', product.get('stock', 0)),
                 'low_stock_threshold': product.get('low_stock_threshold', 0),
                 'unit': product.get('unit', ''),
                 'barcode': product.get('barcode'),
@@ -177,7 +177,7 @@ class POSSearchView(APIView):
                         'product_name': product.get('product_name'),
                         'SKU': product.get('SKU'),
                         'selling_price': product.get('selling_price', 0),
-                        'stock': product.get('stock', 0),
+                        'stock': product.get('total_stock', product.get('stock', 0)),
                         'low_stock_threshold': product.get('low_stock_threshold', 0),
                         'unit': product.get('unit', ''),
                         'barcode': product.get('barcode'),
@@ -222,7 +222,7 @@ class POSSubcategoryProductsView(APIView):
                         'product_name': product.get('product_name'),
                         'SKU': product.get('SKU'),
                         'selling_price': product.get('selling_price', 0),
-                        'stock': product.get('stock', 0),
+                        'stock': product.get('total_stock', product.get('stock', 0)),
                         'low_stock_threshold': product.get('low_stock_threshold', 0),
                         'unit': product.get('unit', ''),
                         'barcode': product.get('barcode'),
@@ -261,7 +261,7 @@ class POSStockCheckView(APIView):
             if not product:
                 return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
             
-            current_stock = product.get('stock', 0)
+            current_stock = product.get('total_stock', product.get('stock', 0))
             low_stock_threshold = product.get('low_stock_threshold', 0)
             
             stock_status = {
@@ -299,7 +299,7 @@ class POSLowStockView(APIView):
             pos_low_stock_products = []
             for product in low_stock_products:
                 product_threshold = product.get('low_stock_threshold', 0)
-                current_stock = product.get('stock', 0)
+                current_stock = product.get('total_stock', product.get('stock', 0))
                 
                 # Use custom threshold if provided, otherwise use product's threshold
                 effective_threshold = max(threshold, product_threshold)

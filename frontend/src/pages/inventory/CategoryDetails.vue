@@ -79,7 +79,7 @@
                   </div>
                   <div class="mb-3">
                     <label class="form-label text-primary fw-semibold">Status:</label>
-                    <span :class="getStatusClass(currentCategory.status)">
+                    <span :class="getStatusClass(currentCategory.status)" class="ms-2">
                       {{ currentCategory.status?.charAt(0).toUpperCase() + currentCategory.status?.slice(1) || 'N/A' }}
                     </span>
                   </div>
@@ -190,18 +190,18 @@
         </template>
 
         <template #body>
-          <tr v-for="product in paginatedProducts" :key="product._id">
+          <tr v-for="product in paginatedProducts" :key="product.product_id">
             <td>
-              <input 
-                type="checkbox" 
-                class="form-check-input" 
-                :value="product._id"
+              <input
+                type="checkbox"
+                class="form-check-input"
+                :value="product.product_id"
                 v-model="selectedProducts"
               />
             </td>
             <td>
               <code class="text-tertiary surface-tertiary px-2 py-1 rounded">
-                {{ product._id }}
+                {{ product.product_id }}
               </code>
             </td>
             <td>
@@ -211,7 +211,7 @@
                <select 
                   class="form-select form-select-sm input-complete"
                   :value="product.subcategory_name || 'None'"  
-                  @change="handleUpdateProductSubcategory(product._id, $event.target.value)"
+                  @change="handleUpdateProductSubcategory(product.product_id, $event.target.value)"
                   :disabled="moveProductLoading"
                 >
                   <option 
@@ -276,9 +276,10 @@
     <!-- Modals -->
     <AddCategoryModal ref="editCategoryModal" @category-updated="onCategoryUpdated" />
     <AddSubcategoryModal ref="addSubcategoryModal" @subcategory-added="onSubcategoryAdded" />
+    <DeleteConfirmationModal ref="deleteModal" @confirm="confirmRemove" />
     <MoveFromUncategorizedModal
       ref="moveFromUncategorizedModal"
-      :target-category-id="currentCategory?._id"
+      :target-category-id="currentCategory?.category_id"
       :target-category-name="currentCategory?.category_name"
       :subcategories="currentCategory?.sub_categories || []"
       @products-moved="handleProductsMoved"
@@ -293,6 +294,7 @@ import DataTable from '@/components/common/TableTemplate.vue'
 import AddSubcategoryModal from '@/components/categories/AddSubCategoryModal.vue'
 import AddCategoryModal from '@/components/categories/AddCategoryModal.vue'
 import MoveFromUncategorizedModal from '@/components/categories/MoveFromUncategorizedModal.vue'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 import { useCategories } from '@/composables/api/useCategories'
 import { useProducts } from '@/composables/api/useProducts'
 
@@ -302,7 +304,8 @@ export default {
     DataTable,
     AddCategoryModal,
     AddSubcategoryModal,
-    MoveFromUncategorizedModal
+    MoveFromUncategorizedModal,
+    DeleteConfirmationModal
   },
   
   setup() {
@@ -338,6 +341,8 @@ export default {
     const editCategoryModal = ref(null)
     const addSubcategoryModal = ref(null)
     const moveFromUncategorizedModal = ref(null)
+    const deleteModal = ref(null)
+    const pendingRemoval = ref(null) // { type: 'single', product } | { type: 'bulk' }
 
     // Computed properties
     const loading = computed(() => categoriesLoading.value || productsLoading.value)
@@ -359,13 +364,13 @@ export default {
     })
 
     const isAllSelected = computed(() => {
-      const currentPageProductIds = paginatedProducts.value.map(p => p._id)
-      return currentPageProductIds.length > 0 && 
+      const currentPageProductIds = paginatedProducts.value.map(p => p.product_id)
+      return currentPageProductIds.length > 0 &&
             currentPageProductIds.every(id => selectedProducts.value.includes(id))
     })
 
     const isIndeterminate = computed(() => {
-      const currentPageProductIds = paginatedProducts.value.map(p => p._id)
+      const currentPageProductIds = paginatedProducts.value.map(p => p.product_id)
       const selectedOnPage = currentPageProductIds.filter(id => selectedProducts.value.includes(id))
       return selectedOnPage.length > 0 && selectedOnPage.length < currentPageProductIds.length
     })
@@ -422,7 +427,7 @@ export default {
     }
 
     const toggleSelectAll = () => {
-      const currentPageProductIds = paginatedProducts.value.map(p => p._id)
+      const currentPageProductIds = paginatedProducts.value.map(p => p.product_id)
       
       if (isAllSelected.value) {
         selectedProducts.value = selectedProducts.value.filter(id => !currentPageProductIds.includes(id))
@@ -437,7 +442,7 @@ export default {
         await moveProductToCategory(productId, categoryId.value, newSubcategory)
         
         // Update local state
-        const product = categoryProducts.value.find(p => p._id === productId)
+        const product = categoryProducts.value.find(p => p.product_id === productId)
         if (product) {
           product.subcategory_name = newSubcategory
         }
@@ -447,48 +452,44 @@ export default {
       }
     }
 
-    const removeProductFromCategory = async (product) => {
-      try {
-        const confirmed = confirm(
-          `Are you sure you want to remove "${product.product_name}" from the "${currentCategory.value.category_name}" category?\n\n` +
-          `The product will be moved back to the "Uncategorized" category.`
-        )
-        
-        if (!confirmed) return
-        
-        await bulkMoveProductsToUncategorized([product._id])
-        
-        // Remove from local state
-        const productIndex = categoryProducts.value.findIndex(p => p._id === product._id)
-        if (productIndex > -1) {
-          categoryProducts.value.splice(productIndex, 1)
-        }
-        
-        selectedProducts.value = selectedProducts.value.filter(id => id !== product._id)
-        
-      } catch (err) {
-        console.error(`Failed to move product: ${err.message}`)
-      }
+    const removeProductFromCategory = (product) => {
+      pendingRemoval.value = { type: 'single', product }
+      deleteModal.value?.openModal({
+        title: 'Remove Product',
+        message: `Are you sure you want to remove <strong>"${product.product_name}"</strong> from this category? It will be moved to "Uncategorized".`,
+        confirmText: 'Remove'
+      })
     }
 
-    const removeSelectedFromCategory = async () => {
+    const removeSelectedFromCategory = () => {
       if (selectedProducts.value.length === 0) return
-      
-      const confirmed = confirm(`Are you sure you want to remove ${selectedProducts.value.length} product(s) from this category?`)
-      if (!confirmed) return
-      
+      pendingRemoval.value = { type: 'bulk' }
+      deleteModal.value?.openModal({
+        title: 'Remove Products',
+        message: `Are you sure you want to remove <strong>${selectedProducts.value.length} product(s)</strong> from this category? They will be moved to "Uncategorized".`,
+        confirmText: 'Remove'
+      })
+    }
+
+    const confirmRemove = async () => {
+      const pending = pendingRemoval.value
+      if (!pending) return
       try {
-        await bulkMoveProductsToUncategorized(selectedProducts.value)
-        
-        // Remove from local state
-        categoryProducts.value = categoryProducts.value.filter(product => 
-          !selectedProducts.value.includes(product._id)
-        )
-        
-        selectedProducts.value = []
-        
+        if (pending.type === 'single') {
+          await bulkMoveProductsToUncategorized([pending.product.product_id])
+          const idx = categoryProducts.value.findIndex(p => p.product_id === pending.product.product_id)
+          if (idx > -1) categoryProducts.value.splice(idx, 1)
+          selectedProducts.value = selectedProducts.value.filter(id => id !== pending.product.product_id)
+        } else {
+          await bulkMoveProductsToUncategorized(selectedProducts.value)
+          categoryProducts.value = categoryProducts.value.filter(p => !selectedProducts.value.includes(p.product_id))
+          selectedProducts.value = []
+        }
       } catch (err) {
-        console.error(`Bulk move failed: ${err.message}`)
+        console.error(`Failed to remove product(s): ${err.message}`)
+      } finally {
+        pendingRemoval.value = null
+        deleteModal.value?.closeModal()
       }
     }
 
@@ -504,7 +505,7 @@ export default {
     const handleAddSubCategory = () => {
       if (addSubcategoryModal.value) {
         addSubcategoryModal.value.openModal(
-          currentCategory.value._id,
+          currentCategory.value.category_id,
           currentCategory.value.category_name || 'Unknown Category'
         )
       } else {
@@ -526,7 +527,7 @@ export default {
     }
 
     const openMoveFromUncategorizedModal = () => {
-      if (moveFromUncategorizedModal.value && currentCategory.value?._id) {
+      if (moveFromUncategorizedModal.value && currentCategory.value?.category_id) {
         moveFromUncategorizedModal.value.openModal()
       }
     }
@@ -596,7 +597,7 @@ export default {
 
         // Convert to CSV rows
         const rows = productsToExport.map(product => [
-          product._id,
+          product.product_id,
           `"${product.product_name}"`,
           `"${currentCategory.value.category_name}"`,
           `"${product.subcategory_name || 'None'}"`,
@@ -662,11 +663,12 @@ export default {
       filteredProducts, paginatedProducts, isAllSelected, isIndeterminate,
       
       // Refs
-      editCategoryModal, addSubcategoryModal, moveFromUncategorizedModal,
+      editCategoryModal, addSubcategoryModal, moveFromUncategorizedModal, deleteModal,
 
       // Methods
       handleRetryLoad, applyFilter, handlePageChange, toggleSelectAll,
       handleUpdateProductSubcategory, removeProductFromCategory, removeSelectedFromCategory,
+      confirmRemove,
       handleEditCategory, handleAddSubCategory, onCategoryUpdated, onSubcategoryAdded,
       openMoveFromUncategorizedModal, handleProductsMoved,
       

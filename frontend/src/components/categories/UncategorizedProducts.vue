@@ -104,14 +104,14 @@
                   <option value="">Choose Category</option>
                   <option 
                     v-for="category in activeCategories" 
-                    :key="category._id" 
-                    :value="category._id"
+                    :key="category.category_id"
+                    :value="category.category_id"
                   >
                     {{ category.category_name }}
                   </option>
                 </select>
-                <select 
-                  class="form-select form-select-sm input-theme" 
+                <select
+                  class="form-select form-select-sm input-theme"
                   v-model="bulkTargetSubcategory"
                   :disabled="!bulkTargetCategory"
                   style="min-width: 150px;"
@@ -198,18 +198,18 @@
         </template>
 
         <template #body>
-          <tr v-for="product in paginatedProducts" :key="product._id">
+          <tr v-for="product in paginatedProducts" :key="product.product_id">
             <td>
-              <input 
-                type="checkbox" 
-                class="form-check-input" 
-                :value="product._id"
+              <input
+                type="checkbox"
+                class="form-check-input"
+                :value="product.product_id"
                 v-model="selectedProducts"
               />
             </td>
             <td>
               <code class="text-tertiary surface-tertiary px-2 py-1 rounded">
-                {{ product._id }}
+                {{ product.product_id }}
               </code>
             </td>
             <td>
@@ -225,18 +225,18 @@
                 <option value="">Select Category</option>
                 <option 
                   v-for="category in activeCategories" 
-                  :key="category._id" 
-                  :value="category._id"
+                  :key="category.category_id"
+                  :value="category.category_id"
                 >
                   {{ category.category_name }}
                 </option>
               </select>
             </td>
             <td>
-              <select 
+              <select
                 class="form-select form-select-sm input-theme"
                 v-model="product.selectedSubcategory"
-                @change="moveProductToCategory(product._id, product.selectedCategory, product.selectedSubcategory)"
+                @change="moveProductToCategory(product.product_id, product.selectedCategory, product.selectedSubcategory)"
                 :disabled="!product.selectedCategory || moveProductLoading"
               >
                 <option value="">Select Subcategory</option>
@@ -349,7 +349,7 @@ export default {
       return uncategorizedProducts.value.filter(p =>
         (p.product_name || '').toLowerCase().includes(term) ||
         (p.SKU || '').toLowerCase().includes(term) ||
-        (p._id || '').toLowerCase().includes(term) ||
+        (p.product_id || '').toLowerCase().includes(term) ||
         (p.supplier || '').toLowerCase().includes(term)
       )
     })
@@ -360,12 +360,12 @@ export default {
     })
 
     const isAllSelected = computed(() => {
-      const ids = paginatedProducts.value.map(p => p._id)
+      const ids = paginatedProducts.value.map(p => p.product_id)
       return ids.length > 0 && ids.every(id => selectedProducts.value.includes(id))
     })
 
     const isIndeterminate = computed(() => {
-      const ids = paginatedProducts.value.map(p => p._id)
+      const ids = paginatedProducts.value.map(p => p.product_id)
       const selectedOnPage = ids.filter(id => selectedProducts.value.includes(id))
       return selectedOnPage.length > 0 && selectedOnPage.length < ids.length
     })
@@ -379,7 +379,7 @@ export default {
 
     // Methods
     const getSubcategoriesForCategory = id => {
-      const cat = activeCategories.value.find(c => c._id === id)
+      const cat = activeCategories.value.find(c => c.category_id === id)
       return cat?.sub_categories || []
     }
 
@@ -410,7 +410,7 @@ export default {
     }
 
     const toggleSelectAll = () => {
-      const ids = paginatedProducts.value.map(p => p._id)
+      const ids = paginatedProducts.value.map(p => p.product_id)
       if (isAllSelected.value)
         selectedProducts.value = selectedProducts.value.filter(id => !ids.includes(id))
       else
@@ -441,7 +441,7 @@ export default {
           'Stock', 'Cost Price', 'Selling Price', 'Status', 'Created At'
         ]
         const rows = data.map(p => [
-          p._id,
+          p.product_id,
           p.product_name,
           p.SKU,
           p.category_id || 'None',

@@ -19,52 +19,71 @@ class FixedUTCDateTimeAttribute(BaseUTCDateTimeAttribute):
     
     def deserialize(self, value):
         """
-        Deserialize datetime string, fixing any year corruption
+        Deserialize datetime string, fixing any year corruption.
+        Handles: full ISO with T, date-only, and leading-zero corruption (e.g. 0000...2025-12-26).
         """
         if not value:
             return None
-        
+
         try:
-            # Check if year has extra leading zeros
-            if isinstance(value, str) and re.match(r'^0+\d{4,}', value):
-                # Extract the correct date by removing leading zeros from year
-                # Pattern: 000002025-09-30... -> 2025-09-30...
-                match = re.search(r'0*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)', value)
-                if match:
-                    fixed_value = match.group(1)
-                    value = fixed_value
-            
-            # Parse the datetime string directly instead of calling parent
-            # PynamoDB expects ISO format: YYYY-MM-DDTHH:MM:SS.ffffff
-            if isinstance(value, str):
-                # Try parsing with microseconds and timezone
-                try:
-                    # Handle format with timezone: 2026-02-21T12:02:48.435277+0000
-                    if '+0000' in value or 'Z' in value:
-                        value_clean = value.replace('+0000', '').replace('Z', '')
-                        return datetime.strptime(value_clean, '%Y-%m-%dT%H:%M:%S.%f')
-                except ValueError:
-                    pass
-                
-                # Try parsing with microseconds
-                try:
-                    return datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%f')
-                except ValueError:
-                    pass
-                
-                # Try without microseconds
-                try:
-                    return datetime.strptime(value, '%Y-%m-%dT%H:%M:%S')
-                except ValueError:
-                    pass
-            
-            # If it's already a datetime object, return as-is
             if isinstance(value, datetime):
                 return value
-            
-            # Fallback to parent method for other cases
+
+            if not isinstance(value, str):
+                return super().deserialize(value)
+
+            s = value.strip()
+
+            # Corrupted: leading zeros before a 4-digit year (e.g. 0000000000000000000002025-12-26 or 000002025-09-30T...)
+            if re.match(r'^0+\d{4}', s):
+                # Date-only: 0*YYYY-MM-DD
+                match = re.search(r'0*(\d{4}-\d{2}-\d{2})(?:T|$)', s)
+                if match:
+                    date_part = match.group(1)
+                    try:
+                        return datetime.strptime(date_part, '%Y-%m-%d').replace(tzinfo=None)
+                    except ValueError:
+                        pass
+                # DateTime: 0*YYYY-MM-DDTHH:MM:SS...
+                match = re.search(r'0*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)', s)
+                if match:
+                    fixed_value = match.group(1)
+                    try:
+                        if '.' in fixed_value:
+                            return datetime.strptime(fixed_value[:26], '%Y-%m-%dT%H:%M:%S.%f')
+                        return datetime.strptime(fixed_value, '%Y-%m-%dT%H:%M:%S')
+                    except ValueError:
+                        pass
+
+            # Normal ISO with timezone
+            if '+0000' in s or 'Z' in s:
+                try:
+                    clean = s.replace('+0000', '').replace('Z', '')
+                    return datetime.strptime(clean[:26], '%Y-%m-%dT%H:%M:%S.%f')
+                except ValueError:
+                    try:
+                        return datetime.strptime(clean[:19], '%Y-%m-%dT%H:%M:%S')
+                    except ValueError:
+                        pass
+
+            # ISO with microseconds
+            try:
+                return datetime.strptime(s[:26], '%Y-%m-%dT%H:%M:%S.%f')
+            except ValueError:
+                pass
+            try:
+                return datetime.strptime(s[:19], '%Y-%m-%dT%H:%M:%S')
+            except ValueError:
+                pass
+
+            # Date-only (no leading zeros)
+            try:
+                return datetime.strptime(s[:10], '%Y-%m-%d').replace(tzinfo=None)
+            except ValueError:
+                pass
+
             return super().deserialize(value)
-            
+
         except Exception as e:
-            logger.debug(f"Datetime parsing fallback for '{value[:40]}': {e}")
+            logger.debug("Datetime parsing fallback for %r: %s", s[:50] if isinstance(value, str) else value, e)
             return datetime.utcnow()

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from ...database import db_manager
+from app.utils.singleton import get_singleton
 from ..inventory.product_service import ProductService
 from ..inventory.batch_service import BatchService
 from notifications.services import notification_service
@@ -24,7 +25,7 @@ class OnlineTransactionService:
         self.products_collection = self.db.products
         self.customers_collection = self.db.customers
         self.product_service = ProductService()
-        self.batch_service = BatchService()
+        self.batch_service = get_singleton(BatchService)
         
         # Auto-cancellation settings
         self.auto_cancel_enabled = True

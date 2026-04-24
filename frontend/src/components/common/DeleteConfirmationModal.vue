@@ -20,7 +20,7 @@
 
       <!-- Modal Body -->
       <div class="modal-body">
-        <p class="text-secondary mb-4">{{ config.message }}</p>
+        <p class="text-secondary mb-4" v-html="config.message"></p>
       </div>
 
       <!-- Modal Footer -->

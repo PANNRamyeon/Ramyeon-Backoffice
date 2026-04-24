@@ -127,7 +127,7 @@ const togglePasswordVisibility = () => {
 const error = computed(() => localError.value || authError.value)
 
 // Computed
-const apiBaseUrl = computed(() => import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1')
+const apiBaseUrl = computed(() => import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin')
 const isDev = computed(() => import.meta.env.DEV)
 
 // Clear error when user starts typing
