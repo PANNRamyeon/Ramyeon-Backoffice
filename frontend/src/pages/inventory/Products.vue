@@ -152,8 +152,8 @@
                   <option value="">All items</option>
                   <option 
                     v-for="category in activeCategories" 
-                    :key="category._id" 
-                    :value="category._id"
+                    :key="category.category_id"
+                    :value="category.category_id"
                   >
                     {{ category.category_name }}
                   </option>
@@ -238,16 +238,16 @@
         <template #body>
           <tr 
             v-for="product in paginatedProducts"
-            :key="product._id"
+            :key="product.product_id"
             :class="getRowClass(product)"
           >
             <td>
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 class="form-check-input"
-                :value="product._id"
-                :checked="selectedProductIds.includes(product._id)"
-                @change="handleProductSelect(product._id, $event.target.checked)"
+                :value="product.product_id"
+                :checked="selectedProductIds.includes(product.product_id)"
+                @change="handleProductSelect(product.product_id, $event.target.checked)"
               />
             </td>
             <td>
@@ -479,7 +479,7 @@ export default {
 
     const allSelected = computed(() => {
       return paginatedProducts.value.length > 0 && 
-             paginatedProducts.value.every(p => selectedProductIds.value.includes(p._id))
+             paginatedProducts.value.every(p => selectedProductIds.value.includes(p.product_id))
     })
 
     const someSelected = computed(() => {
@@ -487,7 +487,7 @@ export default {
     })
 
     const selectedProducts = computed(() => {
-      return products.value.filter(p => selectedProductIds.value.includes(p._id))
+      return products.value.filter(p => selectedProductIds.value.includes(p.product_id))
     })
 
     // Calculate expiring products (updated for batch system)
@@ -553,10 +553,10 @@ export default {
       if (event.target.checked) {
         selectedProductIds.value = [...new Set([
           ...selectedProductIds.value,
-          ...paginatedProducts.value.map(p => p._id)
+          ...paginatedProducts.value.map(p => p.product_id)
         ])]
       } else {
-        const currentPageIds = paginatedProducts.value.map(p => p._id)
+        const currentPageIds = paginatedProducts.value.map(p => p.product_id)
         selectedProductIds.value = selectedProductIds.value.filter(id => !currentPageIds.includes(id))
       }
     }
@@ -572,7 +572,7 @@ export default {
     const handleDeleteProduct = async (product) => {
       if (confirm(`Are you sure you want to delete "${product.product_name}"?`)) {
         try {
-          await deleteProduct(product._id)
+          await deleteProduct(product.product_id)
         } catch (error) {
           console.error('Failed to delete product:', error)
         }
@@ -642,7 +642,7 @@ export default {
     }
 
     const getCategoryBadgeClass = (categoryId) => {
-      const category = activeCategories.value.find(c => c._id === categoryId)
+      const category = activeCategories.value.find(c => c.category_id === categoryId)
       if (!category) return 'bg-secondary'
       
       const colors = ['bg-primary', 'bg-info', 'bg-success', 'bg-warning', 'bg-danger']
@@ -652,7 +652,7 @@ export default {
 
     const getCategoryName = (categoryId) => {
       if (!categoryId) return 'Uncategorized'
-      const category = activeCategories.value.find(c => c._id === categoryId)
+      const category = activeCategories.value.find(c => c.category_id === categoryId)
       return category?.category_name || 'Unknown'
     }
 
@@ -706,7 +706,7 @@ export default {
     const toggleProductStatus = async (product) => {
       try {
         const newStatus = product.status === 'active' ? 'inactive' : 'active'
-        await updateProduct(product._id, { status: newStatus })
+        await updateProduct(product.product_id, { status: newStatus })
       } catch (error) {
         console.error('Error toggling product status:', error)
       }
@@ -718,7 +718,7 @@ export default {
         const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
         const newBarcode = `${timestamp}${random}`
 
-        await updateProduct(product._id, { barcode: newBarcode })
+        await updateProduct(product.product_id, { barcode: newBarcode })
       } catch (error) {
         console.error('Error generating barcode:', error)
       }
@@ -838,13 +838,13 @@ export default {
     },
     
     viewProduct(product) {
-      if (!product || !product._id) {
+      if (!product || !product.product_id) {
         console.error('Cannot view product: missing ID')
         return
       }
 
       try {
-        this.$router.push(`/products/${product._id}`)
+        this.$router.push(`/products/${product.product_id}`)
       } catch (error) {
         console.error('Navigation error:', error)
       }

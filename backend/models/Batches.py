@@ -9,14 +9,110 @@ from pynamodb.attributes import (
     ListAttribute, MapAttribute, UTCDateTimeAttribute
 )
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
+from app.custom_attributes import FixedUTCDateTimeAttribute
 from pynamodb.exceptions import UpdateError
 from app.utils import DYNAMO_TABLE_NAME, AWS_REGION
 from app.utils.counters import counter_service
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
+
+
+def _utc_now():
+    """Return timezone-aware UTC now, comparable with both naive and aware datetimes after normalization."""
+    return datetime.now(timezone.utc)
+
+
+def _normalize_utc(dt):
+    """Return dt as timezone-aware UTC for comparison. If naive, assume UTC."""
+    if dt is None:
+        return None
+    if getattr(dt, "tzinfo", None) is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _parse_datetime(value):
+    """Parse string or datetime to naive UTC datetime for Batch attributes. Returns None if value is None."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    s = str(value).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    except ValueError:
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+
+
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+# Pattern for legacy MongoDB-style corrupted datetimes (e.g. 000002025-10-08T12:10:51.644000)
+_CORRUPT_DATETIME_PATTERN = re.compile(r"^0+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)")
+
+
+def _fix_corrupt_datetime_string(s: str) -> Optional[str]:
+    """
+    If s is a corrupted datetime (leading zeros before year), return fixed string; else None.
+    Extra defensive handling for known legacy pattern like '000002025-10-08T12:10:51.644000'.
+    """
+    if not isinstance(s, str):
+        return None
+    # Primary regex-based fix
+    m = _CORRUPT_DATETIME_PATTERN.match(s)
+    if m:
+        return m.group(1)
+    # Fallback: if we see the legacy 000002025... pattern anywhere, strip to first '2025-'
+    if "000002025-10-08" in s:
+        idx = s.find("2025-")
+        if idx != -1:
+            return s[idx:]
+    return None
+
+
+def _deep_fix_datetimes_in_value(val):
+    """Recursively fix corrupted datetime strings; returns (fixed_value, True if any change)."""
+    if isinstance(val, str):
+        fixed = _fix_corrupt_datetime_string(val)
+        return (fixed if fixed is not None else val, fixed is not None)
+    if isinstance(val, dict):
+        out = {}
+        changed = False
+        for k, v in val.items():
+            v2, c = _deep_fix_datetimes_in_value(v)
+            out[k] = v2
+            changed = changed or c
+        return (out, changed)
+    if isinstance(val, list):
+        out = []
+        changed = False
+        for elem in val:
+            e2, c = _deep_fix_datetimes_in_value(elem)
+            out.append(e2)
+            changed = changed or c
+        return (out, changed)
+    return (val, False)
+
+
+def _repair_batch_item_datetimes(item: dict) -> dict:
+    """
+    Return a dict of top-level attribute names to fixed values for any attribute
+    that contained a corrupted datetime string. Use with UpdateExpression SET.
+    """
+    updates = {}
+    for key, val in list(item.items()):
+        if key in ("PK", "SK"):
+            continue
+        fixed_val, changed = _deep_fix_datetimes_in_value(val)
+        if changed:
+            updates[key] = fixed_val
+    return updates
 
 # ============= NESTED MAP ATTRIBUTES =============
 class SyncLogDetailItem(MapAttribute):
@@ -28,23 +124,66 @@ class SyncLogDetailItem(MapAttribute):
     record_id = UnicodeAttribute(null=True)
 
 
+class _TolerantSyncLogDetailsListAttribute(ListAttribute):
+    """
+    ListAttribute(of=SyncLogDetailItem) that tolerates malformed or mixed-type list elements
+    in DynamoDB (e.g. details stored as list of strings or list with wrong item shape).
+    On deserialization failure or bad element, skips that element; returns [] on full failure.
+    """
+    def __init__(self, **kwargs):
+        kwargs.setdefault("of", SyncLogDetailItem)
+        kwargs.setdefault("default", list)
+        super().__init__(**kwargs)
+
+    def deserialize(self, value):
+        if value is None:
+            return self.default() if callable(self.default) else []
+        if not isinstance(value, list):
+            return self.default() if callable(self.default) else []
+        result = []
+        for i, elem in enumerate(value):
+            try:
+                if isinstance(elem, SyncLogDetailItem):
+                    result.append(elem)
+                    continue
+                if not isinstance(elem, dict):
+                    continue
+                raw = elem.get("M", elem) if "M" in elem else elem
+                if not isinstance(raw, dict):
+                    continue
+                attr_names = set(SyncLogDetailItem._attributes.keys())
+                if not (attr_names & set(raw.keys())) and "M" not in elem:
+                    continue
+                item = SyncLogDetailItem()
+                for attr_name, attr in SyncLogDetailItem._attributes.items():
+                    if attr_name in raw:
+                        try:
+                            setattr(item, attr_name, attr.deserialize(raw[attr_name]))
+                        except Exception:
+                            pass
+                result.append(item)
+            except Exception:
+                logger.debug("Skip sync_log details element %s (invalid shape)", i)
+        return result
+
+
 class SyncLogItem(MapAttribute):
     """MapAttribute for sync_logs array items"""
-    last_updated = UTCDateTimeAttribute()
+    last_updated = FixedUTCDateTimeAttribute()
     source = UnicodeAttribute()
     status = UnicodeAttribute()
-    details = ListAttribute(of=SyncLogDetailItem, default=list)
+    details = _TolerantSyncLogDetailsListAttribute()
     action = UnicodeAttribute()
 
 
 class UsageHistoryItem(MapAttribute):
     """MapAttribute for usage_history array items"""
-    timestamp = UTCDateTimeAttribute()
+    timestamp = FixedUTCDateTimeAttribute()
     quantity_used = NumberAttribute()
     reason = UnicodeAttribute()
     remaining_after = UnicodeAttribute()
     adjustment_type = UnicodeAttribute()
-    adjusted_by = UnicodeAttribute()
+    adjusted_by = UnicodeAttribute(null=True)  # TODO: Make required (null=False) once all callers pass user_id/actor
     approved_by = UnicodeAttribute(null=True)
     notes = UnicodeAttribute(null=True)
     source = UnicodeAttribute()
@@ -72,20 +211,37 @@ class StatusExpiryIndex(GlobalSecondaryIndex):
         write_capacity_units = 5
     
     status = UnicodeAttribute(hash_key=True)
-    expiry_date = UTCDateTimeAttribute(range_key=True)
+    expiry_date = FixedUTCDateTimeAttribute(range_key=True)
+
+
+class ShipmentIdIndex(GlobalSecondaryIndex):
+    """GSI for querying batches by shipment_id (foreign key to Shipment)."""
+    class Meta:
+        index_name = 'batch-shipment-id-index'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+    
+    shipment_id = UnicodeAttribute(hash_key=True)
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")
 
 
 # ============= MAIN BATCH MODEL =============
 class Batch(Model):
     """
     BATCH MODEL - Following ERD Specification with Optimistic Locking
-    
-    Features:
-    1. Fully automatic status updates based on quantity and expiry
-    2. Optimistic locking using updated_at timestamp
-    3. Essential GSIs for common queries
+
+    Each batch represents one product's quantity from a delivery. Use batch_number
+    to group batches from the same physical shipment; use shipment_id to link
+    to the Shipment entity when shipment-level metadata is tracked.
+
+    - batch_number: Supplier's lot identifier (e.g. LOT-2024-001). Same value
+      across batches from the same delivery. Groups products without requiring
+      a Shipment record.
+    - shipment_id: Optional foreign key to Shipment (SHIP-00001). Set when
+      the delivery is recorded as a Shipment for metadata (freight, invoice, etc.).
     """
-    
+
     class Meta:
         table_name = DYNAMO_TABLE_NAME  # RamyeonCornerDB
         region = AWS_REGION
@@ -98,15 +254,19 @@ class Batch(Model):
     
     # ============= PRIMARY KEYS =============
     pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="batches")
-    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "BATCH-00001"
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "BATCH-00001-00015"
     
     # ============= GSI DEFINITIONS =============
     product_id_index = ProductIdIndex()
     status_expiry_index = StatusExpiryIndex()
+    shipment_id_index = ShipmentIdIndex()
     
     # ============= BATCH IDENTIFICATION =============
     product_id = UnicodeAttribute()
     batch_number = UnicodeAttribute()
+    
+    # ============= SHIPMENT REFERENCE =============
+    shipment_id = UnicodeAttribute(null=True)  # Foreign key to Shipment (SHIP-#####)
     
     # ============= QUANTITY MANAGEMENT =============
     quantity_received = NumberAttribute()
@@ -116,16 +276,16 @@ class Batch(Model):
     cost_price = NumberAttribute()
     
     # ============= DATE INFORMATION =============
-    expiry_date = UTCDateTimeAttribute()
-    date_received = UTCDateTimeAttribute()
+    expiry_date = FixedUTCDateTimeAttribute()
+    date_received = FixedUTCDateTimeAttribute()
     
     # ============= SUPPLIER INFORMATION =============
     supplier_id = UnicodeAttribute()
     
     # ============= STATUS AND METADATA =============
     status = UnicodeAttribute(default="pending")  # Initial status
-    created_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
-    updated_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    created_at = FixedUTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    updated_at = FixedUTCDateTimeAttribute(default_for_new=datetime.utcnow)
     
     # ============= NESTED ARRAYS =============
     sync_logs = ListAttribute(of=SyncLogItem, default=list)
@@ -161,6 +321,12 @@ class Batch(Model):
             # Set quantity_remaining if not provided
             if 'quantity_remaining' not in kwargs and 'quantity_received' in kwargs:
                 kwargs['quantity_remaining'] = kwargs['quantity_received']
+            
+            # Parse date/datetime strings so UTCDateTimeAttribute gets datetime (avoids replace() on str)
+            if 'expiry_date' in kwargs:
+                kwargs['expiry_date'] = _parse_datetime(kwargs['expiry_date']) or kwargs['expiry_date']
+            if 'date_received' in kwargs:
+                kwargs['date_received'] = _parse_datetime(kwargs['date_received']) or kwargs['date_received']
             
             # Create batch instance
             batch = cls(**kwargs)
@@ -198,7 +364,9 @@ class Batch(Model):
     @classmethod
     def get_by_product_id(cls, product_id: str, limit: int = 100) -> list:
         """
-        Get all batches for a specific product using GSI
+        Get all batches for a specific product. Uses GSI batch-product-id-index when
+        available; if the index is missing (ResourceNotFoundException), falls back to
+        querying PK=batches with FilterExpression on product_id.
         """
         try:
             return list(cls.product_id_index.query(
@@ -207,7 +375,18 @@ class Batch(Model):
                 scan_index_forward=True
             ))
         except Exception as e:
-            logger.error(f"Error querying batches for product {product_id}: {str(e)}")
+            err_msg = str(e).lower()
+            if "index" in err_msg and ("not found" in err_msg or "does not have" in err_msg or "specified index" in err_msg):
+                logger.warning(
+                    "GSI batch-product-id-index missing or not found; falling back to query with filter for product_id=%s",
+                    product_id,
+                )
+                try:
+                    return list(cls.query("batches", filter_condition=cls.product_id == product_id, limit=limit))
+                except Exception as fallback_err:
+                    logger.error(f"Fallback batch query for product {product_id} failed: {fallback_err}")
+                    return []
+            logger.error(f"Error querying batches for product {product_id}: {e}")
             return []
     
     @classmethod
@@ -222,6 +401,43 @@ class Batch(Model):
             ))
         except Exception as e:
             logger.error(f"Error querying batches by status {status}: {str(e)}")
+            return []
+
+    @classmethod
+    def get_by_shipment_id(cls, shipment_id: str, limit: int = 100) -> list:
+        """
+        Get all batches that belong to a shipment (via shipment_id GSI).
+        Returns empty list if shipment_id is None or invalid.
+        """
+        if not shipment_id or not shipment_id.strip():
+            return []
+        try:
+            if not shipment_id.startswith("SHIP-"):
+                shipment_id = f"SHIP-{shipment_id}"
+            return list(cls.shipment_id_index.query(
+                shipment_id,
+                limit=limit
+            ))
+        except Exception as e:
+            logger.error(f"Error querying batches for shipment {shipment_id}: {str(e)}")
+            return []
+
+    @classmethod
+    def get_by_batch_number(cls, batch_number: str, limit: int = 100) -> list:
+        """
+        Get all batches with the same batch_number (same physical delivery).
+        Uses scan with filter; use for grouping when shipment_id is not set.
+        """
+        if not batch_number or not batch_number.strip():
+            return []
+        try:
+            return list(cls.query(
+                "batches",
+                filter_condition=cls.batch_number == batch_number.strip(),
+                limit=limit
+            ))
+        except Exception as e:
+            logger.error(f"Error querying batches by batch_number {batch_number}: {str(e)}")
             return []
     
     @classmethod
@@ -282,14 +498,114 @@ class Batch(Model):
             return []
     
     @classmethod
-    def get_all_batches(cls, limit: int = 1000) -> list:
+    def _repair_corrupted_batch_datetimes_in_table(cls) -> int:
         """
-        Get all batches (paginated)
+        Query batch items via boto3 (raw), fix any corrupted datetime strings in place
+        (e.g. 000002025-10-08T... -> 2025-10-08T...), update_item, and return count fixed.
         """
         try:
-            return list(cls.query("batches", limit=limit))
+            from decouple import config
+            import boto3
+            from boto3.dynamodb.conditions import Key
+
+            table_name = config("DYNAMO_TABLE_NAME", default=DYNAMO_TABLE_NAME)
+            region = config("AWS_REGION_NAME", default=AWS_REGION)
+            table = (
+                boto3.resource(
+                    "dynamodb",
+                    region_name=region,
+                    aws_access_key_id=config("AWS_ACCESS_KEY_ID", default=""),
+                    aws_secret_access_key=config("AWS_SECRET_ACCESS_KEY", default=""),
+                )
+                .Table(table_name)
+            )
         except Exception as e:
-            logger.error(f"Error querying all batches: {str(e)}")
+            logger.warning(f"Cannot get DynamoDB table for batch datetime repair: {e}")
+            return 0
+
+        fixed_count = 0
+        last_key = None
+        while True:
+            kwargs = {"KeyConditionExpression": Key("PK").eq("batches")}
+            if last_key:
+                kwargs["ExclusiveStartKey"] = last_key
+            response = table.query(**kwargs)
+            for item in response.get("Items", []):
+                updates = _repair_batch_item_datetimes(item)
+                if not updates:
+                    continue
+                try:
+                    set_parts = [f"#{k} = :{k}" for k in updates]
+                    expr = "SET " + ", ".join(set_parts)
+                    attr_values = {f":{k}": v for k, v in updates.items()}
+                    attr_names = {f"#{k}": k for k in updates}
+                    table.update_item(
+                        Key={"PK": item["PK"], "SK": item["SK"]},
+                        UpdateExpression=expr,
+                        ExpressionAttributeValues=attr_values,
+                        ExpressionAttributeNames=attr_names,
+                    )
+                    fixed_count += 1
+                    logger.info(f"Repaired batch datetime(s) for SK={item.get('SK')}")
+                except Exception as e:
+                    logger.error(f"Failed to repair batch {item.get('SK')}: {e}")
+            last_key = response.get("LastEvaluatedKey")
+            if not last_key:
+                break
+        return fixed_count
+
+    @classmethod
+    def get_all_batches(cls, limit: int = 1000) -> list:
+        """
+        Get all batches (paginated). On datetime deserialization error, attempts to
+        repair corrupted legacy datetime strings in the table and retries.
+        """
+        try:
+            result = []
+            query_iter = cls.query("batches", limit=limit)
+            
+            # Log the raw response for debugging
+            if hasattr(query_iter, '_items_queried') and query_iter._items_queried:
+                logger.debug(f"PynamoDB queried {query_iter._items_queried} items so far")
+            
+            for idx, batch in enumerate(query_iter):
+                try:
+                    result.append(batch)
+                except Exception as item_err:
+                    logger.error(f"Failed to deserialize batch at index {idx}: {item_err}")
+                    # Try to log the raw item if accessible
+                    try:
+                        if hasattr(query_iter, '_get_next_page'):
+                            logger.error(f"Raw data might be in internal buffer; cannot extract")
+                    except:
+                        pass
+                    continue
+            return result
+        except Exception as e:
+            err_msg = str(e)
+            logger.error(f"Error querying all batches: {err_msg}")
+            
+            # Try to extract which item caused the error
+            import traceback
+            tb_str = traceback.format_exc()
+            logger.error(f"Full traceback:\n{tb_str}")
+            
+            if "Datetime string" in err_msg and "does not match format" in err_msg:
+                logger.warning("Batch query failed due to corrupted datetime; attempting repair...")
+                fixed = cls._repair_corrupted_batch_datetimes_in_table()
+                logger.info(f"Repaired {fixed} batch record(s); retrying query.")
+                try:
+                    result = []
+                    for idx, batch in enumerate(cls.query("batches", limit=limit)):
+                        try:
+                            result.append(batch)
+                        except Exception as item_err:
+                            logger.error(f"Failed to deserialize batch at index {idx} (after repair): {item_err}")
+                            continue
+                    return result
+                except Exception as retry_err:
+                    logger.error(f"Retry after repair also failed: {retry_err}")
+                    return []
             return []
     
     # ============= INSTANCE METHODS =============
@@ -335,14 +651,14 @@ class Batch(Model):
                 new_quantity = self.quantity_remaining + quantity_change
                 quantity_used = abs(quantity_change) if quantity_change < 0 else 0
                 
-                # Create usage history record
+                # Create usage history record (TODO: require adjusted_by from callers; "system" fallback is temporary)
                 history_item = UsageHistoryItem(
                     timestamp=datetime.utcnow(),
                     quantity_used=quantity_used,
                     reason=reason,
                     remaining_after=str(new_quantity),
                     adjustment_type=adjustment_type,
-                    adjusted_by=adjusted_by,
+                    adjusted_by=(adjusted_by if adjusted_by is not None else "system"),
                     approved_by=approved_by,
                     notes=notes,
                     source=source
@@ -468,12 +784,14 @@ class Batch(Model):
         Fully automatic status calculation based on quantity and expiry date
         This is called after every quantity change
         """
-        now = datetime.utcnow()
+        now = _utc_now()
         
-        # Check if expired
-        if self.expiry_date and now > self.expiry_date:
-            self.status = "expired"
-            return
+        # Check if expired (normalize for naive/aware comparison)
+        if self.expiry_date:
+            exp = _normalize_utc(self.expiry_date)
+            if now > exp:
+                self.status = "expired"
+                return
         
         # Check if exhausted
         if self.quantity_remaining <= 0:
@@ -489,7 +807,8 @@ class Batch(Model):
         
         # Check if expiring soon (within 7 days)
         if self.expiry_date:
-            days_until_expiry = (self.expiry_date - now).days
+            exp = _normalize_utc(self.expiry_date)
+            days_until_expiry = (exp - now).days
             if 0 <= days_until_expiry <= 7:
                 self.status = "expiring_soon"
                 return
@@ -498,24 +817,27 @@ class Batch(Model):
         self.status = "active"
     
     def is_expired(self) -> bool:
-        """Check if batch is expired"""
+        """Check if batch is expired (safe for naive or aware expiry_date)."""
         if not self.expiry_date:
             return False
-        return datetime.utcnow() > self.expiry_date
+        now = _utc_now()
+        exp = _normalize_utc(self.expiry_date)
+        return now > exp
     
     def days_until_expiry(self) -> int:
         """Calculate days until expiry"""
         if not self.expiry_date:
             return float('inf')
-        
-        delta = self.expiry_date - datetime.utcnow()
+        now = _utc_now()
+        exp = _normalize_utc(self.expiry_date)
+        delta = exp - now
         return delta.days
     
     def get_status_info(self) -> Dict[str, Any]:
         """
         Get detailed status information
         """
-        now = datetime.utcnow()
+        now = _utc_now()
         
         info = {
             "current_status": self.status,
@@ -592,6 +914,7 @@ class Batch(Model):
                 "batch_id": self.sk,
                 "batch_number": self.batch_number,
                 "product_id": self.product_id,
+                "shipment_id": self.shipment_id,
                 "quantity_received": self.quantity_received,
                 "quantity_remaining": self.quantity_remaining,
                 "cost_price": float(self.cost_price) if self.cost_price else None,

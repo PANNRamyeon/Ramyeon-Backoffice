@@ -126,7 +126,7 @@
           </td>
         </tr>
         
-        <tr v-for="batch in paginatedBatches" :key="batch._id">
+        <tr v-for="batch in paginatedBatches" :key="batch.batch_id">
           <td>
             <span class="fw-semibold text-accent">{{ batch.batch_number }}</span>
           </td>

@@ -11,6 +11,7 @@ from . import (
     category_views,
     supplier_views,
     batch_views,
+    shipment_views,
     promotion_views,
     session_views,
     saleslog_views,
@@ -67,6 +68,7 @@ urlpatterns = [
     path('products/export/', product_views.ProductExportView.as_view(), name='products-export'),
     path('products/export/details/', product_views.ProductDetailsExportCSVView.as_view(), name='products-export-details'),
     path('products/by-sku/<str:sku>/', product_views.ProductBySkuView.as_view(), name='products-by-sku'),
+    path('products/by-barcode/<str:barcode>/', product_views.ProductByBarcodeView.as_view(), name='products-by-barcode'),
     path('products/category/<str:category_id>/', product_views.ProductsByCategoryView.as_view(), name='products-by-category'),
     path('products/<str:product_id>/', product_views.ProductDetailView.as_view(), name='products-detail'),
     path('products/<str:product_id>/restore/', product_views.ProductRestoreView.as_view(), name='products-restore'),
@@ -88,7 +90,7 @@ urlpatterns = [
     path('categories/<str:category_id>/delete-info/', category_views.CategoryDeleteInfoView.as_view(), name='categories-delete-info'),
     path('categories/<str:category_id>/subcategories/', category_views.CategorySubcategoryView.as_view(), name='categories-subcategories'),
     path('categories/<str:category_id>/products/', category_views.CategoryProductManagementView.as_view(), name='categories-products'),
-    path('categories/subcategories/<str:subcategory_name>/products/', category_views.SubcategoryProductsView.as_view(), name='subcategory-products'),
+    path('categories/<str:category_id>/subcategories/<str:subcategory_name>/products/', category_views.SubcategoryProductsView.as_view(), name='subcategory-products'),
     
     # ==================== SUPPLIERS ====================
     path('suppliers/health/', supplier_views.SupplierHealthCheckView.as_view(), name='suppliers-health'),
@@ -112,13 +114,18 @@ urlpatterns = [
     path('batches/statistics/', batch_views.BatchStatisticsView.as_view(), name='batches-statistics'),
     path('batches/<str:batch_id>/', batch_views.BatchDetailView.as_view(), name='batches-detail'),
     path('batches/<str:batch_id>/quantity/', batch_views.UpdateBatchQuantityView.as_view(), name='batches-update-quantity'),
-    path('batches/<str:batch_id>/activate/', batch_views.ActivateBatchView.as_view(), name='batches-activate'),
     path('batches/product/<str:product_id>/', batch_views.ProductBatchesView.as_view(), name='batches-by-product'),
     path('batches/product/<str:product_id>/summary/', batch_views.ProductWithBatchSummaryView.as_view(), name='batches-product-summary'),
     path('batches/supplier/<str:supplier_id>/', batch_views.SupplierBatchesView.as_view(), name='batches-by-supplier'),
     path('batches/process/sale/', batch_views.ProcessSaleFIFOView.as_view(), name='batches-process-sale'),
     path('batches/process/adjustment/', batch_views.ProcessBatchAdjustmentView.as_view(), name='batches-process-adjustment'),
     path('batches/restock/', batch_views.RestockWithBatchView.as_view(), name='batches-restock'),
+    
+    # ==================== SHIPMENTS ====================
+    path('shipments/', shipment_views.ShipmentListView.as_view(), name='shipments-list'),
+    path('shipments/supplier/<str:supplier_id>/', shipment_views.ShipmentsBySupplierView.as_view(), name='shipments-by-supplier'),
+    path('shipments/<str:shipment_id>/batches/', shipment_views.ShipmentWithBatchesView.as_view(), name='shipments-with-batches'),
+    path('shipments/<str:shipment_id>/', shipment_views.ShipmentDetailView.as_view(), name='shipments-detail'),
     
     # ==================== PROMOTIONS ====================
     path('promotions/health/', promotion_views.PromotionHealthCheckView.as_view(), name='promotions-health'),

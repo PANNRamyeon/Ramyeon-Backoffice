@@ -214,9 +214,9 @@ export default {
           batch.usage_history.forEach(entry => {
             adjustments.push({
               ...entry,
-              batch_id: batch._id,
+              batch_id: batch.batch_id,
               batch_number: batch.batch_number,
-              id: `${batch._id}-${entry.timestamp}` // Unique ID
+              id: `${batch.batch_id}-${entry.timestamp}` // Unique ID
             })
           })
         }

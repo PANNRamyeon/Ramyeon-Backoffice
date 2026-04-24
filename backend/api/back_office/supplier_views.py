@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from app.utils.singleton import get_singleton
 from app.services.inventory.supplier_service import SupplierService
 from app.services.inventory.batch_service import BatchService
 from app.decorators.authenticationDecorator import require_admin, require_authentication, require_permission, get_authenticated_user_from_jwt
@@ -395,7 +396,7 @@ class CreateBatchForSupplierView(APIView):
     """Convenience view for creating a batch directly through a supplier endpoint"""
     def __init__(self):
         super().__init__()
-        self.batch_service = BatchService()
+        self.batch_service = get_singleton(BatchService)
         self.supplier_service = SupplierService()
 
     @require_authentication

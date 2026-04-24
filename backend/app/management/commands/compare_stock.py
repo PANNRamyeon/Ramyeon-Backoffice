@@ -14,8 +14,9 @@ Usage:
 """
 
 from django.core.management.base import BaseCommand
-from app.services.product_service import ProductService
-from app.services.batch_service import BatchService
+from app.utils.singleton import get_singleton
+from app.services.inventory.product_service import ProductService
+from app.services.inventory.batch_service import BatchService
 from app.kpi_views.customer_product_views import CustomerProductService
 from datetime import datetime
 from tabulate import tabulate
@@ -46,7 +47,7 @@ class Command(BaseCommand):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.product_service = ProductService()
-        self.batch_service = BatchService()
+        self.batch_service = get_singleton(BatchService)
         self.customer_service = CustomerProductService()
 
     def calculate_batch_stock(self, product_id):

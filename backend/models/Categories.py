@@ -1,6 +1,6 @@
 """
 Category Model - Following ERD Specification with Enhancements
-PK = "category", SK = "CAT-####" (4-digit format)
+PK = "category", SK = "CTGY-###" (3-digit format)
 Single Table Design using RamyeonCornerDB
 """
 from pynamodb.models import Model
@@ -74,6 +74,7 @@ class SubCategoryItem(MapAttribute):
     status = UnicodeAttribute(default="active")
     sort_order = NumberAttribute(default=0)
     icon = UnicodeAttribute(null=True)  # Icon/Image URL for subcategory
+    product_count = NumberAttribute(default=0, null=True)  # Denormalized count — updated on product create/move/delete
 
 
 # ============= MAIN CATEGORY MODEL =============
@@ -82,8 +83,8 @@ class Category(Model):
     CATEGORY MODEL - Following ERD with Enhancements
     
     ERD Fields:
-    - PK = categories
-    - SK = CAT-#### (4-digit)
+    - PK = category
+    - SK = CTGY-### (3-digit)
     - category_name (String)
     - description (String)
     - status (String)
@@ -109,7 +110,7 @@ class Category(Model):
     
     # ============= PRIMARY KEYS =============
     pk = UnicodeAttribute(hash_key=True, default="category", attr_name="PK")
-    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "CAT-0001" (4-digit)
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "CTGY-001" (3-digit)
     
     # ============= CATEGORY DETAILS =============
     category_name = UnicodeAttribute()
@@ -149,8 +150,9 @@ class Category(Model):
             if not category_name or not category_name.strip():
                 raise ValueError("category_name is required")
             
-            # Generate 4-digit SK using the centralized counter service
-            sk = counter_service.get_next_id('categories')
+            # Generate 3-digit SK using the centralized counter service
+            # Use 'category' (singular) to match the PK partition name
+            sk = counter_service.get_next_id('category')
             
             # Create and save category
             category = cls(
@@ -175,28 +177,57 @@ class Category(Model):
             raise
     
     @classmethod
+    def exists(cls, category_id: str) -> bool:
+        """
+        Return True if a category with this ID exists (supports CTGY-XXX and CAT-XXX).
+        """
+        if not category_id or not str(category_id).strip():
+            return False
+        try:
+            cls.get("category", category_id.strip())
+            return True
+        except cls.DoesNotExist:
+            pass
+        try:
+            if not category_id.strip().startswith('CTGY-'):
+                normalized = f"CTGY-{category_id.strip().zfill(3)}"
+                cls.get("category", normalized)
+                return True
+        except cls.DoesNotExist:
+            pass
+        except Exception:
+            pass
+        return False
+
+    @classmethod
     def get_by_id(cls, category_id: str) -> 'Category | None':
         """
         Get category by ID
         
         Args:
-            category_id: Format "CAT-0001" or just "0001"
+            category_id: Format "CTGY-001", "CAT-001", or just "001"
         
         Returns:
             Category or None if not found
         """
         try:
-            # Ensure proper format
-            if not category_id.startswith('CAT-'):
-                category_id = f"CAT-{category_id.zfill(4)}"  # Pad to 4 digits if needed
-            
-            return cls.get("category", category_id)
+            return cls.get("category", category_id.strip())
+        except cls.DoesNotExist:
+            pass
+        except Exception as e:
+            logger.error(f"Error fetching category {category_id}: {str(e)}")
+            return None
+        try:
+            if not category_id.strip().startswith('CTGY-'):
+                normalized = f"CTGY-{category_id.strip().zfill(3)}"
+                return cls.get("category", normalized)
         except cls.DoesNotExist:
             logger.warning(f"Category not found: {category_id}")
             return None
         except Exception as e:
             logger.error(f"Error fetching category {category_id}: {str(e)}")
             return None
+        return None
     
     @classmethod
     def get_by_name(cls, category_name: str) -> 'Category | None':
@@ -258,23 +289,52 @@ class Category(Model):
     def get_all_categories(cls, include_deleted: bool = False) -> list:
         """
         Get all categories
-        
+
         Args:
             include_deleted: Include soft-deleted categories
-        
+
         Returns:
             list: List of all categories
         """
         try:
-            categories = []
-            for category in cls.query("category"):
-                if include_deleted or not category.isDeleted:
-                    categories.append(category)
-            return categories
+            if include_deleted:
+                return list(cls.query("category"))
+            return list(cls.query("category", filter_condition=(cls.isDeleted == False)))
         except Exception as e:
             logger.error(f"Error getting all categories: {str(e)}")
             return []
     
+    def update_subcategory_count(self, subcategory_name: str, delta: int) -> bool:
+        """
+        Adjust product_count on a subcategory in-place and save.
+        Returns True if the subcategory was found, False otherwise.
+        """
+        import uuid
+        for sub in self.sub_categories:
+            if sub.name == subcategory_name:
+                if not sub.subcategory_id:
+                    sub.subcategory_id = f"SUB-{uuid.uuid4().hex[:6].upper()}"
+                sub.product_count = max(0, int(sub.product_count or 0) + delta)
+                self.last_updated = datetime.utcnow()
+                self.save()
+                return True
+        return False
+
+    @classmethod
+    def adjust_subcategory_count(cls, category_id: str, subcategory_name: str, delta: int) -> None:
+        """
+        Fetch a category and adjust a subcategory's stored product_count by delta.
+        Errors are logged and swallowed — a missed count is recoverable via sync.
+        """
+        try:
+            if not category_id or not subcategory_name:
+                return
+            category = cls.get_by_id(category_id)
+            if category:
+                category.update_subcategory_count(subcategory_name, delta)
+        except Exception as e:
+            logger.warning(f"Could not adjust subcategory count {category_id}/{subcategory_name}: {e}")
+
     @classmethod
     def get_category_count(cls, include_deleted: bool = False) -> int:
         """
@@ -731,7 +791,8 @@ class Category(Model):
                         "icon": sc.icon,
                         "sort_order": sc.sort_order,
                         "status": sc.status,
-                        "created_at": sc.created_at.isoformat() if sc.created_at else None
+                        "created_at": sc.created_at.isoformat() if sc.created_at else None,
+                        "product_count": int(sc.product_count or 0)
                     }
                     for sc in sorted_subcategories
                 ]
@@ -786,17 +847,17 @@ def validate_category_id(category_id: str) -> bool:
         if not category_id:
             return False
         
-        # Check format: CAT-#### where #### are exactly 4 digits
-        if not category_id.startswith('CAT-'):
+        # Check format: CTGY-### where ### are exactly 3 digits
+        if not category_id.startswith('CTGY-'):
             return False
         
-        number_part = category_id[4:]  # Remove "CAT-"
-        if len(number_part) != 4:
+        number_part = category_id[5:]  # Remove "CTGY-"
+        if len(number_part) != 3:
             return False
         
-        # Check if it's a valid number (0001-9999)
+        # Check if it's a valid number (001-999)
         number = int(number_part)
-        return 1 <= number <= 9999
+        return 1 <= number <= 999
         
     except (ValueError, IndexError):
         return False

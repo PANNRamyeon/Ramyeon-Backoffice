@@ -291,3 +291,6 @@ class AuthService:
         except JWTError as e:
             logger.error(f"Invalid refresh token: {str(e)}")
             raise Exception("Invalid refresh token")
+        except Exception as e:
+            logger.error(f"Unexpected error during token refresh: {str(e)}")
+            raise Exception("Token refresh failed due to a server error")

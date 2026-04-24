@@ -34,9 +34,6 @@ class DatabaseManager:
                     aws_secret_access_key=config('AWS_SECRET_ACCESS_KEY')
                 )
             
-            # A simple way to test the connection is to list tables.
-            # This requires the dynamodb:ListTables permission.
-            self.dynamodb.meta.client.list_tables()
             logger.info("Successfully connected to DynamoDB")
             return True
         except Exception as e:

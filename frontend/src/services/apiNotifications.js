@@ -10,6 +10,9 @@ class NotificationsAPI {
       });
       return response.data;
     } catch (error) {
+      if (error.response?.status === 404) {
+        return { success: true, data: [] };
+      }
       console.error("Error fetching recent notifications:", error);
       throw error;
     }

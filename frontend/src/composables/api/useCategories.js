@@ -39,7 +39,7 @@ export function useCategories() {
       const searchTerm = filters.value.search.toLowerCase()
       result = result.filter(category =>
         category.category_name?.toLowerCase().includes(searchTerm) ||
-        category._id?.toLowerCase().includes(searchTerm) ||
+        category.category_id?.toLowerCase().includes(searchTerm) ||
         category.description?.toLowerCase().includes(searchTerm)
       )
     }
@@ -86,7 +86,7 @@ export function useCategories() {
     error.value = null
 
     try {
-      const mergedFilters = { ...filters.value, ...customFilters }
+      const mergedFilters = { ...filters.value, ...customFilters, include_product_counts: true }
       const response = await categoryApiService.CategoryData(mergedFilters)
 
       categories.value = response.categories || []
@@ -156,12 +156,12 @@ export function useCategories() {
       })
 
       // Update local state
-      const index = categories.value.findIndex(c => c._id === categoryId)
+      const index = categories.value.findIndex(c => c.category_id === categoryId)
       if (index !== -1) {
         categories.value[index] = response.category
       }
 
-      if (currentCategory.value?._id === categoryId) {
+      if (currentCategory.value?.category_id === categoryId) {
         currentCategory.value = response.category
       }
 
@@ -184,14 +184,14 @@ export function useCategories() {
       const response = await categoryApiService.SoftDeleteCategory(categoryId)
 
       // Move to deleted categories
-      const deletedCategory = categories.value.find(c => c._id === categoryId)
+      const deletedCategory = categories.value.find(c => c.category_id === categoryId)
       if (deletedCategory) {
         deletedCategory.isDeleted = true
-        categories.value = categories.value.filter(c => c._id !== categoryId)
+        categories.value = categories.value.filter(c => c.category_id !== categoryId)
         deletedCategories.value.unshift(deletedCategory)
       }
 
-      if (currentCategory.value?._id === categoryId) {
+      if (currentCategory.value?.category_id === categoryId) {
         currentCategory.value = null
       }
 
@@ -214,12 +214,12 @@ export function useCategories() {
       const response = await categoryApiService.HardDeleteCategory(categoryId)
 
       // Remove from all local state
-      categories.value = categories.value.filter(c => c._id !== categoryId)
+      categories.value = categories.value.filter(c => c.category_id !== categoryId)
       deletedCategories.value = deletedCategories.value.filter(
-        c => c._id !== categoryId
+        c => c.category_id !== categoryId
       )
 
-      if (currentCategory.value?._id === categoryId) {
+      if (currentCategory.value?.category_id === categoryId) {
         currentCategory.value = null
       }
 
@@ -243,12 +243,12 @@ export function useCategories() {
 
       // Move back to active categories
       const restoredCategory = deletedCategories.value.find(
-        c => c._id === categoryId
+        c => c.category_id === categoryId
       )
       if (restoredCategory) {
         restoredCategory.isDeleted = false
         deletedCategories.value = deletedCategories.value.filter(
-          c => c._id !== categoryId
+          c => c.category_id !== categoryId
         )
         categories.value.unshift(restoredCategory)
       }
@@ -294,7 +294,7 @@ export function useCategories() {
       )
 
       // Update local category state
-      const category = categories.value.find(c => c._id === categoryId)
+      const category = categories.value.find(c => c.category_id === categoryId)
       if (category && category.sub_categories) {
         category.sub_categories.push(subcategoryData)
       }
@@ -324,7 +324,7 @@ export function useCategories() {
       )
 
       // Update local category state
-      const category = categories.value.find(c => c._id === categoryId)
+      const category = categories.value.find(c => c.category_id === categoryId)
       if (category && category.sub_categories) {
         category.sub_categories = category.sub_categories.filter(
           sub => sub.name !== subcategoryName
@@ -608,7 +608,7 @@ export function useCategories() {
     error.value = null
 
     try {
-      const response = await categoryApiService.CategoryData(filters.value)
+      const response = await categoryApiService.CategoryData({ ...filters.value, include_product_counts: true })
       categories.value = response.categories || []
       return response
     } catch (err) {

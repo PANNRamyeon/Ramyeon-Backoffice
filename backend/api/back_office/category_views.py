@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from app.utils.singleton import get_singleton
 from app.services.inventory.category_service import CategoryService
 from app.decorators.authenticationDecorator import require_authentication, require_admin
 import logging
@@ -25,7 +26,7 @@ class CategoryKPIView(APIView):
     def post(self, request):
         """Create a new category"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             
             category_data = {
                 'category_name': request.data.get('category_name'),
@@ -59,7 +60,7 @@ class CategoryKPIView(APIView):
     def get(self, request):
         """Get all categories or search categories"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             
             search_term = request.query_params.get('search')
             active_only = request.query_params.get('active_only', 'false').lower() == 'true'
@@ -108,7 +109,7 @@ class CategoryDetailView(APIView):
     def get(self, request, category_id):
         """Get a specific category by ID"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'
             include_product_counts = request.query_params.get('include_product_counts', 'true').lower() == 'true'
             category = category_service.get_category_by_id(
@@ -130,7 +131,7 @@ class CategoryDetailView(APIView):
     def put(self, request, category_id):
         """Update a category"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             
             logger.info(f"Updating category {category_id} by user: {request.current_user['username']}")
             
@@ -164,7 +165,7 @@ class CategorySoftDeleteView(APIView):
     def delete(self, request, category_id):
         """Soft delete a category"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             result = category_service.soft_delete_category(category_id, request.current_user)
             
             if not result:
@@ -187,7 +188,7 @@ class CategoryHardDeleteView(APIView):
     def delete(self, request, category_id):
         """Hard delete a category (Admin only)"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             result = category_service.hard_delete_category(category_id, request.current_user)
             
             if not result:
@@ -210,7 +211,7 @@ class CategoryRestoreView(APIView):
     def post(self, request, category_id):
         """Restore a soft-deleted category (Admin only)"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             result = category_service.restore_category(category_id, request.current_user)
             
             if not result:
@@ -231,7 +232,7 @@ class CategoryDeletedListView(APIView):
     def get(self, request):
         """Get list of soft-deleted categories (Admin only)"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             include_product_counts = request.query_params.get('include_product_counts', 'false').lower() == 'true'
             deleted_categories = category_service.get_deleted_categories(include_product_counts=include_product_counts)
             
@@ -250,7 +251,7 @@ class CategoryBulkOperationsView(APIView):
     def post(self, request):
         """Bulk operations on categories"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             operation = request.data.get('operation')
             category_ids = request.data.get('category_ids', [])
             
@@ -282,7 +283,7 @@ class CategoryDeleteInfoView(APIView):
     def get(self, request, category_id):
         """Get information about category before deletion"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             delete_info = category_service.get_category_delete_info(category_id)
             
             if not delete_info:
@@ -302,7 +303,7 @@ class CategorySubcategoryView(APIView):
     def post(self, request, category_id):
         """Add a subcategory to a category"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             subcategory_data = request.data.get('subcategory')
             
             if not subcategory_data:
@@ -324,7 +325,7 @@ class CategorySubcategoryView(APIView):
     def delete(self, request, category_id):
         """Remove a subcategory from a category"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             subcategory_name = request.data.get('subcategory_name')
             
             if not subcategory_name:
@@ -346,7 +347,7 @@ class CategorySubcategoryView(APIView):
     def get(self, request, category_id):
         """Get all subcategories for a category"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             subcategories = category_service.get_subcategories(category_id)
             
             return Response({
@@ -364,7 +365,7 @@ class UncategorizedCategoryView(APIView):
     def get(self, request):
         """Get information about the Uncategorized category"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             uncategorized_category = category_service.ensure_uncategorized_category_exists()
             
             return Response({
@@ -378,7 +379,7 @@ class UncategorizedCategoryView(APIView):
     def post(self, request):
         """Create/ensure the Uncategorized category exists (Admin only)"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             category = category_service.ensure_uncategorized_category_exists()
             
             return Response({
@@ -396,7 +397,7 @@ class SubcategoryProductsView(APIView):
     def get(self, request, category_id, subcategory_name):
         """Get all products in a subcategory"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             
             # Use the refactored method to get products in subcategory
             products = category_service.get_products_in_subcategory(
@@ -420,10 +421,10 @@ class CategoryProductManagementView(APIView):
     """New view for managing products within categories using proxy methods"""
     
     @require_authentication
-    def put(self, request):
+    def put(self, request, category_id):
         """Move product to different category or subcategory"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             
             product_id = request.data.get('product_id')
             new_category_id = request.data.get('new_category_id')
@@ -456,11 +457,11 @@ class CategoryProductManagementView(APIView):
             logger.error(f"Error moving product: {e}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @require_authentication  
-    def post(self, request):
+    @require_authentication
+    def post(self, request, category_id):
         """Bulk move products to category/subcategory"""
         try:
-            category_service = CategoryService()
+            category_service = get_singleton(CategoryService)
             
             product_ids = request.data.get('product_ids', [])
             new_category_id = request.data.get('new_category_id')

@@ -324,7 +324,7 @@ export default {
     
     const getCategoryName = (categoryId) => {
       if (!categoryId) return 'Uncategorized'
-      const category = activeCategories.value.find(c => c._id === categoryId)
+      const category = activeCategories.value.find(c => c.category_id === categoryId)
       return category?.category_name || 'Unknown'
     }
     
@@ -432,7 +432,7 @@ export default {
           const batchNumber = form.value.batch_number || generateBatchNumber()
           
           const batchData = {
-            product_id: product.value._id,
+            product_id: product.value.product_id,
             batch_number: batchNumber,
             quantity_received: form.value.quantity_received,
             cost_price: form.value.cost_price,
@@ -447,10 +447,10 @@ export default {
         } else {
           // Adjust existing stock using FIFO
           result = await processBatchAdjustment(
-            product.value._id,
+            product.value.product_id,
             form.value.quantity_used,
             form.value.adjustment_type,
-            user.value?._id, // ✅ Pass user ID here
+            user.value?.user_id, // ✅ Pass user ID here
             form.value.notes
           )
           

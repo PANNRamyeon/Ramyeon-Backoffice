@@ -207,8 +207,8 @@
                   <option value="">Select category</option>
                   <option 
                     v-for="category in categories" 
-                    :key="category._id"
-                    :value="category._id"
+                    :key="category.category_id"
+                    :value="category.category_id"
                   >
                     {{ category.category_name }}
                   </option>
@@ -583,7 +583,7 @@ export default {
       
       // Enhanced category validation using useProducts categories
       const categoryValid = !product.category_id || 
-                          this.categories.some(c => c._id === product.category_id)
+                          this.categories.some(c => c.category_id === product.category_id)
       
       return !!(nameValid && priceValid && categoryValid && !product.sku_error)
     },

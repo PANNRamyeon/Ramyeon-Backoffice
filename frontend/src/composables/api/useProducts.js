@@ -46,7 +46,7 @@ export function useProducts() {
       result = result.filter(product => 
         product.product_name?.toLowerCase().includes(searchTerm) ||
         product.SKU?.toLowerCase().includes(searchTerm) ||
-        product._id?.toLowerCase().includes(searchTerm) ||
+        product.product_id?.toLowerCase().includes(searchTerm) ||
         product.barcode?.toLowerCase().includes(searchTerm)
       )
     }
@@ -248,15 +248,15 @@ export function useProducts() {
     try {
       const response = await apiProductsService.updateProduct(productId, productData, partial)
       
-      const index = products.value.findIndex(p => p._id === productId)
+      const index = products.value.findIndex(p => p.product_id === productId)
       if (index !== -1) {
         products.value[index] = response.data
       }
-      
-      if (currentProduct.value?._id === productId) {
+
+      if (currentProduct.value?.product_id === productId) {
         currentProduct.value = response.data
       }
-      
+
       toast.success(`Product updated successfully`)
       return response
     } catch (err) {
@@ -276,18 +276,18 @@ export function useProducts() {
       const response = await apiProductsService.deleteProduct(productId, hardDelete)
       
       if (hardDelete) {
-        products.value = products.value.filter(p => p._id !== productId)
-        deletedProducts.value = deletedProducts.value.filter(p => p._id !== productId)
+        products.value = products.value.filter(p => p.product_id !== productId)
+        deletedProducts.value = deletedProducts.value.filter(p => p.product_id !== productId)
       } else {
-        const deletedProduct = products.value.find(p => p._id === productId)
+        const deletedProduct = products.value.find(p => p.product_id === productId)
         if (deletedProduct) {
           deletedProduct.isDeleted = true
-          products.value = products.value.filter(p => p._id !== productId)
+          products.value = products.value.filter(p => p.product_id !== productId)
           deletedProducts.value.unshift(deletedProduct)
         }
       }
-      
-      if (currentProduct.value?._id === productId) {
+
+      if (currentProduct.value?.product_id === productId) {
         currentProduct.value = null
       }
       
@@ -309,10 +309,10 @@ export function useProducts() {
     try {
       const response = await apiProductsService.restoreProduct(productId)
       
-      const restoredProduct = deletedProducts.value.find(p => p._id === productId)
+      const restoredProduct = deletedProducts.value.find(p => p.product_id === productId)
       if (restoredProduct) {
         restoredProduct.isDeleted = false
-        deletedProducts.value = deletedProducts.value.filter(p => p._id !== productId)
+        deletedProducts.value = deletedProducts.value.filter(p => p.product_id !== productId)
         products.value.unshift(restoredProduct)
       }
       
@@ -337,7 +337,7 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
     const response = await apiProductsService.bulkDeleteProducts(productIds, hardDelete)
     
     // Update local state - remove deleted products
-    products.value = products.value.filter(p => !productIds.includes(p._id))
+    products.value = products.value.filter(p => !productIds.includes(p.product_id))
     
     // Handle the response structure from your backend
     const deletedCount = response.details?.deleted_count || productIds.length
@@ -389,15 +389,15 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
     try {
       const response = await apiProductsService.moveProductToCategory(productId, newCategoryId, newSubcategoryName)
       
-      const index = products.value.findIndex(p => p._id === productId)
+      const index = products.value.findIndex(p => p.product_id === productId)
       if (index !== -1) {
         products.value[index] = response.data
       }
-      
-      if (currentProduct.value?._id === productId) {
+
+      if (currentProduct.value?.product_id === productId) {
         currentProduct.value = response.data
       }
-      
+
       toast.success(`Product moved to different category successfully`)
       return response
     } catch (err) {
@@ -438,15 +438,15 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
     try {
       const response = await apiProductsService.updateStock(productId, stockData)
       
-      const index = products.value.findIndex(p => p._id === productId)
+      const index = products.value.findIndex(p => p.product_id === productId)
       if (index !== -1) {
         products.value[index] = response.data
       }
-      
-      if (currentProduct.value?._id === productId) {
+
+      if (currentProduct.value?.product_id === productId) {
         currentProduct.value = response.data
       }
-      
+
       toast.success(`Stock updated successfully`)
       return response
     } catch (err) {
@@ -465,11 +465,11 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
     try {
       const response = await apiProductsService.adjustStockForSale(productId, quantitySold)
       
-      const index = products.value.findIndex(p => p._id === productId)
+      const index = products.value.findIndex(p => p.product_id === productId)
       if (index !== -1) {
         products.value[index] = response.data
       }
-      
+
       return response
     } catch (err) {
       error.value = err.message
@@ -486,15 +486,15 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
     try {
       const response = await apiProductsService.restockProduct(productId, quantityReceived, supplierInfo)
       
-      const index = products.value.findIndex(p => p._id === productId)
+      const index = products.value.findIndex(p => p.product_id === productId)
       if (index !== -1) {
         products.value[index] = response.data
       }
-      
-      if (currentProduct.value?._id === productId) {
+
+      if (currentProduct.value?.product_id === productId) {
         currentProduct.value = response.data
       }
-      
+
       toast.success(`Product restocked successfully`)
       return response
     } catch (err) {
@@ -514,15 +514,15 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
     try {
       const response = await apiProductsService.restockWithBatch(productId, restockData)
       
-      const index = products.value.findIndex(p => p._id === productId)
+      const index = products.value.findIndex(p => p.product_id === productId)
       if (index !== -1) {
         products.value[index] = response.data
       }
-      
-      if (currentProduct.value?._id === productId) {
+
+      if (currentProduct.value?.product_id === productId) {
         currentProduct.value = response.data
       }
-      
+
       toast.success(`Product restocked with batch successfully`)
       return response
     } catch (err) {
@@ -1149,7 +1149,7 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
       
       let result
       if (isEditMode.value) {
-        result = await apiProductsService.updateProduct(addProductModalProduct.value._id, formData)
+        result = await apiProductsService.updateProduct(addProductModalProduct.value.product_id, formData)
       } else {
         result = await apiProductsService.createProduct(formData)
       }
@@ -1373,7 +1373,7 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
         reason: stockUpdateForm.value.reason
       }
       
-      const result = await apiProductsService.updateProductStock(stockUpdateProduct.value._id, formData)
+      const result = await apiProductsService.updateProductStock(stockUpdateProduct.value.product_id, formData)
       
       if (onSuccess) {
         onSuccess(result, formData)
@@ -1620,7 +1620,7 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
       }
 
       const categoryMap = new Map(
-        categories.value.map(cat => [cat._id, cat.category_name])
+        categories.value.map(cat => [cat.category_id, cat.category_name])
       )
 
       products.value = products.value.map(product => ({
@@ -1716,7 +1716,7 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
       filtered = filtered.filter(product => 
         product.product_name?.toLowerCase().includes(search) ||
         product.SKU?.toLowerCase().includes(search) ||
-        product._id?.toLowerCase().includes(search) ||
+        product.product_id?.toLowerCase().includes(search) ||
         product.category_name?.toLowerCase().includes(search)
       )
     }
@@ -1741,7 +1741,7 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
   
   const selectAll = (checked) => {
     if (checked) {
-      selectedProducts.value = paginatedProducts.value.map(product => product._id)
+      selectedProducts.value = paginatedProducts.value.map(product => product.product_id)
     } else {
       selectedProducts.value = []
     }
@@ -1786,7 +1786,7 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
     if (!confirmed) return
     
     try {
-      await apiProductsService.updateProduct(product._id, { status: newStatus })
+      await apiProductsService.updateProduct(product.product_id, { status: newStatus })
       const message = `Product "${product.product_name}" ${action}d successfully`
       successMessage.value = message
       await fetchProducts()
@@ -1931,7 +1931,7 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
   const getRowClass = (product) => {
     const classes = []
     
-    if (selectedProducts.value.includes(product._id)) {
+    if (selectedProducts.value.includes(product.product_id)) {
       classes.push('table-primary')
     }
     

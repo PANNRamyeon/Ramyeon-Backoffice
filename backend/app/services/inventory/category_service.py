@@ -3,6 +3,7 @@ from models.Categories import Category, SubCategoryItem
 from models.Product import Product
 import logging
 import re
+import time
 from ..core.audit_service import AuditLogService
 from notifications.services import notification_service
 from app.utils.counters import counter_service
@@ -13,11 +14,21 @@ class CategoryService:
     VALID_CATEGORY_PREFIXES = ('CAT-', 'CTGY-', 'UNCTGRY-', 'UNGTY-')
     UNCATEGORIZED_ID_CANDIDATES = ['UNCTGRY-001', 'UNGTY-001']
     DEFAULT_SUBCATEGORY_NAME = 'None'
+    
+    # Class-level flag to ensure uncategorized check runs only once
+    _uncategorized_checked = False
+
+    _COUNT_MAP_TTL = 60  # seconds
 
     def __init__(self):
         """Initialize CategoryService using PynamoDB models"""
         self.audit_service = AuditLogService()
-        self.ensure_uncategorized_category_exists()
+        self._count_map_cache = None
+        self._count_map_cached_at = 0.0
+        # Only check uncategorized once per server lifetime
+        if not CategoryService._uncategorized_checked:
+            self.ensure_uncategorized_category_exists()
+            CategoryService._uncategorized_checked = True
 
     # ================================================================
     # UTILITY METHODS
@@ -102,7 +113,7 @@ class CategoryService:
         if not category_data:
             raise ValueError("Category data is required")
         
-        category_name = category_data.get("category_name", "").strip()
+        category_name = (category_data.get("category_name") or "").strip()
         if not category_name:
             raise ValueError("Category name is required")
         
@@ -245,7 +256,17 @@ class CategoryService:
             
             # After the category is created, add any subcategories.
             for sub in category_data.get("sub_categories", []):
-                if sub.get('name'):
+                # Handle both string format ["Name"] and object format [{"name": "Name"}]
+                if isinstance(sub, str):
+                    if sub.strip():
+                        category.add_subcategory(
+                            name=sub.strip(),
+                            description=None,
+                            status='active',
+                            sort_order=0,
+                            icon=None
+                        )
+                elif isinstance(sub, dict) and sub.get('name'):
                     # Use the model's instance method to add subcategories.
                     # This correctly uses the counter service for subcategory IDs.
                     category.add_subcategory(
@@ -255,7 +276,17 @@ class CategoryService:
                         sort_order=sub.get('sort_order', 0),
                         icon=sub.get('icon')
                     )
-            
+
+            # Always ensure the default "None" subcategory exists
+            existing_names = {sc.name for sc in category.sub_categories}
+            if self.DEFAULT_SUBCATEGORY_NAME not in existing_names:
+                category.add_subcategory(
+                    name=self.DEFAULT_SUBCATEGORY_NAME,
+                    description='Default subcategory for products without a specific subcategory',
+                    status='active',
+                    sort_order=0
+                )
+
             category_kwargs = category.to_dict()
             
             # Send notification
@@ -282,40 +313,83 @@ class CategoryService:
             logger.error(f"Error creating category: {e}", exc_info=True)
             raise Exception(f"Error creating category: {str(e)}")
         
+    def _build_product_count_map(self) -> dict:
+        """
+        Single DynamoDB query for all active products, returning a nested dict
+        { category_id: { subcategory_name: count } }.
+
+        Result is cached for _COUNT_MAP_TTL seconds to avoid re-scanning all
+        products on every category list request.
+        """
+        now = time.monotonic()
+        if self._count_map_cache is not None and (now - self._count_map_cached_at) < self._COUNT_MAP_TTL:
+            return self._count_map_cache
+
+        try:
+            condition = (Product.isDeleted == False) & (Product.status == "active")
+            products = Product.query("products", filter_condition=condition)
+            counts: dict = {}
+            for p in products:
+                cat = getattr(p, 'category_id', None) or 'unknown'
+                sub = getattr(p, 'subcategory_name', None) or 'None'
+                if cat not in counts:
+                    counts[cat] = {}
+                counts[cat][sub] = counts[cat].get(sub, 0) + 1
+            self._count_map_cache = counts
+            self._count_map_cached_at = now
+            return counts
+        except Exception as e:
+            logger.error(f"Error building product count map: {e}")
+            return {}
+
     def get_all_categories(self, include_deleted=False, limit=None, skip=None, include_product_counts=False):
-        """Get all categories, optionally with product counts"""
+        """Get all categories. Product counts are read from the stored subcategory field."""
         try:
             categories = Category.get_all_categories(include_deleted=include_deleted)
-            
-            # Manual pagination (PynamoDB returns list for small datasets)
             if skip:
                 categories = categories[skip:]
             if limit:
                 categories = categories[:limit]
-            
-            # Convert to dicts
-            result = []
-            for category in categories:
-                cat_dict = category.to_dict()
-                
-                # Add product counts only if requested (expensive operation)
-                if include_product_counts and 'sub_categories' in cat_dict:
-                    for subcategory in cat_dict['sub_categories']:
-                        subcategory['product_count'] = self.get_subcategory_product_count(
-                            category.sk,
-                            subcategory['name']
-                        )
-                elif 'sub_categories' in cat_dict:
-                    # Set count to None when not requested to indicate it's not calculated
-                    for subcategory in cat_dict['sub_categories']:
-                        subcategory['product_count'] = None
-                
-                result.append(cat_dict)
-
-            return result
+            return [cat.to_dict() for cat in categories]
         except Exception as e:
             logger.error(f"Error getting categories: {e}")
             raise Exception(f"Error getting categories: {str(e)}")
+
+    def _adjust_subcategory_count(self, category_id: str, subcategory_name: str, delta: int) -> None:
+        """Adjust the stored product_count on a subcategory. Errors are logged and swallowed."""
+        Category.adjust_subcategory_count(category_id, subcategory_name, delta)
+
+    def sync_product_counts(self) -> dict:
+        """
+        One-time repair: recompute product counts from the products table and
+        write them back to every subcategory. Call this after the initial deploy
+        or whenever counts drift out of sync.
+        Also heals any legacy subcategories that are missing a subcategory_id.
+        """
+        import uuid
+        try:
+            count_map = self._build_product_count_map()
+            categories = Category.get_all_categories(include_deleted=True)
+            updated = 0
+            for category in categories:
+                changed = False
+                for sub in category.sub_categories:
+                    if not sub.subcategory_id:
+                        sub.subcategory_id = f"SUB-{uuid.uuid4().hex[:6].upper()}"
+                        changed = True
+                    correct = count_map.get(category.sk, {}).get(sub.name, 0)
+                    if int(sub.product_count or 0) != correct:
+                        sub.product_count = correct
+                        changed = True
+                if changed:
+                    category.last_updated = datetime.utcnow()
+                    category.save()
+                    updated += 1
+            logger.info(f"sync_product_counts: updated {updated} categories")
+            return {"updated_categories": updated, "success": True}
+        except Exception as e:
+            logger.error(f"sync_product_counts failed: {e}")
+            return {"success": False, "error": str(e)}
 
     def get_category_product_count(self, category_id):
         """Get total number of products in a category"""
@@ -390,10 +464,37 @@ class CategoryService:
                 update_kwargs['status'] = category_data['status']
             if 'image_url' in category_data:
                 update_kwargs['icon'] = category_data['image_url']
-            
-            # Update category
+
+            # Update basic fields
             category.update_category(**update_kwargs)
-            
+
+            # Sync subcategories if provided
+            if 'sub_categories' in category_data:
+                submitted = [
+                    s for s in (category_data['sub_categories'] or [])
+                    if isinstance(s, dict) and s.get('name', '').strip()
+                ]
+                submitted_names = {s['name'].strip() for s in submitted}
+
+                existing_names = {sc.name for sc in category.sub_categories}
+                protected_names = {self.DEFAULT_SUBCATEGORY_NAME}  # never auto-remove "None"
+
+                # Add new subcategories
+                for sub in submitted:
+                    name = sub['name'].strip()
+                    if name not in existing_names:
+                        category.add_subcategory(
+                            name=name,
+                            description=sub.get('description', '').strip() or None,
+                        )
+                        logger.info(f"Added subcategory '{name}' to category {category_id}")
+
+                # Remove subcategories that were deleted from the form
+                for sc in list(category.sub_categories):
+                    if sc.name not in submitted_names and sc.name not in protected_names:
+                        if category.remove_subcategory(sc.subcategory_id):
+                            logger.info(f"Removed subcategory '{sc.name}' from category {category_id}")
+
             updated_category = category.to_dict()
             
             # Send notification
@@ -691,57 +792,19 @@ class CategoryService:
             raise Exception(f"Error removing product from subcategory: {str(e)}")
     
     def get_active_categories(self, include_deleted=False, include_product_counts=False):
-        """Get only active categories, optionally with product counts"""
+        """Get only active categories. Product counts come from the stored subcategory field."""
         try:
-            categories = Category.get_active_categories()
-            
-            result = []
-
-            # Add product counts only if requested
-            for category in categories:
-                cat_dict = category.to_dict()
-                if include_product_counts:
-                    for subcategory in cat_dict.get('sub_categories', []):
-                        subcategory['product_count'] = self.get_subcategory_product_count(
-                            category.sk,
-                            subcategory['name']
-                        )
-                else:
-                    for subcategory in cat_dict.get('sub_categories', []):
-                        subcategory['product_count'] = None
-                result.append(cat_dict)
-
-            return result
+            return [cat.to_dict() for cat in Category.get_active_categories()]
         except Exception as e:
             logger.error(f"Error getting active categories: {e}")
             raise Exception(f"Error getting active categories: {str(e)}")
 
     def search_categories(self, search_term, include_deleted=False, limit=20, include_product_counts=False):
-        """Search categories by name or description, optionally with product counts"""
+        """Search categories by name or description. Product counts come from stored subcategory field."""
         try:
             if not search_term or not search_term.strip():
                 return []
-
-            search_term = search_term.strip()
-            categories = Category.search_categories(search_term, limit=limit)
-            
-            result = []
-
-            # Add product counts only if requested
-            for category in categories:
-                cat_dict = category.to_dict()
-                if include_product_counts:
-                    for subcategory in cat_dict.get('sub_categories', []):
-                        subcategory['product_count'] = self.get_subcategory_product_count(
-                            category.sk,
-                            subcategory['name']
-                        )
-                else:
-                    for subcategory in cat_dict.get('sub_categories', []):
-                        subcategory['product_count'] = None
-                result.append(cat_dict)
-
-            return result
+            return [cat.to_dict() for cat in Category.search_categories(search_term.strip(), limit=limit)]
         except Exception as e:
             logger.error(f"Error searching categories: {e}")
             raise Exception(f"Error searching categories: {str(e)}")
@@ -937,11 +1000,19 @@ class CategoryService:
             
             updated_count = 0
             for category_id in category_ids:
+                logger.info(f"Attempting to update category: {category_id}")
                 category = Category.get_by_id(category_id)
-                if category and not category.isDeleted:
-                    category.status = new_status
-                    category.save()
-                    updated_count += 1
+                if category:
+                    logger.info(f"Category found: {category.category_name}, isDeleted: {category.isDeleted}")
+                    if not category.isDeleted:
+                        category.status = new_status
+                        category.save()
+                        updated_count += 1
+                        logger.info(f"Successfully updated category {category_id} to {new_status}")
+                    else:
+                        logger.warning(f"Category {category_id} is deleted, skipping")
+                else:
+                    logger.warning(f"Category {category_id} not found")
             
             # Send bulk notification
             if updated_count > 0:
@@ -1012,16 +1083,23 @@ class CategoryService:
             # If no subcategory specified, use default catch-all subcategory
             if not new_subcategory_name:
                 new_subcategory_name = self.DEFAULT_SUBCATEGORY_NAME
-            
+
             product = Product.get_by_id(product_id)
             if not product:
                 raise ValueError(f"Product {product_id} not found")
-            
+
+            old_category_id = product.category_id
+            old_subcategory_name = product.subcategory_name
+
             product.update_product(
                 category_id=new_category_id,
                 subcategory_name=new_subcategory_name
             )
-            
+
+            if old_category_id != new_category_id or old_subcategory_name != new_subcategory_name:
+                self._adjust_subcategory_count(old_category_id, old_subcategory_name, -1)
+                self._adjust_subcategory_count(new_category_id, new_subcategory_name, +1)
+
             logger.info(f"Product {product_id} moved to category {new_category_id} > {new_subcategory_name}")
             return product.to_dict()
             

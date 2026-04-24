@@ -16,17 +16,18 @@ def initialize_counters():
     Scans the DynamoDB table for the highest existing ID in each collection
     and initializes the atomic counters.
     """
-    print("🚀 Starting DynamoDB Counter Initialization...")
+    print("Starting DynamoDB Counter Initialization...")
     
     # Configuration: (Collection Name in DB, ID Prefix, Number of Digits)
-    # Prefixes and widths are based on the required format examples.
+    # Prefixes and widths MUST match counters.py configuration
     configs = [
         ('products', 'PROD', 5),
-        ('category', 'CTGY', 3),
-        ('categories', 'CTGY', 3),
+        ('category', 'CTGY', 3),  # PK='category' in DynamoDB
+        ('subcategories', 'SUB', 5),
         ('users', 'USER', 4),
         ('customers', 'CUST', 5),
-        ('batches', 'BAT', 6),
+        ('batches', 'BATCH', 6),
+        ('shipments', 'SHIP', 5),
         ('notifications', 'NOTIF', 6),
         ('online_transactions', 'ONLINE', 6),
         ('audit_logs', 'AUD', 6),
@@ -42,11 +43,11 @@ def initialize_counters():
             print(f"   Processing '{collection}' (Prefix: {prefix}, Width: {width})...")
             # This method finds the max existing ID and sets/updates the counter
             current_val = counter_service.initialize_counter(collection, prefix, width)
-            print(f"   ✅ Counter set to start from: {current_val}")
+            print(f"   [OK] Counter set to start from: {current_val}")
         except Exception as e:
-            print(f"   ❌ Failed for '{collection}': {e}")
+            print(f"   [ERROR] Failed for '{collection}': {e}")
 
-    print("\n✨ Counter initialization complete.")
+    print("\nCounter initialization complete.")
 
 if __name__ == "__main__":
     initialize_counters()
