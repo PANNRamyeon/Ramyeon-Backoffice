@@ -46,7 +46,7 @@
                   >
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">Expected Delivery <span class="text-danger">*</span></label>
+                  <label class="form-label">Expected Delivery <span class="text-status-error">*</span></label>
                   <div v-if="!isEditingExpectedDate" 
                        class="form-control clickable-field" 
                        @click="isEditingExpectedDate = true"
@@ -54,10 +54,10 @@
                     <span v-if="editForm.expectedDate">
                       {{ formatDate(editForm.expectedDate) }}
                     </span>
-                    <span v-else class="text-muted">
+                    <span v-else class="text-secondary">
                       Click to set expected delivery date
                     </span>
-                    <small class="float-end text-primary">
+                    <small class="float-end text-accent">
                       <Edit :size="14" />
                     </small>
                   </div>
@@ -89,11 +89,11 @@
               <h6 class="mb-0">
                 <Package :size="18" class="me-2" />
                 Order Items
-                <span class="badge bg-primary ms-2">{{ editForm.items.length }}</span>
+                <span class="badge ms-2">{{ editForm.items.length }}</span>
               </h6>
-              <button 
-                type="button" 
-                class="btn btn-sm btn-outline-primary"
+              <button
+                type="button"
+                class="btn btn-add btn-sm"
                 @click="addItem"
               >
                 <Plus :size="16" class="me-1" />
@@ -106,12 +106,12 @@
                   <thead class="table-light">
                     <tr>
                       <th style="width: 40px;">#</th>
-                      <th style="width: 160px;">Category <span class="text-danger">*</span></th>
-                      <th style="width: 160px;">Subcategory <span class="text-danger">*</span></th>
-                      <th style="width: 180px;">Product <span class="text-danger">*</span></th>
+                      <th style="width: 160px;">Category <span class="text-status-error">*</span></th>
+                      <th style="width: 160px;">Subcategory <span class="text-status-error">*</span></th>
+                      <th style="width: 180px;">Product <span class="text-status-error">*</span></th>
                       <th style="width: 120px;">Batch Number</th>
-                      <th style="width: 100px;">Quantity <span class="text-danger">*</span></th>
-                      <th style="width: 120px;">Unit Price (₱) <span class="text-danger">*</span></th>
+                      <th style="width: 100px;">Quantity <span class="text-status-error">*</span></th>
+                      <th style="width: 120px;">Unit Price (₱) <span class="text-status-error">*</span></th>
                       <th style="width: 120px;">Total Price</th>
                       <th style="width: 120px;">Expiry Date</th>
                       <th style="width: 60px;"></th>
@@ -139,7 +139,7 @@
                             {{ category.category_name }}
                           </option>
                         </select>
-                        <div v-else class="text-muted small">
+                        <div v-else class="text-secondary small">
                           {{ getCategoryName(item) || 'N/A' }}
                         </div>
                       </td>
@@ -163,7 +163,7 @@
                             {{ subcategory.name }} ({{ subcategory.product_count }})
                           </option>
                         </select>
-                        <div v-else class="text-muted small">
+                        <div v-else class="text-secondary small">
                           {{ item.subcategoryName || 'N/A' }}
                         </div>
                       </td>
@@ -190,7 +190,7 @@
                         <div v-else>
                           <strong>{{ item.name }}</strong>
                           <br>
-                          <small class="text-muted">{{ item.productId }}</small>
+                          <small class="text-secondary">{{ item.productId }}</small>
                         </div>
                       </td>
                       
@@ -225,7 +225,7 @@
                         >
                       </td>
                       <td>
-                        <div class="fw-bold text-primary">
+                        <div class="fw-bold text-accent">
                           ₱{{ formatCurrency(item.totalPrice) }}
                         </div>
                       </td>
@@ -238,9 +238,9 @@
                         >
                       </td>
                       <td>
-                        <button 
-                          type="button" 
-                          class="btn btn-sm btn-outline-danger"
+                        <button
+                          type="button"
+                          class="btn btn-delete btn-sm"
                           @click="removeItem(index)"
                           :disabled="editForm.items.length === 1"
                           title="Remove item"
@@ -293,22 +293,22 @@
         <!-- Modal Footer -->
         <div class="modal-footer border-0 pt-4">
           <div class="d-flex justify-content-between align-items-center w-100">
-            <div class="text-muted small">
+            <div class="text-secondary small">
               <AlertCircle :size="16" class="me-1" />
               Changes will update all related batches
             </div>
             <div class="d-flex gap-2">
-              <button 
-                type="button" 
-                class="btn btn-outline-secondary px-4"
+              <button
+                type="button"
+                class="btn btn-cancel px-4"
                 @click="handleClose"
                 :disabled="saving"
               >
                 Cancel
               </button>
-              <button 
-                type="button" 
-                class="btn btn-primary px-4"
+              <button
+                type="button"
+                class="btn btn-save px-4"
                 @click="saveChanges"
                 :disabled="saving || !isFormValid"
               >
@@ -687,7 +687,7 @@ export default {
                cost_price: item.unitPrice,
                expiry_date: item.expiryDate || null,
                expected_delivery_date: editForm.value.expectedDate,
-               supplier_id: props.supplier?._id || props.supplier?.id,
+               supplier_id: props.supplier?.supplier_id,
                status: 'pending',
                notes: editForm.value.notes
              }
@@ -854,25 +854,25 @@ export default {
 
 .clickable-field:hover {
   background-color: var(--surface-tertiary);
-  border-color: var(--primary);
+  border-color: var(--border-accent);
   box-shadow: 0 0 0 0.2rem rgba(115, 146, 226, 0.15);
 }
 
 .modal-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, var(--warning-light), var(--warning));
+  background-color: var(--status-warning-bg);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--warning-dark);
+  color: var(--status-warning);
 }
 
 .modal-header {
   padding: 1.5rem 1.75rem 0.9rem 1.75rem;
   background: linear-gradient(135deg, var(--surface-tertiary), var(--surface-secondary));
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
 
@@ -926,8 +926,8 @@ export default {
   background-color: var(--surface-tertiary);
   color: var(--text-primary);
   padding: 0.75rem 0.5rem;
-  border-bottom: 2px solid rgba(0, 0, 0, 0.18);
-  border-top: 1px solid rgba(0, 0, 0, 0.18);
+  border-bottom: 2px solid var(--border-primary);
+  border-top: 1px solid var(--border-primary);
 }
 
 .edit-items-table td {
@@ -955,10 +955,6 @@ export default {
   margin-bottom: 0.5rem;
 }
 
-.text-danger {
-  color: var(--error) !important;
-}
-
 code {
   font-family: 'Monaco', 'Menlo', monospace;
   font-size: 0.875rem;
@@ -971,12 +967,8 @@ code {
 .modal-footer {
   padding: 1.25rem 1.75rem 1.75rem 1.75rem;
   background-color: var(--surface-tertiary);
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  border-top: 1px solid var(--border-primary);
   flex-shrink: 0;
-}
-
-.modal-footer .text-muted {
-  color: var(--text-secondary) !important;
 }
 
 .edit-items-table tfoot td {
@@ -1016,7 +1008,7 @@ code {
 }
 
 .table-summary-item:last-child strong {
-  color: var(--primary);
+  color: var(--text-accent);
   font-weight: 600;
 }
 
@@ -1051,7 +1043,7 @@ code {
 
 .card-header {
   background-color: var(--surface-tertiary) !important;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.15) !important;
+  border-bottom: 1px solid var(--border-primary) !important;
   color: var(--text-primary) !important;
 }
 
@@ -1063,11 +1055,6 @@ code {
 .card-body h6,
 .card-header h6 {
   color: var(--text-primary) !important;
-}
-
-.card .text-muted,
-.card-header .text-muted {
-  color: var(--text-secondary) !important;
 }
 
 .bg-light,

@@ -211,26 +211,104 @@
         <template #header>
           <tr>
             <th style="width: 40px;">
-              <input 
-                type="checkbox" 
-                class="form-check-input" 
-                @change="handleSelectAll" 
+              <input
+                type="checkbox"
+                class="form-check-input"
+                @change="handleSelectAll"
                 :checked="allSelected"
                 :indeterminate.prop="someSelected"
               />
             </th>
-            <th>
-              Item name 
-              <ChevronUp :size="14" class="ms-1" />
+            <th class="sortable-header" @click="handleSort('name')">
+              <span class="header-content">
+                Item name
+                <span class="sort-icon" :class="getSortIconClass('name')">
+                  <span v-if="sortColumn === 'name' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'name' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
             </th>
-            <th v-if="isColumnVisible('sku')" style="width: 200px;">SKU</th>
-            <th v-if="isColumnVisible('category')" style="width: 160px;">Category</th>
-            <th v-if="isColumnVisible('sellingPrice')" style="width: 120px; text-align: right;">Selling Price</th>
-            <th v-if="isColumnVisible('costPrice')" style="width: 120px; text-align: right;">Cost Price</th>
-            <th style="width: 80px;">Margin</th>
-            <th v-if="isColumnVisible('stock')" style="width: 100px;">In stock</th>
-            <th v-if="isColumnVisible('status')" style="width: 100px;">Status</th>
-            <th v-if="isColumnVisible('expiryDate')" style="width: 130px;">Expiry Date</th>
+            <th v-if="isColumnVisible('sku')" style="width: 100px;" class="sortable-header" @click="handleSort('sku')">
+              <span class="header-content">
+                SKU
+                <span class="sort-icon" :class="getSortIconClass('sku')">
+                  <span v-if="sortColumn === 'sku' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'sku' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('category')" style="width: 100px;" class="sortable-header" @click="handleSort('category')">
+              <span class="header-content">
+                Category
+                <span class="sort-icon" :class="getSortIconClass('category')">
+                  <span v-if="sortColumn === 'category' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'category' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('sellingPrice')" style="width: 160px; text-align: right;" class="sortable-header" @click="handleSort('sellingPrice')">
+              <span class="header-content justify-content-end">
+                Selling Price
+                <span class="sort-icon" :class="getSortIconClass('sellingPrice')">
+                  <span v-if="sortColumn === 'sellingPrice' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'sellingPrice' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('costPrice')" style="width: 120px; text-align: right;" class="sortable-header" @click="handleSort('costPrice')">
+              <span class="header-content justify-content-end">
+                Cost Price
+                <span class="sort-icon" :class="getSortIconClass('costPrice')">
+                  <span v-if="sortColumn === 'costPrice' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'costPrice' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th style="width: 80px;" class="sortable-header" @click="handleSort('margin')">
+              <span class="header-content">
+                Margin
+                <span class="sort-icon" :class="getSortIconClass('margin')">
+                  <span v-if="sortColumn === 'margin' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'margin' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('stock')" style="width: 100px;" class="sortable-header" @click="handleSort('stock')">
+              <span class="header-content">
+                In stock
+                <span class="sort-icon" :class="getSortIconClass('stock')">
+                  <span v-if="sortColumn === 'stock' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'stock' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('status')" style="width: 100px;" class="sortable-header" @click="handleSort('status')">
+              <span class="header-content">
+                Status
+                <span class="sort-icon" :class="getSortIconClass('status')">
+                  <span v-if="sortColumn === 'status' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'status' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('expiryDate')" style="width: 130px;" class="sortable-header" @click="handleSort('expiryDate')">
+              <span class="header-content">
+                Expiry Date
+                <span class="sort-icon" :class="getSortIconClass('expiryDate')">
+                  <span v-if="sortColumn === 'expiryDate' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'expiryDate' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
             <th style="width: 160px;">Actions</th>
           </tr>
         </template>
@@ -459,6 +537,10 @@ export default {
     const addDropdown = ref(null)
     const searchInput = ref(null)
 
+    // Sorting state
+    const sortColumn = ref(null)
+    const sortDirection = ref(null)
+
     // Visible columns state
     const visibleColumns = ref({
       sku: true,
@@ -470,11 +552,60 @@ export default {
       expiryDate: true
     })
 
+    // Sorted + filtered products
+    const sortedFilteredProducts = computed(() => {
+      if (!sortColumn.value || !sortDirection.value) return filteredProducts.value
+
+      const col = sortColumn.value
+      const dir = sortDirection.value
+
+      return [...filteredProducts.value].sort((a, b) => {
+        let aVal, bVal
+
+        if (col === 'name') {
+          aVal = (a.product_name || '').toLowerCase()
+          bVal = (b.product_name || '').toLowerCase()
+        } else if (col === 'sku') {
+          aVal = (a.SKU || '').toLowerCase()
+          bVal = (b.SKU || '').toLowerCase()
+        } else if (col === 'category') {
+          aVal = getCategoryName(a.category_id).toLowerCase()
+          bVal = getCategoryName(b.category_id).toLowerCase()
+        } else if (col === 'sellingPrice') {
+          aVal = parseFloat(a.selling_price || 0)
+          bVal = parseFloat(b.selling_price || 0)
+        } else if (col === 'costPrice') {
+          aVal = parseFloat(getProductCostPrice(a) || 0)
+          bVal = parseFloat(getProductCostPrice(b) || 0)
+        } else if (col === 'margin') {
+          aVal = calculateMargin(getProductCostPrice(a), a.selling_price)
+          bVal = calculateMargin(getProductCostPrice(b), b.selling_price)
+        } else if (col === 'stock') {
+          aVal = getProductStock(a) || 0
+          bVal = getProductStock(b) || 0
+        } else if (col === 'status') {
+          aVal = (a.status || '').toLowerCase()
+          bVal = (b.status || '').toLowerCase()
+        } else if (col === 'expiryDate') {
+          const dateA = getProductExpiryDate(a)
+          const dateB = getProductExpiryDate(b)
+          aVal = dateA ? new Date(dateA).getTime() : Infinity
+          bVal = dateB ? new Date(dateB).getTime() : Infinity
+        } else {
+          return 0
+        }
+
+        if (aVal < bVal) return dir === 'asc' ? -1 : 1
+        if (aVal > bVal) return dir === 'asc' ? 1 : -1
+        return 0
+      })
+    })
+
     // Computed properties for pagination and selection
     const paginatedProducts = computed(() => {
       const start = (currentPage.value - 1) * itemsPerPage.value
       const end = start + itemsPerPage.value
-      return filteredProducts.value.slice(start, end)
+      return sortedFilteredProducts.value.slice(start, end)
     })
 
     const allSelected = computed(() => {
@@ -724,6 +855,22 @@ export default {
       }
     }
 
+    // Sorting handlers
+    const handleSort = (column) => {
+      if (sortColumn.value === column) {
+        sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+      } else {
+        sortColumn.value = column
+        sortDirection.value = 'asc'
+      }
+      currentPage.value = 1
+    }
+
+    const getSortIconClass = (column) => {
+      if (sortColumn.value !== column) return 'sort-icon--idle'
+      return sortDirection.value === 'asc' ? 'sort-icon--asc' : 'sort-icon--desc'
+    }
+
     // Click outside handler
     const handleClickOutside = (event) => {
       if (addDropdown.value && !addDropdown.value.contains(event.target)) {
@@ -773,7 +920,9 @@ export default {
       visibleColumns,
       addDropdown,
       searchInput,
-      
+      sortColumn,
+      sortDirection,
+
       // Computed
       paginatedProducts,
       allSelected,
@@ -801,7 +950,9 @@ export default {
       toggleAddDropdown,
       closeAddDropdown,
       toggleColumnFilter,
-      
+      handleSort,
+      getSortIconClass,
+
       // Utility functions
       isColumnVisible,
       getRowClass,
@@ -1047,6 +1198,38 @@ export default {
   .dropdown-item {
     padding: 0.875rem 1rem;
   }
+}
+
+/* Sortable column headers */
+.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sortable-header:hover {
+  background-color: var(--state-hover);
+}
+
+.header-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sort-icon {
+  font-size: 0.75rem;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.sort-icon--idle .sort-idle {
+  opacity: 0.3;
+}
+
+.sort-icon--asc,
+.sort-icon--desc {
+  color: var(--text-accent, #0d6efd);
 }
 
 /* Make search button + filters perfectly aligned */

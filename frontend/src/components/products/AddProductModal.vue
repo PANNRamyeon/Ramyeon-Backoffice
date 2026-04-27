@@ -365,29 +365,55 @@
             </div>
 
             <div class="col-md-6">
-              <label for="selling_price" class="form-label text-primary fw-medium">
-                Selling Price (₱) <span class="text-error">*</span>
+              <label for="cost_price" class="form-label text-primary fw-medium">
+                Cost Price (₱) <span class="text-error">*</span>
               </label>
-              <input 
-                id="selling_price"
-                v-model.number="productForm.selling_price" 
-                type="number" 
+              <input
+                id="cost_price"
+                v-model.number="productForm.cost_price"
+                type="number"
                 step="0.01"
                 min="0"
-                required 
+                required
                 :disabled="isLoading"
                 placeholder="0.00"
                 class="form-control input-theme"
-                :class="{ 
+                :class="{
+                  'is-invalid': validationErrors.cost_price,
+                  'validation-error': validationErrors.cost_price
+                }"
+              />
+              <div v-if="validationErrors.cost_price" class="invalid-feedback">
+                {{ validationErrors.cost_price }}
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label for="selling_price" class="form-label text-primary fw-medium">
+                Selling Price (₱) <span class="text-error">*</span>
+              </label>
+              <input
+                id="selling_price"
+                v-model.number="productForm.selling_price"
+                type="number"
+                step="0.01"
+                min="0"
+                required
+                :disabled="isLoading"
+                placeholder="0.00"
+                class="form-control input-theme"
+                :class="{
                   'is-invalid': validationErrors.selling_price,
-                  'validation-error': validationErrors.selling_price 
+                  'validation-error': validationErrors.selling_price
                 }"
                 @input="calculateMargin"
               />
               <div v-if="validationErrors.selling_price" class="invalid-feedback">
                 {{ validationErrors.selling_price }}
               </div>
-              <small v-if="marginPercentage && createWithStock" class="text-tertiary-medium">
+              <small v-if="marginPercentage" class="text-tertiary-medium">
                 Profit Margin: {{ marginPercentage }}%
               </small>
             </div>
@@ -569,8 +595,8 @@ export default {
     const loadSuppliers = async () => {
       try {
         const res = await apiProductsService.getAllSuppliers()
+        console.log('🔍 Suppliers API response:', res)
 
-        // Extract the supplier list correctly
         if (Array.isArray(res.suppliers)) {
           suppliers.value = res.suppliers
         } else if (Array.isArray(res.data?.suppliers)) {
@@ -579,6 +605,7 @@ export default {
           suppliers.value = []
         }
 
+        console.log('✅ Suppliers loaded:', suppliers.value.length, suppliers.value)
       } catch (err) {
         console.error("❌ Failed to load suppliers:", err)
       }
@@ -618,6 +645,7 @@ export default {
       category_id: '',
       subcategory_name: '',
       unit: '',
+      cost_price: 0,
       selling_price: 0,
       low_stock_threshold: 10,
       status: 'active',
@@ -648,9 +676,7 @@ export default {
     })
 
     const marginPercentage = computed(() => {
-      if (!createWithStock.value) return 0
-      const { cost_price } = batchForm.value
-      const { selling_price } = productForm.value
+      const { cost_price, selling_price } = productForm.value
       if (!cost_price || !selling_price || cost_price >= selling_price) return 0
       return Math.round(((selling_price - cost_price) / selling_price) * 100)
     })
@@ -667,6 +693,9 @@ export default {
       }
       if (!productForm.value.unit) {
         errors.unit = 'Unit is required'
+      }
+      if (productForm.value.cost_price == null || productForm.value.cost_price < 0) {
+        errors.cost_price = 'Cost price must be 0 or greater'
       }
       if (!productForm.value.selling_price || productForm.value.selling_price <= 0) {
         errors.selling_price = 'Selling price must be greater than 0'
@@ -709,6 +738,7 @@ export default {
         category_id: '',
         subcategory_name: '',
         unit: '',
+        cost_price: 0,
         selling_price: 0,
         low_stock_threshold: 10,
         status: 'active',
@@ -808,16 +838,6 @@ export default {
       try {
         let result
         const formData = { ...productForm.value }
-
-        if (createWithStock.value) {
-          formData.stock = batchForm.value.quantity_received
-          formData.cost_price = batchForm.value.cost_price
-          formData.expiry_date = batchForm.value.expiry_date
-          formData.supplier_id = batchForm.value.supplier_id || undefined
-          formData.date_received = batchForm.value.date_received || undefined
-        } else {
-          formData.stock = 0
-        }
 
         if (!formData.category_id) {
           formData.category_id = 'UNCTGRY-001'

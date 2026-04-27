@@ -1,24 +1,16 @@
 from pynamodb.models import Model
 from pynamodb.attributes import (
-    UnicodeAttribute, BooleanAttribute, 
+    UnicodeAttribute, BooleanAttribute,
     UTCDateTimeAttribute, ListAttribute, MapAttribute
 )
 from datetime import datetime
 import logging
-from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION
+from app.utils import DYNAMO_TABLE_NAME, AWS_REGION
+from app.utils.counters import counter_service
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-
-class SyncLogItem(MapAttribute):
-    """ERD-compliant sync log"""
-    object = UnicodeAttribute(null=True)
-    last_updated = UTCDateTimeAttribute(null=True)
-    source = UnicodeAttribute(null=True)
-    status = UnicodeAttribute(null=True)
-    details = UnicodeAttribute(null=True)
-    action = UnicodeAttribute(null=True)
 
 
 # ===== OPTIONAL ENHANCED CLASSES (nullable, not required) =====
@@ -88,7 +80,6 @@ class Supplier(Model):
     created_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
     updated_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
     created_by = UnicodeAttribute(null=True)
-    sync_logs = ListAttribute(of=SyncLogItem, null=True)
     updated_by = UnicodeAttribute(null=True)
     isFavorite = BooleanAttribute(default=False)
     
@@ -112,7 +103,7 @@ class Supplier(Model):
                 raise ValueError("supplier_name is required")
             
             # Generate 3-digit SK
-            sk = generate_sk('SUPP-', 'supplier_seq', digits=3)
+            sk = counter_service.get_next_id('suppliers')
             
             # Core ERD fields only in constructor
             supplier = cls(
@@ -135,7 +126,6 @@ class Supplier(Model):
                 isFavorite=kwargs.get('isFavorite', False),
                 created_by=kwargs.get('created_by'),
                 updated_by=kwargs.get('updated_by'),
-                sync_logs=kwargs.get('sync_logs')
             )
             supplier.save()
             

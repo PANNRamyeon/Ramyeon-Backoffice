@@ -10,7 +10,7 @@
             </div>
             <div>
               <h4 class="modal-title mb-1">Import Suppliers from File</h4>
-              <p class="text-muted mb-0 small">Upload a CSV or Excel file to import multiple suppliers at once</p>
+              <p class="text-secondary mb-0 small">Upload a CSV or Excel file to import multiple suppliers at once</p>
             </div>
           </div>
           <button 
@@ -30,7 +30,7 @@
                 <Download :size="18" class="me-2" />
                 Step 1: Download Template
               </h5>
-              <p class="text-muted mb-3">
+              <p class="text-secondary mb-3">
                 Download our template file, fill it out with your supplier data, then upload it back here.
               </p>
               
@@ -43,7 +43,7 @@
                       </div>
                       <div class="info-content">
                         <h6>Required Fields</h6>
-                        <small class="text-muted">Company Name is required. Email and Phone are validated if provided.</small>
+                        <small class="text-secondary">Company Name is required. Email and Phone are validated if provided.</small>
                       </div>
                     </div>
                   </div>
@@ -54,14 +54,14 @@
                       </div>
                       <div class="info-content">
                         <h6>Bulk Capacity</h6>
-                        <small class="text-muted">Import 20+ suppliers efficiently. No upper limit.</small>
+                        <small class="text-secondary">Import 20+ suppliers efficiently. No upper limit.</small>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <button class="btn btn-outline-primary" @click="downloadTemplate">
+              <button class="btn btn-export" @click="downloadTemplate">
                 <Download :size="16" class="me-1" />
                 Download CSV Template
               </button>
@@ -84,12 +84,12 @@
                 @dragleave="isDragOver = false"
                 @click="$refs.fileInput.click()"
               >
-                <Upload :size="48" class="text-muted mb-3" />
+                <Upload :size="48" class="text-secondary mb-3" />
                 <h6>Drag & Drop Your File Here</h6>
-                <p class="text-muted mb-3">or click to browse files</p>
+                <p class="text-secondary mb-3">or click to browse files</p>
                 
                 <div class="supported-formats">
-                  <small class="text-muted">
+                  <small class="text-secondary">
                     <strong>Supported formats:</strong> CSV, Excel (.xlsx, .xls)
                     <br>
                     <strong>Max file size:</strong> 10MB
@@ -111,7 +111,7 @@
           <div v-else class="uploaded-section">
             <div class="uploaded-file-card">
               <div class="file-success-icon">
-                <CheckCircle :size="48" class="text-success" />
+                <CheckCircle :size="48" class="text-status-success" />
               </div>
               
               <div class="file-info">
@@ -127,7 +127,7 @@
                   </div>
                   <div class="detail-item">
                     <Users :size="16" class="me-2" />
-                    <span class="text-success fw-bold">{{ parsedSuppliers.length }} suppliers found</span>
+                    <span class="text-status-success fw-bold">{{ parsedSuppliers.length }} suppliers found</span>
                   </div>
                 </div>
               </div>
@@ -154,10 +154,10 @@
                   </thead>
                   <tbody>
                     <tr v-for="(supplier, index) in previewData" :key="index">
-                      <td>{{ supplier.name || '-' }}</td>
-                      <td>{{ supplier.contactPerson || '-' }}</td>
+                      <td>{{ supplier.supplier_name || '-' }}</td>
+                      <td>{{ supplier.contact_person || '-' }}</td>
                       <td>{{ supplier.email || '-' }}</td>
-                      <td>{{ supplier.phone || '-' }}</td>
+                      <td>{{ supplier.phone_number || '-' }}</td>
                       <td>{{ getTypeLabel(supplier.type) }}</td>
                       <td>
                         <span :class="['badge', 'badge-sm', getStatusClass(supplier.status)]">
@@ -170,7 +170,7 @@
               </div>
               
               <div v-if="parsedSuppliers.length > 5" class="text-center mt-2">
-                <small class="text-muted">
+                <small class="text-secondary">
                   ... and {{ parsedSuppliers.length - 5 }} more suppliers
                 </small>
               </div>
@@ -215,12 +215,12 @@
 
             <!-- Action Buttons -->
             <div class="mt-4 d-flex justify-content-center gap-3">
-              <button class="btn btn-outline-secondary" @click="clearUploadedFile">
+              <button class="btn btn-cancel" @click="clearUploadedFile">
                 <X :size="16" class="me-1" />
                 Remove File
               </button>
-              <button 
-                class="btn btn-success" 
+              <button
+                class="btn btn-save"
                 @click="processImport"
                 :disabled="willImportCount === 0 || importing"
                 :class="{ 'btn-loading': importing }"
@@ -301,7 +301,7 @@ export default {
     
     duplicateCount() {
       // Simple duplicate detection based on name or email
-      const names = this.parsedSuppliers.map(s => s.name?.toLowerCase()).filter(Boolean)
+      const names = this.parsedSuppliers.map(s => s.supplier_name?.toLowerCase()).filter(Boolean)
       const emails = this.parsedSuppliers.map(s => s.email?.toLowerCase()).filter(Boolean)
       
       const duplicateNames = names.filter((name, index) => names.indexOf(name) !== index).length
@@ -391,14 +391,13 @@ export default {
                 try {
                   const values = line.split(',').map(v => v.replace(/"/g, '').trim())
                   return {
-                    name: values[0] || '',
-                    contactPerson: values[1] || '',
+                    supplier_name: values[0] || '',
+                    contact_person: values[1] || '',
                     email: values[2] || '',
-                    phone: values[3] || '',
+                    phone_number: values[3] || '',
                     address: values[4] || '',
                     type: values[5] || 'other',
-                    status: values[6] || 'active',
-                    notes: values[7] || '',
+                    notes: values[6] || '',
                     _rowNumber: index + 2 // For error reporting
                   }
                 } catch (error) {
@@ -432,12 +431,12 @@ export default {
       const errors = {}
       
       // Name validation
-      if (!supplier.name || !supplier.name.trim()) {
-        errors.name = 'Company name is required'
-      } else if (supplier.name.trim().length < 2) {
-        errors.name = 'Name must be at least 2 characters'
+      if (!supplier.supplier_name || !supplier.supplier_name.trim()) {
+        errors.supplier_name = 'Company name is required'
+      } else if (supplier.supplier_name.trim().length < 2) {
+        errors.supplier_name = 'Name must be at least 2 characters'
       }
-      
+
       // Email validation (optional but must be valid if provided)
       if (supplier.email && supplier.email.trim()) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -445,12 +444,12 @@ export default {
           errors.email = 'Invalid email format'
         }
       }
-      
+
       // Phone validation (optional but must be valid if provided)
-      if (supplier.phone && supplier.phone.trim()) {
+      if (supplier.phone_number && supplier.phone_number.trim()) {
         const phoneRegex = /^[\d\s\+\-\(\)]+$/
-        if (!phoneRegex.test(supplier.phone) || supplier.phone.replace(/\D/g, '').length < 10) {
-          errors.phone = 'Invalid phone format'
+        if (!phoneRegex.test(supplier.phone_number) || supplier.phone_number.replace(/\D/g, '').length < 10) {
+          errors.phone_number = 'Invalid phone format'
         }
       }
       
@@ -458,8 +457,8 @@ export default {
     },
     
     isSupplierValid(supplier) {
-      return supplier.name && 
-             supplier.name.trim() && 
+      return supplier.supplier_name &&
+             supplier.supplier_name.trim() &&
              (!supplier.errors || Object.keys(supplier.errors).length === 0)
     },
     
@@ -473,22 +472,16 @@ export default {
     
     async processImport() {
       this.importing = true
-      
       try {
-        // Get only valid suppliers
-        const suppliersToImport = this.validSuppliers.map(supplier => ({
-          ...supplier,
-          id: Date.now() + Math.random(),
-          purchaseOrders: 0,
-          createdAt: new Date().toISOString().split('T')[0]
-        }))
-        
-        // Simulate API delay
-        await new Promise(resolve => setTimeout(resolve, 1500))
-        
-        this.$emit('save', suppliersToImport)
+        const { api } = await import('@/services/api.js')
+        const created = []
+        for (const supplier of this.validSuppliers) {
+          const { errors, _rowNumber, ...data } = supplier
+          const response = await api.post('/suppliers/', data)
+          created.push(response.data)
+        }
+        this.$emit('save', created)
         this.$emit('close')
-        
       } catch (error) {
         console.error('Error importing suppliers:', error)
         alert('Failed to import suppliers. Please try again.')
@@ -523,11 +516,11 @@ export default {
     
     getStatusClass(status) {
       const classes = {
-        'active': 'bg-success',
-        'pending': 'bg-warning',
-        'inactive': 'bg-danger'
+        'active': 'status-success',
+        'pending': 'status-warning',
+        'inactive': 'status-error'
       }
-      return classes[status] || 'bg-secondary'
+      return classes[status] || ''
     }
   },
   
@@ -557,23 +550,23 @@ export default {
 .modal-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, var(--info-light), var(--info));
+  background-color: var(--status-info-bg);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--info-dark);
+  color: var(--status-info);
 }
 
 .modal-title {
-  color: var(--primary-dark);
+  color: var(--text-primary);
   font-weight: 600;
   margin: 0;
 }
 
 .modal-header {
   padding: 2rem 2rem 1rem 2rem;
-  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  background-color: var(--surface-secondary);
 }
 
 .modal-body {
@@ -587,50 +580,50 @@ export default {
   display: flex;
   align-items: center;
   padding: 1rem;
-  background: var(--neutral-light);
+  background: var(--surface-secondary);
   border-radius: 8px;
-  border: 1px solid var(--neutral-medium);
+  border: 1px solid var(--border-primary);
 }
 
 .info-icon {
   width: 40px;
   height: 40px;
-  background: var(--primary-light);
+  background: var(--surface-tertiary);
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--primary);
+  color: var(--text-accent);
   margin-right: 0.75rem;
   flex-shrink: 0;
 }
 
 .info-content h6 {
   margin-bottom: 0.25rem;
-  color: var(--tertiary-dark);
+  color: var(--text-primary);
   font-weight: 600;
   font-size: 0.9rem;
 }
 
 /* Upload Area */
 .upload-area {
-  border: 2px dashed var(--neutral-medium);
+  border: 2px dashed var(--border-primary);
   border-radius: 12px;
   padding: 3rem 2rem;
   text-align: center;
   cursor: pointer;
   transition: all 0.3s ease;
-  background-color: #fafafa;
+  background-color: var(--surface-secondary);
 }
 
 .upload-area:hover {
-  border-color: var(--primary-light);
-  background-color: var(--primary-light);
+  border-color: var(--border-accent);
+  background-color: var(--state-hover);
 }
 
 .upload-area.dragover {
-  border-color: var(--primary);
-  background-color: var(--primary-light);
+  border-color: var(--border-accent);
+  background-color: var(--state-selected);
   transform: scale(1.02);
 }
 
@@ -639,9 +632,9 @@ export default {
   display: flex;
   align-items: center;
   padding: 1.5rem;
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  background-color: var(--status-info-bg);
   border-radius: 12px;
-  border: 1px solid var(--info-light);
+  border: 1px solid var(--border-accent);
 }
 
 .file-success-icon {
@@ -650,7 +643,7 @@ export default {
 
 .file-info h5 {
   margin-bottom: 0.5rem;
-  color: var(--success-dark);
+  color: var(--status-success);
   font-weight: 600;
 }
 
@@ -663,7 +656,7 @@ export default {
 .detail-item {
   display: flex;
   align-items: center;
-  color: var(--tertiary-medium);
+  color: var(--text-secondary);
   font-size: 0.9rem;
 }
 
@@ -671,7 +664,7 @@ export default {
 .preview-table-container {
   max-height: 200px;
   overflow-y: auto;
-  border: 1px solid var(--neutral-medium);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
 }
 
@@ -681,10 +674,10 @@ export default {
 }
 
 .preview-table-container th {
-  background-color: #f8f9fa;
+  background-color: var(--surface-secondary);
   font-weight: 600;
-  color: var(--tertiary-dark);
-  border-bottom: 2px solid var(--neutral-medium);
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--border-primary);
   position: sticky;
   top: 0;
 }
@@ -694,27 +687,27 @@ export default {
   text-align: center;
   padding: 1rem;
   border-radius: 8px;
-  border: 1px solid var(--neutral-medium);
+  border: 1px solid var(--border-primary);
 }
 
 .summary-card.valid {
-  background: linear-gradient(135deg, #f0f9ff 0%, #dcfce7 100%);
-  border-color: var(--success-light);
+  background-color: var(--status-success-bg);
+  border-color: var(--status-success);
 }
 
 .summary-card.invalid {
-  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-  border-color: var(--error-light);
+  background-color: var(--status-error-bg);
+  border-color: var(--status-error);
 }
 
 .summary-card.duplicates {
-  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
-  border-color: #fbbf24;
+  background-color: var(--status-warning-bg);
+  border-color: var(--status-warning);
 }
 
 .summary-card.will-import {
-  background: linear-gradient(135deg, #f0f9ff 0%, #dbeafe 100%);
-  border-color: var(--primary-light);
+  background-color: var(--status-info-bg);
+  border-color: var(--status-info);
 }
 
 .summary-number {
@@ -724,24 +717,24 @@ export default {
 }
 
 .summary-card.valid .summary-number {
-  color: var(--success);
+  color: var(--status-success);
 }
 
 .summary-card.invalid .summary-number {
-  color: var(--error);
+  color: var(--status-error);
 }
 
 .summary-card.duplicates .summary-number {
-  color: #f59e0b;
+  color: var(--status-warning);
 }
 
 .summary-card.will-import .summary-number {
-  color: var(--primary);
+  color: var(--text-accent);
 }
 
 .summary-label {
   font-size: 0.75rem;
-  color: var(--tertiary-medium);
+  color: var(--text-tertiary);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -751,19 +744,6 @@ export default {
 .badge-sm {
   font-size: 0.75rem;
   padding: 0.25rem 0.5rem;
-}
-
-/* Color classes */
-.text-primary-dark {
-  color: var(--primary-dark) !important;
-}
-
-.text-tertiary-dark {
-  color: var(--tertiary-dark) !important;
-}
-
-.text-tertiary-medium {
-  color: var(--tertiary-medium) !important;
 }
 
 /* Responsive adjustments */

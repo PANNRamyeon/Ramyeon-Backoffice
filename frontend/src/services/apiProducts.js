@@ -30,21 +30,35 @@ class ApiProductsService {
 
   // ================ PRODUCT CRUD OPERATIONS ================
 
-  async getAllProducts(filters = {}) {
+  async getAllProducts(filters = {}, pageToken = null) {
     try {
-      const params = {}
+      const params = { page_size: 100 }
       if (filters.category_id) params.category_id = filters.category_id
       if (filters.subcategory_name) params.subcategory_name = filters.subcategory_name
       if (filters.status) params.status = filters.status
       if (filters.stock_level) params.stock_level = filters.stock_level
       if (filters.search) params.search = filters.search
       if (filters.include_deleted) params.include_deleted = filters.include_deleted
+      if (pageToken) params.page_token = pageToken
 
       const response = await api.get(`${this.basePath}/`, { params })
       return this.handleResponse(response)
     } catch (error) {
       this.handleError(error)
     }
+  }
+
+  async getAllProductsAllPages(filters = {}) {
+    let allProducts = []
+    let pageToken = null
+
+    do {
+      const response = await this.getAllProducts(filters, pageToken)
+      allProducts = allProducts.concat(response.data || [])
+      pageToken = response.next_page_token || null
+    } while (pageToken)
+
+    return allProducts
   }
 
   async getProductById(productId, includeDeleted = false) {
@@ -265,7 +279,7 @@ class ApiProductsService {
   async getProductsByCategory(categoryId, subcategoryName = null) {
     try {
       const params = subcategoryName ? { subcategory_name: subcategoryName } : {}
-      const response = await api.get(`${this.basePath}/reports/by-category/${categoryId}/`, { params })
+      const response = await api.get(`${this.basePath}/category/${categoryId}/`, { params })
       return this.handleResponse(response)
     } catch (error) {
       this.handleError(error)

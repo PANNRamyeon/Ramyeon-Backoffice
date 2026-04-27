@@ -358,8 +358,6 @@
                     <td>{{ formatDate(order.date) }}</td>
                     <td>
                       <div>
-                        {{ order.items?.length || 0 }} item(s)
-                        <br>
                         <small class="order-detail-text">{{ order.quantity }} total quantity</small>
                         <br>
                         <small class="order-detail-text">{{ order.description || 'Various items' }}</small>
@@ -792,10 +790,10 @@ import OrderDetailsModal from '@/components/suppliers/OrderDetailsModal.vue'
 import ActiveOrdersModal from '@/components/suppliers/ActiveOrdersModal.vue'
 import { useToast } from '@/composables/ui/useToast'
 import { useAuth } from '@/composables/auth/useAuth'
-import { useProducts } from '@/composables/api/useProducts'
+import { useShipments } from '@/composables/api/useShipments'
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin'
 
 export default {
   name: 'SupplierDetails',
@@ -844,13 +842,14 @@ export default {
   setup() {
     const { user } = useAuth()
     const { success, error: showError } = useToast()
-    const { fetchProductById } = useProducts()
-    
+    const { fetchShipmentsBySupplier, fetchShipmentWithBatches } = useShipments()
+
     return {
       user,
       success,
       showError,
-      fetchProductById
+      fetchShipmentsBySupplier,
+      fetchShipmentWithBatches
     }
   },
   data() {
@@ -940,43 +939,18 @@ export default {
         
         const backendSupplier = supplierResponse.data
         
-        // ===== STEP 2: Fetch Batches for this Supplier =====
-        let batchesList = []
+        // ===== STEP 2: Fetch Shipments for this Supplier =====
+        let shipmentsList = []
         try {
-          const batchesResponse = await axios.get(
-            `${API_BASE_URL}/batches/by-supplier/${this.supplierId}/`,
-            {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              }
-            }
-          )
-          
-          // Handle different response formats
-          const rawBatches = batchesResponse.data.batches || batchesResponse.data || []
-          
-          // Ensure it's always an array
-          if (Array.isArray(rawBatches)) {
-            batchesList = rawBatches
-          } else if (rawBatches.data && Array.isArray(rawBatches.data)) {
-            batchesList = rawBatches.data
-          } else {
-            console.warn('⚠️ Batches response is not an array:', rawBatches)
-            batchesList = []
-          }
-          
-        } catch (batchesError) {
-          console.error('❌ Error fetching batches:', batchesError)
-          if (batchesError.response?.status === 404) {
-            console.warn('⚠️ Batches endpoint returned 404 - batches will be empty')
-          }
-          batchesList = []
+          shipmentsList = await this.fetchShipmentsBySupplier(this.supplierId)
+        } catch (shipmentsError) {
+          console.error('❌ Error fetching shipments:', shipmentsError)
+          shipmentsList = []
         }
         
         // ===== STEP 3: Map Supplier Data =====
         this.supplier = {
-          id: backendSupplier._id,
+          id: backendSupplier.supplier_id,
           name: backendSupplier.supplier_name,
           contactPerson: backendSupplier.contact_person || '',
           email: backendSupplier.email || '',
@@ -985,22 +959,15 @@ export default {
           purchaseOrders: 0, // Will be set after grouping batches into orders
           status: backendSupplier.isDeleted ? 'inactive' : 'active',
           type: backendSupplier.type || 'food',
-          rating: null, // Will be calculated based on performance metrics
-          isFavorite: false,
+          rating: null,
+          isFavorite: backendSupplier.isFavorite || false,
           notes: backendSupplier.notes || '',
           createdAt: backendSupplier.created_at,
           updatedAt: backendSupplier.updated_at
         }
         
-        // ===== STEP 4: Group Batches by Date to Create "Receipts" =====
-        // Safety check
-        if (!Array.isArray(batchesList)) {
-          console.error('❌ batchesList is not an array:', batchesList)
-          batchesList = []
-        }
-        
-        // If no batches, set empty orders
-        if (batchesList.length === 0) {
+        // If no shipments, set empty orders
+        if (shipmentsList.length === 0) {
           this.orders = []
           this.filteredOrders = []
           this.editableNotes = this.supplier.notes
@@ -1014,133 +981,47 @@ export default {
               date: backendSupplier.updated_at
             }
           ]
-          
           return
         }
-        
-        // Group batches by receipt/order identifier to prevent unrelated orders from merging
-        const getBatchGroupKey = (batch) => {
-          const notes = batch?.notes || ''
-          const receiptMatch = notes.match(/Receipt:\s*([^\|]+)/i)
-          if (receiptMatch) {
-            return `receipt:${receiptMatch[1].trim()}`
-          }
-          if (batch?.batch_number) {
-            return `batch:${batch.batch_number}`
-          }
-          if (batch?.reference_number) {
-            return `reference:${batch.reference_number}`
-          }
-          return `id:${batch?._id || 'unknown'}`
-        }
 
-        const batchesByReceipt = {}
-        batchesList.forEach(batch => {
-          const key = getBatchGroupKey(batch)
-          if (!batchesByReceipt[key]) {
-            batchesByReceipt[key] = []
-          }
-          batchesByReceipt[key].push(batch)
-        })
-        
-        // ===== STEP 4.5: Enrich batches with product details for complete category info =====
-        const enrichedBatchesByReceipt = {}
-        for (const [groupKey, batches] of Object.entries(batchesByReceipt)) {
-          enrichedBatchesByReceipt[groupKey] = await Promise.all(
-            batches.map(async (batch) => {
-              try {
-                // Always fetch product details to get category info (don't rely on batch fields)
-                if (batch.product_id) {
-                  const productResponse = await this.fetchProductById(batch.product_id)
-                  const product = productResponse.data
-                  
-                  if (product) {
-                    return {
-                      ...batch,
-                      // Get product name and category info from product, not from batch
-                      product_name: product.product_name || product.name || 'Unknown Product',
-                      category_id: product.category_id || '',
-                      category_name: product.category_name || '',
-                      subcategory_name: product.subcategory_name || ''
-                    }
-                  }
-                }
-                
-                return batch
-              } catch (err) {
-                console.warn(`Failed to fetch product details for batch ${batch._id}:`, err)
-                return batch
-              }
-            })
-          )
-        }
-        
-        // Convert grouped batches to "orders" format
-        this.orders = Object.values(enrichedBatchesByReceipt).map((batches) => {
-          const totalCost = batches.reduce((sum, b) => sum + ((b.cost_price || 0) * (b.quantity_received || 0)), 0)
-          const totalQuantity = batches.reduce((sum, b) => sum + (b.quantity_received || 0), 0)
-          
-          const firstBatch = batches[0]
-          const createdDate = firstBatch?.created_at ? firstBatch.created_at.split('T')[0] : new Date().toISOString().split('T')[0]
+        // ===== STEP 4: Map shipments directly — batch details loaded on-demand when viewing =====
+        // Avoid N concurrent DynamoDB scans (one per shipment) which throttle read capacity.
+        this.orders = shipmentsList
+          .map(shipment => {
+            const orderDate = shipment.shipment_date?.split('T')[0] || new Date().toISOString().split('T')[0]
+            const itemCount = shipment.total_products || 0
+            const totalCost = shipment.total_cost || 0
+            const freightCost = shipment.freight_cost || 0
 
-          let receiptId = `SR-${createdDate.replace(/-/g, '')}`
-          const firstBatchNotes = batches[0].notes || ''
-          const receiptMatch = firstBatchNotes.match(/Receipt:\s*([^\|]+)/)
-          if (receiptMatch) {
-            receiptId = receiptMatch[1].trim()
-          }
-          
-          // Get expected_delivery_date and date_received from first batch
-          const expectedDate = firstBatch.expected_delivery_date ? 
-            (typeof firstBatch.expected_delivery_date === 'string' ? firstBatch.expected_delivery_date.split('T')[0] : new Date(firstBatch.expected_delivery_date).toISOString().split('T')[0]) : 
-            createdDate
-          const receivedDate = firstBatch.date_received ? 
-            (typeof firstBatch.date_received === 'string' ? firstBatch.date_received.split('T')[0] : new Date(firstBatch.date_received).toISOString().split('T')[0]) : 
-            null
-          
-          return {
-            id: receiptId,
-            date: firstBatch.created_at ? firstBatch.created_at.split('T')[0] : createdDate, // Order date (when PO was created)
-            quantity: totalQuantity,
-            total: totalCost,
-            expectedDate: expectedDate, // Expected delivery date
-            receivedDate: receivedDate, // Actual received date (null for pending)
-            status: this.getReceiptStatus(batches),
-            description: `Order with ${batches.length} item(s)`,
-            notes: firstBatchNotes,
-            priority: 'normal',
-            subtotal: totalCost,
-            tax: 0,
-            shippingCost: 0,
-            taxRate: 0,
-            items: batches.map(batch => ({
-            name: batch.product_name || batch.name || 'Unknown Product',
-              quantity: batch.quantity_received,
-              unit: 'pcs',
-              unitPrice: batch.cost_price || 0,
-              totalPrice: (batch.cost_price || 0) * (batch.quantity_received || 0),
-              notes: batch.notes || '',
-              productId: batch.product_id,
-              product_name: batch.product_name || batch.name || 'Unknown Product', // Add product_name for ActiveOrdersModal
-              batchNumber: batch.batch_number,  // ✅ Pass batch number for activation
-              batchId: batch._id,  // ✅ Pass batch ID 
-              expiryDate: batch.expiry_date,
-              quantityRemaining: batch.quantity_remaining,
-              // ✅ Enhanced category info from product details
-              categoryId: batch.category_id || '',
-              categoryName: batch.category_name || '',
-              subcategoryName: batch.subcategory_name || ''
-            })),
-            orderHistory: [{
-              id: batches[0].created_at,
-              type: 'stock_received',
-              title: 'Stock Received',
-              description: `Received ${batches.length} batch(es) containing ${totalQuantity} units`,
-              user: 'System',
-              date: batches[0].created_at
-            }]
-          }
-        }).sort((a, b) => new Date(b.date) - new Date(a.date))
+            return {
+              id: shipment.shipment_id,
+              date: orderDate,
+              expectedDate: shipment.expected_delivery_date?.split('T')[0] || null,
+              receivedDate: ['received', 'inspected', 'approved'].includes(shipment.status) ? orderDate : null,
+              status: this.mapShipmentStatus(shipment.status),
+              quantity: itemCount,
+              total: totalCost,
+              description: `Order with ${itemCount} item(s)`,
+              notes: shipment.notes || '',
+              priority: 'normal',
+              subtotal: totalCost,
+              tax: 0,
+              shippingCost: freightCost,
+              taxRate: 0,
+              items: [],
+              batchNumber: shipment.batch_number,
+              invoiceNumber: shipment.invoice_number,
+              orderHistory: [{
+                id: shipment.created_at,
+                type: 'stock_ordered',
+                title: 'Order Created',
+                description: `Order with ${itemCount} item(s)`,
+                user: 'System',
+                date: shipment.created_at
+              }]
+            }
+          })
+          .sort((a, b) => new Date(b.date) - new Date(a.date))
         
         // Update total orders count after grouping
         this.supplier.purchaseOrders = this.orders.length
@@ -1173,6 +1054,18 @@ export default {
       } finally {
         this.loading = false
       }
+    },
+
+    mapShipmentStatus(status) {
+      const map = {
+        pending:       'Pending Delivery',
+        received:      'Received',
+        inspected:     'Received',
+        approved:      'Received',
+        quality_issue: 'Received',
+        cancelled:     'Cancelled'
+      }
+      return map[status] || 'Pending Delivery'
     },
 
     getReceiptStatus(batches) {
@@ -1390,17 +1283,17 @@ export default {
         
         const updated = response.data
         this.supplier = {
-          id: updated._id,
+          id: updated.supplier_id,
           name: updated.supplier_name,
           contactPerson: updated.contact_person || '',
           email: updated.email || '',
           phone: updated.phone_number || '',
           address: updated.address || '',
-          purchaseOrders: updated.purchase_orders?.length || 0,
+          purchaseOrders: this.supplier.purchaseOrders,
           status: updated.isDeleted ? 'inactive' : 'active',
           type: updated.type || 'food',
           rating: this.supplier.rating,
-          isFavorite: this.supplier.isFavorite,
+          isFavorite: updated.isFavorite ?? this.supplier.isFavorite,
           notes: updated.notes || '',
           createdAt: updated.created_at,
           updatedAt: updated.updated_at
@@ -2097,15 +1990,6 @@ export default {
         return
       }
 
-      const batchIds = Array.isArray(order.items)
-        ? order.items.map(item => item.batchId).filter(Boolean)
-        : []
-
-      if (batchIds.length === 0) {
-        this.showError('Cannot cancel this order because no batch information was found.')
-        return
-      }
-
       const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || localStorage.getItem('authToken') || sessionStorage.getItem('authToken')
 
       if (!token) {
@@ -2116,18 +2000,16 @@ export default {
       this.cancelingOrderId = order.id
 
       try {
-        await Promise.all(batchIds.map(batchId =>
-          axios.put(
-            `${API_BASE_URL}/batches/${batchId}/`,
-            { status: 'cancelled' },
-            {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              }
+        await axios.put(
+          `${API_BASE_URL}/shipments/${order.id}/`,
+          { status: 'cancelled' },
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
             }
-          )
-        ))
+          }
+        )
 
         const applyStatusUpdate = (list) => {
           if (!Array.isArray(list)) {

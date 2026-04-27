@@ -12,7 +12,7 @@
           ></button>
         </div>
         <div class="modal-body">
-          <p class="mb-4 text-muted">
+          <p class="mb-4 text-secondary">
             Choose the format you want to export your suppliers data:
           </p>
           
@@ -29,7 +29,7 @@
                   </div>
                   <div class="export-details">
                     <h6>Excel</h6>
-                    <small class="text-muted">.xlsx format</small>
+                    <small class="text-secondary">.xlsx format</small>
                   </div>
                 </div>
               </div>
@@ -45,7 +45,7 @@
                   </div>
                   <div class="export-details">
                     <h6>CSV</h6>
-                    <small class="text-muted">.csv format</small>
+                    <small class="text-secondary">.csv format</small>
                   </div>
                 </div>
               </div>
@@ -82,16 +82,16 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button 
-            type="button" 
-            class="btn btn-secondary" 
+          <button
+            type="button"
+            class="btn btn-cancel"
             @click="$emit('close')"
           >
             Cancel
           </button>
-          <button 
-            type="button" 
-            class="btn btn-primary"
+          <button
+            type="button"
+            class="btn btn-export"
             @click="$emit('export')"
             :disabled="!selectedFormat"
           >
@@ -132,22 +132,22 @@ export default {
 /* Export modal styling */
 .export-option {
   padding: 1rem;
-  border: 2px solid var(--neutral-medium);
+  border: 2px solid var(--border-primary);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.3s ease;
   text-align: center;
-  background-color: white;
+  background-color: var(--surface-primary);
 }
 
 .export-option:hover {
-  border-color: var(--primary-light);
-  box-shadow: 0 2px 8px rgba(115, 146, 226, 0.1);
+  border-color: var(--border-accent);
+  box-shadow: 0 2px 8px var(--state-hover);
 }
 
 .export-option.active {
-  border-color: var(--primary);
-  background-color: var(--primary-light);
+  border-color: var(--border-accent);
+  background-color: var(--state-selected);
 }
 
 .export-icon {
@@ -162,32 +162,32 @@ export default {
 }
 
 .export-icon.excel {
-  background-color: #e8f5e8;
-  color: #28a745;
+  background-color: var(--status-success-bg);
+  color: var(--status-success);
 }
 
 .export-icon.csv {
-  background-color: #fff3cd;
-  color: #ffc107;
+  background-color: var(--status-warning-bg);
+  color: var(--status-warning);
 }
 
 .export-details h6 {
   margin-bottom: 0.25rem;
-  color: var(--tertiary-dark);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
 .export-details small {
-  color: var(--tertiary-medium);
+  color: var(--text-secondary);
 }
 
 .form-check-label {
-  color: var(--tertiary-dark);
+  color: var(--text-secondary);
   margin-left: 0.5rem;
 }
 
 .form-check-input:checked {
-  background-color: var(--primary);
-  border-color: var(--primary);
+  background-color: var(--border-accent);
+  border-color: var(--border-accent);
 }
 </style>

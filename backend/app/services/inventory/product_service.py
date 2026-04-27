@@ -52,8 +52,17 @@ class ProductService:
             ValueError: If required data is missing or if creation fails.
         """
         try:
-            # The create_product method on the model already handles validation and creation logic.
-            product = Product.create_product(**data)
+            normalized = dict(data)
+            # Frontend sends 'SKU' (uppercase); model expects 'sku' (lowercase)
+            if 'SKU' in normalized and 'sku' not in normalized:
+                normalized['sku'] = normalized.pop('SKU')
+            # Strip fields that don't belong on the Product model:
+            # - stock/expiry_date: managed via batches
+            # - date_received/supplier_id/batch_number: batch-level fields sent by legacy frontend
+            # - image_uploaded_at: never a model attribute
+            for key in ('stock', 'expiry_date', 'date_received', 'supplier_id', 'batch_number', 'image_uploaded_at'):
+                normalized.pop(key, None)
+            product = Product.create_product(**normalized)
             logger.info(f"Successfully created product {product.sk}")
             Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
             return product

@@ -17,28 +17,28 @@
           </div>
           
           <div v-else-if="suppliers.length === 0" class="text-center py-4">
-            <TrendingUp :size="48" class="text-tertiary-medium mb-3" />
-            <p class="text-tertiary-medium">No top performers found</p>
+            <TrendingUp :size="48" class="text-secondary mb-3" />
+            <p class="text-secondary">No top performers found</p>
           </div>
           
           <div v-else class="row g-3">
-            <div v-for="(supplier, index) in suppliers" :key="supplier.id" class="col-12">
+            <div v-for="(supplier, index) in suppliers" :key="supplier.supplier_id" class="col-12">
               <div :class="['supplier-card surface-card border-theme', index === 0 ? 'supplier-card--highlight' : '']">
                 <div class="card-body p-4">
                   <div class="d-flex align-items-center mb-3">
                     <div class="rank-badge surface-secondary border-theme me-3">
-                      <span class="fw-bold text-primary">#{{ index + 1 }}</span>
+                      <span class="fw-bold text-accent">#{{ index + 1 }}</span>
                     </div>
                     <div class="flex-grow-1">
-                      <h6 class="mb-1 fw-bold text-primary">{{ supplier.name }}</h6>
+                      <h6 class="mb-1 fw-bold text-accent">{{ supplier.supplier_name }}</h6>
                       <p class="text-tertiary-medium mb-0">{{ supplier.email }}</p>
                     </div>
                     <div class="text-end">
                       <div class="d-flex align-items-center mb-1">
-                        <Star :size="16" class="text-warning me-1" :fill="supplier.rating !== 'N/A' ? 'currentColor' : 'none'" />
-                        <span class="fw-bold text-primary">{{ supplier.rating }}</span>
+                        <Star :size="16" class="text-status-warning me-1" :fill="supplier.rating !== 'N/A' ? 'currentColor' : 'none'" />
+                        <span class="fw-bold text-accent">{{ supplier.rating }}</span>
                       </div>
-                      <small class="text-tertiary-medium">{{ supplier.onTimeDelivery }}% on-time</small>
+                      <small class="text-secondary">{{ supplier.onTimeDelivery }}% on-time</small>
                     </div>
                   </div>
                   
@@ -46,36 +46,36 @@
                     <div class="col-6 col-md-3">
                       <div class="stat-card surface-tertiary border-theme text-center">
                         <div class="stat-value text-accent">{{ supplier.totalOrders }}</div>
-                        <small class="text-tertiary-medium">Total Orders</small>
+                        <small class="text-secondary">Total Orders</small>
                       </div>
                     </div>
                     <div class="col-6 col-md-3">
                       <div class="stat-card surface-tertiary border-theme text-center">
                         <div class="stat-value text-accent">₱{{ formatCurrency(supplier.totalValue) }}</div>
-                        <small class="text-tertiary-medium">Total Value</small>
+                        <small class="text-secondary">Total Value</small>
                       </div>
                     </div>
                     <div class="col-6 col-md-3">
                       <div class="stat-card surface-tertiary border-theme text-center">
                         <div class="stat-value text-accent">₱{{ formatCurrency(supplier.averageOrderValue, 2) }}</div>
-                        <small class="text-tertiary-medium">Avg Order</small>
+                        <small class="text-secondary">Avg Order</small>
                       </div>
                     </div>
                     <div class="col-6 col-md-3">
                       <div class="stat-card surface-tertiary border-theme text-center">
-                        <div class="stat-value text-primary">{{ formatDate(supplier.lastOrder) }}</div>
-                        <small class="text-tertiary-medium">Last Order</small>
+                        <div class="stat-value text-accent">{{ formatDate(supplier.lastOrder) }}</div>
+                        <small class="text-secondary">Last Order</small>
                       </div>
                     </div>
                   </div>
                   
                   <div>
-                    <small class="text-tertiary-medium">Top Products:</small>
+                    <small class="text-secondary">Top Products:</small>
                     <div class="mt-2 d-flex flex-wrap gap-2">
                       <span
                         v-for="(product, pIndex) in supplier.topProducts"
                         :key="pIndex"
-                        class="product-pill surface-tertiary border-theme text-primary"
+                        class="product-pill surface-tertiary border-theme text-accent"
                       >
                         {{ getProductDisplayName(product) }}
                       </span>
@@ -87,7 +87,7 @@
           </div>
         </div>
         <div class="modal-footer surface-secondary border-theme">
-          <button type="button" class="btn btn-secondary" @click="$emit('close')">Close</button>
+          <button type="button" class="btn btn-cancel" @click="$emit('close')">Close</button>
         </div>
       </div>
     </div>
@@ -156,10 +156,6 @@ export default {
 <style scoped>
 @import '@/assets/styles/colors.css';
 
-.text-tertiary-medium {
-  color: var(--text-tertiary, var(--tertiary-medium)) !important;
-}
-
 .modal {
   align-items: center;
   justify-content: center;
@@ -197,13 +193,13 @@ export default {
 }
 
 .supplier-card--highlight {
-  border-color: var(--accent);
+  border-color: var(--border-accent);
 }
 
 .supplier-card:hover {
   transform: translateY(-2px);
   box-shadow: none;
-  border-color: var(--accent);
+  border-color: var(--border-accent);
 }
 
 .rank-badge {

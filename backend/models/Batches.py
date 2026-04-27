@@ -276,7 +276,7 @@ class Batch(Model):
     cost_price = NumberAttribute()
     
     # ============= DATE INFORMATION =============
-    expiry_date = FixedUTCDateTimeAttribute()
+    expiry_date = FixedUTCDateTimeAttribute(null=True)
     date_received = FixedUTCDateTimeAttribute()
     
     # ============= SUPPLIER INFORMATION =============
@@ -406,20 +406,35 @@ class Batch(Model):
     @classmethod
     def get_by_shipment_id(cls, shipment_id: str, limit: int = 100) -> list:
         """
-        Get all batches that belong to a shipment (via shipment_id GSI).
-        Returns empty list if shipment_id is None or invalid.
+        Get all batches that belong to a shipment.
+        Uses batch-shipment-id-index GSI; falls back to a filter scan if the index
+        does not exist (e.g. table was created before the GSI was added).
         """
         if not shipment_id or not shipment_id.strip():
             return []
+        if not shipment_id.startswith("SHIP-"):
+            shipment_id = f"SHIP-{shipment_id}"
         try:
-            if not shipment_id.startswith("SHIP-"):
-                shipment_id = f"SHIP-{shipment_id}"
-            return list(cls.shipment_id_index.query(
-                shipment_id,
-                limit=limit
-            ))
+            results = list(cls.shipment_id_index.query(shipment_id, limit=limit))
+            logger.debug("get_by_shipment_id GSI returned %d batch(es) for %s", len(results), shipment_id)
+            return results
         except Exception as e:
-            logger.error(f"Error querying batches for shipment {shipment_id}: {str(e)}")
+            err_msg = str(e).lower()
+            if "index" in err_msg and any(k in err_msg for k in ("not found", "does not have", "specified index", "no such")):
+                logger.warning(
+                    "GSI batch-shipment-id-index missing; falling back to filter scan for shipment_id=%s",
+                    shipment_id,
+                )
+                try:
+                    return list(cls.query(
+                        "batches",
+                        filter_condition=cls.shipment_id == shipment_id,
+                        limit=limit,
+                    ))
+                except Exception as fallback_err:
+                    logger.error("Fallback filter scan for shipment %s failed: %s", shipment_id, fallback_err)
+                    return []
+            logger.error("Error querying batches for shipment %s: %s", shipment_id, e)
             return []
 
     @classmethod
@@ -781,9 +796,12 @@ class Batch(Model):
     
     def _calculate_and_set_status(self):
         """
-        Fully automatic status calculation based on quantity and expiry date
-        This is called after every quantity change
+        Fully automatic status calculation based on quantity and expiry date.
+        Called after every quantity change. Does NOT override 'pending' — a batch
+        stays pending until explicitly activated when its shipment is received.
         """
+        if self.status == "pending":
+            return
         now = _utc_now()
         
         # Check if expired (normalize for naive/aware comparison)
@@ -824,10 +842,10 @@ class Batch(Model):
         exp = _normalize_utc(self.expiry_date)
         return now > exp
     
-    def days_until_expiry(self) -> int:
-        """Calculate days until expiry"""
+    def days_until_expiry(self) -> Optional[int]:
+        """Calculate days until expiry. Returns None if no expiry date."""
         if not self.expiry_date:
-            return float('inf')
+            return None
         now = _utc_now()
         exp = _normalize_utc(self.expiry_date)
         delta = exp - now
@@ -917,7 +935,7 @@ class Batch(Model):
                 "shipment_id": self.shipment_id,
                 "quantity_received": self.quantity_received,
                 "quantity_remaining": self.quantity_remaining,
-                "cost_price": float(self.cost_price) if self.cost_price else None,
+                "cost_price": float(self.cost_price) if self.cost_price is not None else None,
                 "expiry_date": self.expiry_date.isoformat() if self.expiry_date else None,
                 "date_received": self.date_received.isoformat() if self.date_received else None,
                 "supplier_id": self.supplier_id,
