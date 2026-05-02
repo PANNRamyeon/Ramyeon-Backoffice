@@ -52,8 +52,17 @@ class ProductService:
             ValueError: If required data is missing or if creation fails.
         """
         try:
-            # The create_product method on the model already handles validation and creation logic.
-            product = Product.create_product(**data)
+            normalized = dict(data)
+            # Frontend sends 'SKU' (uppercase); model expects 'sku' (lowercase)
+            if 'SKU' in normalized and 'sku' not in normalized:
+                normalized['sku'] = normalized.pop('SKU')
+            # Strip fields that don't belong on the Product model:
+            # - stock/expiry_date: managed via batches
+            # - date_received/supplier_id/batch_number: batch-level fields sent by legacy frontend
+            # - image_uploaded_at: never a model attribute
+            for key in ('stock', 'expiry_date', 'date_received', 'supplier_id', 'batch_number', 'image_uploaded_at'):
+                normalized.pop(key, None)
+            product = Product.create_product(**normalized)
             logger.info(f"Successfully created product {product.sk}")
             Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
             return product
@@ -100,7 +109,9 @@ class ProductService:
     @staticmethod
     def get_products_paginated(page_size: int = DEFAULT_PAGE_SIZE, page_token: str = None):
         """
-        Retrieves a page of active products for pagination.
+        Retrieves a page of all non-deleted products for the admin list.
+        Returns active, low_stock, and out_of_stock products — everything
+        except soft-deleted items.
         Only fetches one page from DynamoDB (no full load).
 
         Returns:
@@ -109,7 +120,7 @@ class ProductService:
         try:
             size = min(max(1, int(page_size)), MAX_PAGE_SIZE)
             last_key = _decode_page_token(page_token)
-            products, next_key = Product.get_all_active_products_paginated(limit=size, last_evaluated_key=last_key)
+            products, next_key = Product.get_all_non_deleted_paginated(limit=size, last_evaluated_key=last_key)
             next_token = _encode_page_token(next_key) if next_key else None
             return products, next_token
         except Exception as e:
@@ -372,6 +383,38 @@ class ProductService:
         except (DeleteError, UpdateError, ValueError) as e:
             logger.error(f"Error deleting product {product_id}: {str(e)}")
             return False
+
+    @staticmethod
+    def bulk_delete_products(product_ids: list, hard_delete: bool = False, deleted_by: str = "system", reason: str = "Bulk deleted via service") -> dict:
+        """
+        Delete multiple products in one call.
+
+        Returns:
+            dict: { success, deleted_count, failed_count, failed_ids }
+        """
+        deleted, failed = 0, []
+        for product_id in product_ids:
+            try:
+                ok = ProductService.delete_product(
+                    product_id,
+                    hard_delete=hard_delete,
+                    deleted_by=deleted_by,
+                    reason=reason,
+                )
+                if ok:
+                    deleted += 1
+                else:
+                    failed.append(product_id)
+            except Exception as e:
+                logger.error(f"bulk_delete_products: failed for {product_id}: {e}")
+                failed.append(product_id)
+
+        return {
+            "success": len(failed) == 0,
+            "deleted_count": deleted,
+            "failed_count": len(failed),
+            "failed_ids": failed,
+        }
 
     # ========== STOCK & METADATA HELPERS ==========
 

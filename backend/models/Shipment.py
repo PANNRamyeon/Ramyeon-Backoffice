@@ -47,7 +47,8 @@ class Shipment(Model):
     batch_number = UnicodeAttribute()  # Supplier's lot number (e.g. LOT-2024-001)
 
     # ============= DATES =============
-    shipment_date = UTCDateTimeAttribute()  # When goods were received
+    shipment_date = UTCDateTimeAttribute()              # When goods were received
+    expected_delivery_date = UTCDateTimeAttribute(null=True)  # When goods are expected
     created_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
     updated_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
 
@@ -58,6 +59,7 @@ class Shipment(Model):
     notes = UnicodeAttribute(null=True)
     received_by = UnicodeAttribute(null=True)
     total_products = NumberAttribute(null=True)  # Number of product batches in this shipment
+    total_cost = NumberAttribute(null=True)      # Sum of (cost_price × quantity_received) across all batches
 
     # ============= CLASS METHODS =============
 
@@ -133,12 +135,14 @@ class Shipment(Model):
                 "supplier_id": self.supplier_id,
                 "batch_number": self.batch_number,
                 "shipment_date": self.shipment_date.isoformat() if self.shipment_date else None,
+                "expected_delivery_date": self.expected_delivery_date.isoformat() if self.expected_delivery_date else None,
                 "invoice_number": self.invoice_number,
                 "status": self.status,
                 "freight_cost": float(self.freight_cost) if self.freight_cost is not None else None,
                 "notes": self.notes,
                 "received_by": self.received_by,
                 "total_products": int(self.total_products) if self.total_products is not None else None,
+                "total_cost": float(self.total_cost) if self.total_cost is not None else None,
                 "created_at": self.created_at.isoformat() if self.created_at else None,
                 "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             }

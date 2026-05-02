@@ -63,10 +63,18 @@ class ShipmentService:
                 except ValueError:
                     shipment_date = None
 
+            expected_delivery_date = shipment_data.get("expected_delivery_date")
+            if isinstance(expected_delivery_date, str):
+                try:
+                    expected_delivery_date = datetime.fromisoformat(expected_delivery_date.replace("Z", "+00:00"))
+                except ValueError:
+                    expected_delivery_date = None
+
             shipment = Shipment.create_shipment(
                 supplier_id=supplier_id,
                 batch_number=batch_number,
                 shipment_date=shipment_date,
+                expected_delivery_date=expected_delivery_date,
                 invoice_number=shipment_data.get("invoice_number"),
                 status=shipment_data.get("status", "received"),
                 freight_cost=shipment_data.get("freight_cost"),
@@ -178,11 +186,17 @@ class ShipmentService:
 
             shipment.updated_at = datetime.utcnow()
             shipment.save()
-            if getattr(shipment, "status", None) == "received":
+            new_status = getattr(shipment, "status", None)
+            if new_status == "received":
                 try:
                     get_singleton(BatchService).activate_batches_for_shipment(shipment_id)
                 except Exception as act_err:
                     logger.warning("Activate batches for shipment %s: %s", shipment_id, act_err)
+            elif new_status == "cancelled":
+                try:
+                    get_singleton(BatchService).cancel_batches_for_shipment(shipment_id)
+                except Exception as cancel_err:
+                    logger.warning("Cancel batches for shipment %s: %s", shipment_id, cancel_err)
             return shipment.to_dict()
         except Exception as e:
             logger.error(f"Error updating shipment {shipment_id}: {e}")

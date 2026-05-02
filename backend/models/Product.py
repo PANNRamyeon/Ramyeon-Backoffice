@@ -752,13 +752,8 @@ class Product(Model):
     def get_all_active_products_paginated(cls, limit: int = 50, last_evaluated_key=None):
         """
         Get a page of active, non-deleted products for pagination.
-
-        Args:
-            limit: Max number of items per page (default 50).
-            last_evaluated_key: DynamoDB key for the next page (from previous response).
-
-        Returns:
-            tuple: (list of Product, next_last_evaluated_key or None).
+        Kept for backwards compatibility — prefer get_all_non_deleted_paginated
+        for the admin product list which must show all statuses.
         """
         try:
             it = cls.query(
@@ -773,6 +768,33 @@ class Product(Model):
         except Exception as e:
             logger.error(
                 "Error getting paginated active products: %s | type=%s",
+                str(e),
+                type(e).__name__,
+                exc_info=True,
+            )
+            _log_products_raw_for_debug(cls, e)
+            return [], None
+
+    @classmethod
+    def get_all_non_deleted_paginated(cls, limit: int = 50, last_evaluated_key=None):
+        """
+        Get a page of all non-deleted products regardless of status.
+        Used by the admin product list so out_of_stock / low_stock products
+        are included alongside active ones.
+        """
+        try:
+            it = cls.query(
+                "products",
+                filter_condition=(cls.isDeleted == False),
+                limit=limit,
+                last_evaluated_key=last_evaluated_key,
+            )
+            result = list(it)
+            next_key = getattr(it, "last_evaluated_key", None)
+            return result, next_key
+        except Exception as e:
+            logger.error(
+                "Error getting paginated non-deleted products: %s | type=%s",
                 str(e),
                 type(e).__name__,
                 exc_info=True,

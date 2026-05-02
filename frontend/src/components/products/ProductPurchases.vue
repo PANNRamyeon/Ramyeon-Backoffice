@@ -7,10 +7,6 @@
           <Filter :size="16" class="me-1" />
           Filter
         </button>
-        <!--<button class="btn btn-export btn-sm" @click="handleExport">
-          <Download :size="16" class="me-1" />
-          Export
-        </button>-->
       </div>
     </div>
 
@@ -19,7 +15,7 @@
       <div class="row g-3">
         <div class="col-md-4">
           <label class="form-label text-secondary">Status</label>
-          <select v-model="filters.status" class="form-select">
+          <select v-model="filters.status" class="form-select input-theme">
             <option :value="null">All Statuses</option>
             <option value="active">Active</option>
             <option value="depleted">Depleted</option>
@@ -29,16 +25,12 @@
         <div class="col-md-4">
           <label class="form-label text-secondary">Expiring Soon</label>
           <div class="d-flex gap-2 align-items-center">
-            <input 
-              type="checkbox" 
-              v-model="filters.expiringSoon" 
-              class="form-check-input"
-            />
-            <input 
+            <input type="checkbox" v-model="filters.expiringSoon" class="form-check-input" />
+            <input
               v-if="filters.expiringSoon"
-              v-model.number="filters.daysAhead" 
-              type="number" 
-              class="form-control form-control-sm"
+              v-model.number="filters.daysAhead"
+              type="number"
+              class="form-control input-theme form-control-sm"
               placeholder="Days"
               min="1"
             />
@@ -75,21 +67,21 @@
       <div class="col-md-3">
         <div class="card-theme p-3">
           <small class="text-tertiary-medium d-block mb-1">Last Purchase</small>
-          <h4 class="text-info mb-0">{{ formatDate(lastPurchaseDate) }}</h4>
+          <h4 class="text-accent mb-0">{{ formatDate(lastPurchaseDate) }}</h4>
         </div>
       </div>
     </div>
 
     <!-- Loading State -->
     <div v-if="loading" class="text-center py-5">
-      <div class="spinner-border text-primary" role="status">
+      <div class="spinner-border text-accent" role="status">
         <span class="visually-hidden">Loading...</span>
       </div>
       <p class="text-tertiary-medium mt-2">Loading purchase history...</p>
     </div>
 
     <!-- Error State -->
-    <div v-else-if="error" class="alert alert-danger" role="alert">
+    <div v-else-if="error" class="status-error" role="alert">
       <strong>Error:</strong> {{ error }}
     </div>
 
@@ -114,7 +106,7 @@
           <th class="text-center">Actions</th>
         </tr>
       </template>
-      
+
       <template #body>
         <tr v-if="paginatedBatches.length === 0">
           <td colspan="9" class="text-center py-4">
@@ -125,7 +117,7 @@
             </div>
           </td>
         </tr>
-        
+
         <tr v-for="batch in paginatedBatches" :key="batch.batch_id">
           <td>
             <span class="fw-semibold text-accent">{{ batch.batch_number }}</span>
@@ -135,14 +127,14 @@
           </td>
           <td>
             <span class="text-secondary" :class="getExpiryClass(batch.expiry_date)">
-              {{ formatDate(batch.expiry_date) }}
+              {{ batch.expiry_date ? formatDate(batch.expiry_date) : 'N/A' }}
             </span>
           </td>
           <td class="text-center">
-            <span class="badge bg-primary">{{ batch.quantity_received || 0 }}</span>
+            <span class="status-badge badge-lg status-badge-neutral">{{ batch.quantity_received || 0 }}</span>
           </td>
           <td class="text-center">
-            <span class="badge" :class="getQuantityBadgeClass(batch)">
+            <span class="status-badge badge-lg" :class="getQuantityBadgeClass(batch)">
               {{ batch.quantity_remaining || 0 }}
             </span>
           </td>
@@ -159,17 +151,17 @@
           </td>
           <td class="text-center">
             <div class="d-flex gap-1 justify-content-center">
-              <button 
+              <button
                 @click="viewDetails(batch)"
-                class="btn btn-outline-primary action-btn action-btn-view"
+                class="btn btn-edit btn-xs"
                 title="View Details"
               >
                 <Eye :size="14" />
               </button>
-              <button 
+              <button
                 v-if="batch.status === 'active'"
                 @click="adjustQuantity(batch)"
-                class="btn btn-outline-secondary action-btn action-btn-edit"
+                class="btn btn-export btn-xs"
                 title="Adjust Quantity"
               >
                 <Edit :size="14" />
@@ -179,263 +171,197 @@
         </tr>
       </template>
     </TableTemplate>
+
     <BatchDetailsModal ref="batchDetailsModal" />
     <StockUpdateModal ref="stockUpdateModal" />
   </div>
 </template>
 
-<script>
+<script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { Filter, Eye, Edit, Package } from 'lucide-vue-next'
 import TableTemplate from '@/components/common/TableTemplate.vue'
+import BatchDetailsModal from '@/components/products/BatchDetailsModal.vue'
+import StockUpdateModal from '@/components/products/StockUpdateModal.vue'
 import { useBatches } from '@/composables/api/useBatches'
 
-// ✅ Import the new BatchDetailsModal
-import BatchDetailsModal from '@/components/products/BatchDetailsModal.vue'
+const props = defineProps({
+  productId: { type: String, required: true },
+  product: { type: Object, required: true }
+})
 
-// ✅ Import your existing StockUpdateModal
-import StockUpdateModal from '@/components/products/StockUpdateModal.vue'
+const { batches, loading, error, filters, hasActiveFilters, fetchBatchesByProduct, clearFilters } = useBatches()
 
-export default {
-  name: 'ProductPurchases',
-  components: {
-    TableTemplate,
-    BatchDetailsModal,
-    StockUpdateModal
-  },
-  props: {
-    productId: {
-      type: String,
-      required: true
-    },
-    product: {        // ✅ NEW
-      type: Object,
-      required: true
+const currentPage = ref(1)
+const itemsPerPage = 10
+const showFilters = ref(false)
+const batchDetailsModal = ref(null)
+const stockUpdateModal = ref(null)
+
+const ACTIVE_STATUSES = new Set(['active', 'low_stock', 'expiring_soon'])
+
+const sortedBatches = computed(() => {
+  return [...batches.value].sort((a, b) => {
+    // Priority 1: active batches on top, depleted/cancelled/exhausted/expired on bottom
+    const aActive = ACTIVE_STATUSES.has(a.status) ? 0 : 1
+    const bActive = ACTIVE_STATUSES.has(b.status) ? 0 : 1
+    if (aActive !== bActive) return aActive - bActive
+
+    // Priority 2: closest expiry first (no expiry goes after batches that have one)
+    const aHasExpiry = !!a.expiry_date
+    const bHasExpiry = !!b.expiry_date
+    if (aHasExpiry && bHasExpiry) {
+      const expiryDiff = new Date(a.expiry_date) - new Date(b.expiry_date)
+      if (expiryDiff !== 0) return expiryDiff
+    } else if (aHasExpiry !== bHasExpiry) {
+      return aHasExpiry ? -1 : 1
     }
-  },
-  setup(props) {
-    // --- Composables ---
-    const {
-      batches,
-      loading,
-      error,
-      filters,
-      hasActiveFilters,
-      fetchBatchesByProduct,
-      clearFilters
-    } = useBatches()
 
-    // --- Pagination ---
-    const currentPage = ref(1)
-    const itemsPerPage = 10
-    const showFilters = ref(false)
+    // Priority 3: oldest purchase date first (FIFO)
+    return new Date(a.date_received) - new Date(b.date_received)
+  })
+})
 
-    // --- Modal Refs ---
-    const batchDetailsModal = ref(null)
-    const stockUpdateModal = ref(null)
+const paginatedBatches = computed(() => {
+  const start = (currentPage.value - 1) * itemsPerPage
+  return sortedBatches.value.slice(start, start + itemsPerPage)
+})
 
-    // --- Set initial product filter ---
-    filters.productId = props.productId
-
-    // --- Computed Data ---
-    const paginatedBatches = computed(() => {
-      const start = (currentPage.value - 1) * itemsPerPage
-      const end = start + itemsPerPage
-      return batches.value.slice(start, end)
+const totalActiveQuantity = computed(() => {
+  const now = new Date()
+  return batches.value
+    .filter(b => {
+      if (b.status !== 'active') return false
+      if (b.expiry_date && new Date(b.expiry_date) < now) return false
+      return true
     })
+    .reduce((sum, b) => sum + (b.quantity_remaining || 0), 0)
+})
 
-    const totalActiveQuantity = computed(() => {
-      const now = new Date()
-      return batches.value
-        .filter(batch => {
-          // Only count active batches that are not expired
-          if (batch.status !== 'active') return false
-          
-          // Exclude expired batches based on expiry_date
-          if (batch.expiry_date) {
-            const expiryDate = new Date(batch.expiry_date)
-            if (expiryDate < now) return false
-          }
-          
-          return true
-        })
-        .reduce((sum, batch) => sum + (batch.quantity_remaining || 0), 0)
-    })
+const totalCost = computed(() =>
+  batches.value.reduce((sum, b) => sum + ((b.cost_price || 0) * (b.quantity_received || 0)), 0)
+)
 
-    const totalCost = computed(() => {
-      return batches.value.reduce((sum, batch) => {
-        const batchCost = (batch.cost_price || 0) * (batch.quantity_received || 0)
-        return sum + batchCost
-      }, 0)
-    })
+const lastPurchaseDate = computed(() => {
+  if (!batches.value.length) return null
+  return [...batches.value].sort((a, b) => new Date(b.date_received) - new Date(a.date_received))[0]?.date_received
+})
 
-    const lastPurchaseDate = computed(() => {
-      if (batches.value.length === 0) return null
-      const sorted = [...batches.value].sort((a, b) =>
-        new Date(b.date_received) - new Date(a.date_received)
-      )
-      return sorted[0]?.date_received
-    })
+const calculateTotalCost = (batch) => (batch.cost_price || 0) * (batch.quantity_received || 0)
 
-    // --- Utility Functions ---
-    const calculateTotalCost = (batch) => {
-      return (batch.cost_price || 0) * (batch.quantity_received || 0)
-    }
+const formatDate = (dateString) => {
+  if (!dateString) return 'N/A'
+  try {
+    return new Date(dateString).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
+  } catch { return 'N/A' }
+}
 
-    const formatDate = (dateString) => {
-      if (!dateString) return 'N/A'
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      })
-    }
+const formatPrice = (price) => parseFloat(price || 0).toFixed(2)
 
-    const formatPrice = (price) => parseFloat(price || 0).toFixed(2)
+const formatStatus = (status) =>
+  status ? status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ') : 'Unknown'
 
-    const formatStatus = (status) =>
-      status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown'
+const getStatusBadgeClass = (status) => ({
+  active: 'status-badge status-badge-success',
+  low_stock: 'status-badge status-badge-warning',
+  expiring_soon: 'status-badge status-badge-warning',
+  depleted: 'status-badge status-badge-neutral',
+  expired: 'status-badge status-badge-danger',
+  exhausted: 'status-badge status-badge-neutral'
+}[status] || 'status-badge status-badge-neutral')
 
-    const getStatusBadgeClass = (status) => {
-      const statusClasses = {
-        'active': 'badge bg-success',
-        'depleted': 'badge bg-warning',
-        'expired': 'badge bg-danger'
-      }
-      return statusClasses[status] || 'badge bg-secondary'
-    }
+const getQuantityBadgeClass = (batch) => {
+  if (batch.status === 'depleted' || batch.status === 'exhausted') return 'status-badge-danger'
+  if (batch.status === 'expired') return 'status-badge-neutral'
+  const pct = ((batch.quantity_remaining || 0) / (batch.quantity_received || 1)) * 100
+  if (pct <= 20) return 'status-badge-danger'
+  if (pct <= 50) return 'status-badge-warning'
+  return 'status-badge-success'
+}
 
-    const getQuantityBadgeClass = (batch) => {
-      if (batch.status === 'depleted') return 'bg-danger'
-      if (batch.status === 'expired') return 'bg-secondary'
+const getExpiryClass = (expiryDate) => {
+  if (!expiryDate) return ''
+  const days = Math.ceil((new Date(expiryDate) - new Date()) / (1000 * 60 * 60 * 24))
+  if (days < 0) return 'text-error'
+  if (days <= 7) return 'text-warning'
+  return ''
+}
 
-      const percentage = ((batch.quantity_remaining || 0) / (batch.quantity_received || 1)) * 100
-      if (percentage <= 20) return 'bg-danger'
-      if (percentage <= 50) return 'bg-warning'
-      return 'bg-success'
-    }
+const handlePageChange = (page) => { currentPage.value = page }
+const toggleFilters = () => { showFilters.value = !showFilters.value }
+const handleClearFilters = () => {
+  clearFilters()
+  showFilters.value = false
+  loadData()
+}
 
-    const getExpiryClass = (expiryDate) => {
-      if (!expiryDate) return ''
-      const now = new Date()
-      const expiry = new Date(expiryDate)
-      const daysUntilExpiry = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24))
-      if (daysUntilExpiry < 0) return 'text-error'
-      if (daysUntilExpiry <= 7) return 'text-warning'
-      return ''
-    }
+const viewDetails = (batch) => batchDetailsModal.value?.open(batch)
+const adjustQuantity = () => stockUpdateModal.value?.openStock?.(props.product)
 
-    // --- Table Pagination & Filters ---
-    const handlePageChange = (page) => {
-      currentPage.value = page
-    }
-
-    const toggleFilters = () => {
-      showFilters.value = !showFilters.value
-    }
-
-    const handleClearFilters = () => {
-      clearFilters()
-      filters.productId = props.productId // keep product context
-      showFilters.value = false
-    }
-
-    // --- Actions ---
-    const handleExport = () => {
-      // Optional: Connect to CSV export logic here
-    }
-
-    const viewDetails = (batch) => {
-      // ✅ Opens batch details modal
-      batchDetailsModal.value?.open(batch)
-    }
-
-    const adjustQuantity = () => {
-      stockUpdateModal.value?.openStock?.(props.product)
-    }
-
-    // --- Data Initialization ---
-    const loadData = async () => {
-      try {
-        await fetchBatchesByProduct(props.productId)
-      } catch (err) {
-        console.error('Failed to load batches:', err)
-      }
-    }
-
-    // Watch for product changes
-    watch(() => props.productId, (newId) => {
-      if (newId) {
-        filters.productId = newId
-        currentPage.value = 1
-        loadData()
-      }
-    })
-
-    onMounted(() => {
-      loadData()
-    })
-
-    return {
-      // State
-      batches,
-      loading,
-      error,
-      filters,
-      hasActiveFilters,
-      currentPage,
-      itemsPerPage,
-      showFilters,
-
-      // Modals
-      batchDetailsModal,
-      stockUpdateModal,
-
-      // Computed
-      paginatedBatches,
-      totalActiveQuantity,
-      totalCost,
-      lastPurchaseDate,
-
-      // Methods
-      calculateTotalCost,
-      formatDate,
-      formatPrice,
-      formatStatus,
-      getStatusBadgeClass,
-      getQuantityBadgeClass,
-      getExpiryClass,
-      handlePageChange,
-      toggleFilters,
-      handleClearFilters,
-      handleExport,
-      viewDetails,
-      adjustQuantity
-    }
+const loadData = async () => {
+  try {
+    await fetchBatchesByProduct(props.productId)
+  } catch (err) {
+    console.error('Failed to load batches:', err)
   }
 }
+
+watch(() => props.productId, (newId) => {
+  if (newId) {
+    currentPage.value = 1
+    loadData()
+  }
+})
+
+onMounted(() => loadData())
 </script>
 
-
 <style scoped>
+.badge-lg {
+  font-size: 1rem;
+  padding: 0.35em 0.85em;
+  font-weight: 700;
+  min-width: 2.5rem;
+  text-align: center;
+}
+
 .purchases-container {
   padding: 1.5rem;
 }
 
-.form-check-input {
-  cursor: pointer;
-  margin-top: 0;
+.status-badge {
+  display: inline-block;
+  padding: 0.2em 0.6em;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  line-height: 1.4;
 }
 
-.opacity-50 {
-  opacity: 0.5;
+.status-badge-success {
+  background-color: color-mix(in srgb, var(--status-success, #16a34a) 15%, transparent);
+  color: var(--status-success, #16a34a);
 }
 
-/* Utility classes for dynamic text colors */
-.text-warning {
-  color: var(--status-warning) !important;
+.status-badge-warning {
+  background-color: color-mix(in srgb, var(--status-warning, #f59e0b) 15%, transparent);
+  color: var(--status-warning, #f59e0b);
 }
 
-.text-error {
-  color: var(--status-error) !important;
+.status-badge-danger {
+  background-color: color-mix(in srgb, var(--status-error, #dc2626) 15%, transparent);
+  color: var(--status-error, #dc2626);
+}
+
+.status-badge-neutral {
+  background-color: var(--surface-tertiary);
+  color: var(--text-tertiary);
+}
+
+.opacity-50 { opacity: 0.5; }
+
+.btn-xs {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.75rem;
 }
 </style>

@@ -20,7 +20,6 @@ class ShipmentView(View):
     def __init__(self):
         super().__init__()
         self.shipment_service = get_singleton(ShipmentService)
-        self.supplier_service = SupplierService()
 
     @method_decorator(csrf_exempt)
     def dispatch(self, request, *args, **kwargs):
@@ -63,11 +62,7 @@ class ShipmentListView(ShipmentView):
                         'error': f'Missing required field: {field}',
                     }, status=400)
             if data.get('supplier_id'):
-                supplier = self.supplier_service.get_supplier_by_id(
-                    data['supplier_id'],
-                    include_deleted=False,
-                    include_batch_stats=False,
-                )
+                supplier = get_singleton(SupplierService).get_supplier_by_id(data['supplier_id'])
                 if not supplier:
                     return JsonResponse({
                         'success': False,

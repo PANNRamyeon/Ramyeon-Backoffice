@@ -10,7 +10,7 @@
             </div>
             <div>
               <h4 class="modal-title mb-1">Bulk Add Suppliers</h4>
-              <p class="text-muted mb-0 small">Add multiple suppliers efficiently (5-20 suppliers recommended)</p>
+              <p class="text-secondary mb-0 small">Add multiple suppliers efficiently (5-20 suppliers recommended)</p>
             </div>
           </div>
           <button 
@@ -57,8 +57,8 @@
                   </div>
                   <div class="method-details">
                     <h6>Manual Entry</h6>
-                    <p class="text-muted mb-0">Fill out a form with multiple supplier rows</p>
-                    <small class="text-success">✓ Easy to use</small>
+                    <p class="text-secondary mb-0">Fill out a form with multiple supplier rows</p>
+                    <small class="text-status-success">✓ Easy to use</small>
                   </div>
                 </div>
               </div>
@@ -74,16 +74,16 @@
                   </div>
                   <div class="method-details">
                     <h6>Use Template</h6>
-                    <p class="text-muted mb-0">Download template, fill it out, then upload</p>
-                    <small class="text-info">✓ Best for many suppliers</small>
+                    <p class="text-secondary mb-0">Download template, fill it out, then upload</p>
+                    <small class="text-status-info">✓ Best for many suppliers</small>
                   </div>
                 </div>
               </div>
             </div>
 
             <div class="mt-4 d-flex justify-content-end">
-              <button 
-                class="btn btn-primary"
+              <button
+                class="btn btn-add"
                 @click="proceedToStep2"
                 :disabled="!selectedMethod"
               >
@@ -100,16 +100,16 @@
               <div class="d-flex justify-content-between align-items-center mb-4">
                 <h5 class="mb-0">Add Supplier Information</h5>
                 <div class="d-flex gap-2">
-                  <button 
-                    class="btn btn-outline-success btn-sm"
+                  <button
+                    class="btn btn-add btn-sm"
                     @click="addSupplierRow"
                     :disabled="suppliers.length >= 20"
                   >
                     <Plus :size="16" class="me-1" />
                     Add Row
                   </button>
-                  <button 
-                    class="btn btn-outline-primary btn-sm"
+                  <button
+                    class="btn btn-view btn-sm"
                     @click="fillSampleData"
                   >
                     <Lightbulb :size="16" class="me-1" />
@@ -124,12 +124,11 @@
                     <thead class="table-light sticky-top">
                       <tr>
                         <th style="width: 40px;">#</th>
-                        <th style="width: 200px;">Company Name <span class="text-danger">*</span></th>
+                        <th style="width: 200px;">Company Name <span class="text-status-error">*</span></th>
                         <th style="width: 150px;">Contact Person</th>
                         <th style="width: 180px;">Email</th>
                         <th style="width: 150px;">Phone</th>
                         <th style="width: 130px;">Type</th>
-                        <th style="width: 100px;">Status</th>
                         <th style="width: 40px;">Actions</th>
                       </tr>
                     </thead>
@@ -146,13 +145,13 @@
                           <input 
                             type="text" 
                             class="form-control form-control-sm"
-                            :class="{ 'is-invalid': supplier.errors?.name }"
-                            v-model="supplier.name"
+                            :class="{ 'is-invalid': supplier.errors?.supplier_name }"
+                            v-model="supplier.supplier_name"
                             @input="validateSupplier(index)"
                             placeholder="Company name"
                           >
-                          <div v-if="supplier.errors?.name" class="invalid-feedback">
-                            {{ supplier.errors.name }}
+                          <div v-if="supplier.errors?.supplier_name" class="invalid-feedback">
+                            {{ supplier.errors.supplier_name }}
                           </div>
                         </td>
                         
@@ -161,7 +160,7 @@
                           <input 
                             type="text" 
                             class="form-control form-control-sm"
-                            v-model="supplier.contactPerson"
+                            v-model="supplier.contact_person"
                             placeholder="Contact name"
                           >
                         </td>
@@ -186,13 +185,13 @@
                           <input 
                             type="tel" 
                             class="form-control form-control-sm"
-                            :class="{ 'is-invalid': supplier.errors?.phone }"
-                            v-model="supplier.phone"
+                            :class="{ 'is-invalid': supplier.errors?.phone_number }"
+                            v-model="supplier.phone_number"
                             @input="validateSupplier(index)"
                             placeholder="+63 912 345 6789"
                           >
-                          <div v-if="supplier.errors?.phone" class="invalid-feedback">
-                            {{ supplier.errors.phone }}
+                          <div v-if="supplier.errors?.phone_number" class="invalid-feedback">
+                            {{ supplier.errors.phone_number }}
                           </div>
                         </td>
                         
@@ -212,22 +211,10 @@
                           </select>
                         </td>
                         
-                        <!-- Status -->
-                        <td>
-                          <select 
-                            class="form-select form-select-sm" 
-                            v-model="supplier.status"
-                          >
-                            <option value="active">Active</option>
-                            <option value="pending">Pending</option>
-                            <option value="inactive">Inactive</option>
-                          </select>
-                        </td>
-                        
                         <!-- Actions -->
                         <td class="text-center">
-                          <button 
-                            class="btn btn-outline-danger btn-sm"
+                          <button
+                            class="btn btn-delete btn-sm"
                             @click="removeSupplierRow(index)"
                             :disabled="suppliers.length <= 1"
                             title="Remove row"
@@ -242,7 +229,7 @@
               </div>
 
               <div class="mt-3">
-                <small class="text-muted">
+                <small class="text-secondary">
                   <Info :size="14" class="me-1" />
                   You can add up to 20 suppliers at once. Required fields are marked with *
                 </small>
@@ -258,14 +245,14 @@
                      @dragleave="isDragOver = false">
                   
                   <div v-if="!uploadedFile">
-                    <Upload :size="48" class="text-muted mb-3" />
+                    <Upload :size="48" class="text-secondary mb-3" />
                     <h5>Upload Your Supplier Data</h5>
-                    <p class="text-muted mb-4">
+                    <p class="text-secondary mb-4">
                       First, download our template, fill it out, then upload it here
                     </p>
-                    
+
                     <div class="d-flex justify-content-center gap-3 mb-4">
-                      <button class="btn btn-outline-primary" @click="downloadTemplate">
+                      <button class="btn btn-export" @click="downloadTemplate">
                         <Download :size="16" class="me-1" />
                         Download Template
                       </button>
@@ -277,34 +264,34 @@
                         accept=".csv,.xlsx,.xls"
                         style="display: none;"
                       >
-                      <button class="btn btn-primary" @click="$refs.fileInput.click()">
+                      <button class="btn btn-add" @click="$refs.fileInput.click()">
                         <Upload :size="16" class="me-1" />
                         Choose File
                       </button>
                     </div>
                     
-                    <small class="text-muted">
+                    <small class="text-secondary">
                       Supported formats: CSV, Excel (.xlsx, .xls) • Max file size: 5MB
                     </small>
                   </div>
                   
                   <div v-else class="uploaded-file-info">
-                    <CheckCircle :size="48" class="text-success mb-3" />
+                    <CheckCircle :size="48" class="text-status-success mb-3" />
                     <h5>File Uploaded Successfully!</h5>
-                    <p class="text-muted mb-3">
+                    <p class="text-secondary mb-3">
                       <FileText :size="16" class="me-1" />
                       {{ uploadedFile.name }} ({{ formatFileSize(uploadedFile.size) }})
                     </p>
-                    <p class="text-success mb-3">
+                    <p class="text-status-success mb-3">
                       <strong>{{ parsedSuppliers.length }}</strong> suppliers found
                     </p>
-                    
+
                     <div class="d-flex justify-content-center gap-2">
-                      <button class="btn btn-outline-secondary" @click="clearUploadedFile">
+                      <button class="btn btn-cancel" @click="clearUploadedFile">
                         <X :size="16" class="me-1" />
                         Remove File
                       </button>
-                      <button class="btn btn-success" @click="useUploadedData">
+                      <button class="btn btn-save" @click="useUploadedData">
                         <Check :size="16" class="me-1" />
                         Use This Data
                       </button>
@@ -316,12 +303,12 @@
 
             <!-- Navigation Buttons -->
             <div class="mt-4 d-flex justify-content-between">
-              <button class="btn btn-outline-secondary" @click="currentStep = 1">
+              <button class="btn btn-cancel" @click="currentStep = 1">
                 <ChevronLeft :size="16" class="me-1" />
                 Back
               </button>
-              <button 
-                class="btn btn-primary"
+              <button
+                class="btn btn-view"
                 @click="proceedToStep3"
                 :disabled="!canProceedToStep3"
               >
@@ -339,25 +326,25 @@
             <div class="row mb-4">
               <div class="col-md-3">
                 <div class="stat-card">
-                  <div class="stat-number text-primary">{{ validSuppliers.length }}</div>
+                  <div class="stat-number text-accent">{{ validSuppliers.length }}</div>
                   <div class="stat-label">Valid Suppliers</div>
                 </div>
               </div>
               <div class="col-md-3">
                 <div class="stat-card">
-                  <div class="stat-number text-danger">{{ invalidSuppliers.length }}</div>
+                  <div class="stat-number text-status-error">{{ invalidSuppliers.length }}</div>
                   <div class="stat-label">With Errors</div>
                 </div>
               </div>
               <div class="col-md-3">
                 <div class="stat-card">
-                  <div class="stat-number text-warning">{{ duplicateCount }}</div>
+                  <div class="stat-number text-status-warning">{{ duplicateCount }}</div>
                   <div class="stat-label">Potential Duplicates</div>
                 </div>
               </div>
               <div class="col-md-3">
                 <div class="stat-card">
-                  <div class="stat-number text-success">{{ suppliersToSave.length }}</div>
+                  <div class="stat-number text-status-success">{{ suppliersToSave.length }}</div>
                   <div class="stat-label">Will Be Added</div>
                 </div>
               </div>
@@ -392,31 +379,31 @@
                       :class="getSupplierRowClass(supplier)"
                     >
                       <td>
-                        <span v-if="isSupplierValid(supplier)" class="badge bg-success">
+                        <span v-if="isSupplierValid(supplier)" class="badge status-success">
                           <Check :size="12" class="me-1" />
                           Valid
                         </span>
-                        <span v-else class="badge bg-danger">
+                        <span v-else class="badge status-error">
                           <X :size="12" class="me-1" />
                           Error
                         </span>
                       </td>
-                      <td>{{ supplier.name || '-' }}</td>
-                      <td>{{ supplier.contactPerson || '-' }}</td>
+                      <td>{{ supplier.supplier_name || '-' }}</td>
+                      <td>{{ supplier.contact_person || '-' }}</td>
                       <td>{{ supplier.email || '-' }}</td>
-                      <td>{{ supplier.phone || '-' }}</td>
+                      <td>{{ supplier.phone_number || '-' }}</td>
                       <td>{{ getTypeLabel(supplier.type) }}</td>
                       <td>
                         <div v-if="supplier.errors && Object.keys(supplier.errors).length > 0">
-                          <small 
-                            v-for="(error, field) in supplier.errors" 
+                          <small
+                            v-for="(error, field) in supplier.errors"
                             :key="field"
-                            class="d-block text-danger"
+                            class="d-block text-status-error"
                           >
                             {{ error }}
                           </small>
                         </div>
-                        <span v-else class="text-muted">-</span>
+                        <span v-else class="text-secondary">-</span>
                       </td>
                     </tr>
                   </tbody>
@@ -426,17 +413,17 @@
 
             <!-- Navigation Buttons -->
             <div class="mt-4 d-flex justify-content-between">
-              <button class="btn btn-outline-secondary" @click="currentStep = 2">
+              <button class="btn btn-cancel" @click="currentStep = 2">
                 <ChevronLeft :size="16" class="me-1" />
                 Back to Edit
               </button>
               <div class="d-flex gap-2">
-                <button class="btn btn-outline-primary" @click="validateAllSuppliers">
+                <button class="btn btn-refresh" @click="validateAllSuppliers">
                   <RefreshCw :size="16" class="me-1" />
                   Re-validate
                 </button>
-                <button 
-                  class="btn btn-success"
+                <button
+                  class="btn btn-save"
                   @click="saveBulkSuppliers"
                   :disabled="suppliersToSave.length === 0 || saving"
                   :class="{ 'btn-loading': saving }"
@@ -527,7 +514,7 @@ export default {
   computed: {
     canProceedToStep3() {
       if (this.selectedMethod === 'manual') {
-        return this.suppliers.some(s => s.name && s.name.trim())
+        return this.suppliers.some(s => s.supplier_name && s.supplier_name.trim())
       } else if (this.selectedMethod === 'template') {
         return this.uploadedFile && this.parsedSuppliers.length > 0
       }
@@ -539,12 +526,12 @@ export default {
     },
     
     invalidSuppliers() {
-      return this.suppliers.filter(s => !this.isSupplierValid(s) && (s.name || s.email || s.phone))
+      return this.suppliers.filter(s => !this.isSupplierValid(s) && (s.supplier_name || s.email || s.phone_number))
     },
-    
+
     duplicateCount() {
       // Simple duplicate detection based on name or email
-      const names = this.suppliers.map(s => s.name?.toLowerCase()).filter(Boolean)
+      const names = this.suppliers.map(s => s.supplier_name?.toLowerCase()).filter(Boolean)
       const emails = this.suppliers.map(s => s.email?.toLowerCase()).filter(Boolean)
       
       const duplicateNames = names.filter((name, index) => names.indexOf(name) !== index).length
@@ -554,19 +541,18 @@ export default {
     },
     
     suppliersToSave() {
-      return this.validSuppliers.filter(s => s.name && s.name.trim())
+      return this.validSuppliers.filter(s => s.supplier_name && s.supplier_name.trim())
     }
   },
   methods: {
     createEmptySupplier() {
       return {
-        name: '',
-        contactPerson: '',
+        supplier_name: '',
+        contact_person: '',
         email: '',
-        phone: '',
+        phone_number: '',
         address: '',
         type: '',
-        status: 'active',
         notes: '',
         errors: {}
       }
@@ -604,35 +590,32 @@ export default {
     fillSampleData() {
       this.suppliers = [
         {
-          name: 'ABC Food Distributors',
-          contactPerson: 'Maria Santos',
+          supplier_name: 'ABC Food Distributors',
+          contact_person: 'Maria Santos',
           email: 'maria@abcfood.com',
-          phone: '+63 917 123 4567',
+          phone_number: '+63 917 123 4567',
           address: '123 Food Street, Manila',
           type: 'food',
-          status: 'active',
           notes: 'Primary food supplier',
           errors: {}
         },
         {
-          name: 'XYZ Packaging Solutions',
-          contactPerson: 'Carlos Rivera',
+          supplier_name: 'XYZ Packaging Solutions',
+          contact_person: 'Carlos Rivera',
           email: 'carlos@xyzpack.com',
-          phone: '+63 922 987 6543',
+          phone_number: '+63 922 987 6543',
           address: '456 Package Ave, Quezon City',
           type: 'packaging',
-          status: 'active',
           notes: 'Eco-friendly packaging',
           errors: {}
         },
         {
-          name: 'Tech Equipment Pro',
-          contactPerson: 'Ana Lopez',
+          supplier_name: 'Tech Equipment Pro',
+          contact_person: 'Ana Lopez',
           email: 'ana@techequip.com',
-          phone: '+63 933 555 0123',
+          phone_number: '+63 933 555 0123',
           address: '789 Tech Blvd, Makati',
           type: 'equipment',
-          status: 'pending',
           notes: 'Kitchen equipment specialist',
           errors: {}
         }
@@ -646,12 +629,12 @@ export default {
       const errors = {}
       
       // Name validation
-      if (!supplier.name || !supplier.name.trim()) {
-        errors.name = 'Company name is required'
-      } else if (supplier.name.trim().length < 2) {
-        errors.name = 'Name must be at least 2 characters'
+      if (!supplier.supplier_name || !supplier.supplier_name.trim()) {
+        errors.supplier_name = 'Company name is required'
+      } else if (supplier.supplier_name.trim().length < 2) {
+        errors.supplier_name = 'Name must be at least 2 characters'
       }
-      
+
       // Email validation (optional but must be valid if provided)
       if (supplier.email) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -659,12 +642,12 @@ export default {
           errors.email = 'Invalid email format'
         }
       }
-      
+
       // Phone validation (optional but must be valid if provided)
-      if (supplier.phone) {
+      if (supplier.phone_number) {
         const phoneRegex = /^[\d\s\+\-\(\)]+$/
-        if (!phoneRegex.test(supplier.phone) || supplier.phone.replace(/\D/g, '').length < 10) {
-          errors.phone = 'Invalid phone format'
+        if (!phoneRegex.test(supplier.phone_number) || supplier.phone_number.replace(/\D/g, '').length < 10) {
+          errors.phone_number = 'Invalid phone format'
         }
       }
       
@@ -678,15 +661,15 @@ export default {
     },
     
     isSupplierValid(supplier) {
-      return supplier.name && 
-             supplier.name.trim() && 
+      return supplier.supplier_name &&
+             supplier.supplier_name.trim() &&
              (!supplier.errors || Object.keys(supplier.errors).length === 0)
     },
-    
+
     getSupplierRowClass(supplier) {
       if (this.isSupplierValid(supplier)) {
         return 'table-success'
-      } else if (supplier.name || supplier.email || supplier.phone) {
+      } else if (supplier.supplier_name || supplier.email || supplier.phone_number) {
         return 'table-danger'
       }
       return ''
@@ -756,14 +739,13 @@ export default {
             .map(line => {
               const values = line.split(',').map(v => v.replace(/"/g, '').trim())
               return {
-                name: values[0] || '',
-                contactPerson: values[1] || '',
+                supplier_name: values[0] || '',
+                contact_person: values[1] || '',
                 email: values[2] || '',
-                phone: values[3] || '',
+                phone_number: values[3] || '',
                 address: values[4] || '',
                 type: values[5] || '',
-                status: values[6] || 'active',
-                notes: values[7] || '',
+                notes: values[6] || '',
                 errors: {}
               }
             })
@@ -800,21 +782,16 @@ export default {
     
     async saveBulkSuppliers() {
       this.saving = true
-      
       try {
-        // Simulate API call
-        await new Promise(resolve => setTimeout(resolve, 2000))
-        
-        const suppliersToAdd = this.suppliersToSave.map(supplier => ({
-          ...supplier,
-          id: Date.now() + Math.random(),
-          purchaseOrders: 0,
-          createdAt: new Date().toISOString().split('T')[0]
-        }))
-        
-        this.$emit('save', suppliersToAdd)
+        const { api } = await import('@/services/api.js')
+        const created = []
+        for (const supplier of this.suppliersToSave) {
+          const { errors, ...data } = supplier
+          const response = await api.post('/suppliers/', data)
+          created.push(response.data)
+        }
+        this.$emit('save', created)
         this.$emit('close')
-        
       } catch (error) {
         console.error('Error saving suppliers:', error)
         alert('Failed to save suppliers. Please try again.')
@@ -852,23 +829,23 @@ export default {
 .modal-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, var(--primary-light), var(--primary));
+  background-color: var(--surface-tertiary);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--primary-dark);
+  color: var(--text-accent);
 }
 
 .modal-title {
-  color: var(--primary-dark);
+  color: var(--text-primary);
   font-weight: 600;
   margin: 0;
 }
 
 .modal-header {
   padding: 2rem 2rem 1rem 2rem;
-  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  background-color: var(--surface-secondary);
 }
 
 .modal-body {
@@ -896,8 +873,8 @@ export default {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background-color: var(--neutral-medium);
-  color: white;
+  background-color: var(--border-secondary);
+  color: var(--text-inverse);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -907,56 +884,56 @@ export default {
 }
 
 .step.active .step-number {
-  background-color: var(--primary);
+  background-color: var(--border-accent);
 }
 
 .step.completed .step-number {
-  background-color: var(--success);
+  background-color: var(--status-success);
 }
 
 .step-label {
   font-size: 0.875rem;
-  color: var(--tertiary-medium);
+  color: var(--text-tertiary);
   font-weight: 500;
 }
 
 .step.active .step-label {
-  color: var(--primary-dark);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
 .step-connector {
   width: 80px;
   height: 2px;
-  background-color: var(--neutral-medium);
+  background-color: var(--border-primary);
   margin: 0 1rem;
   transition: all 0.3s ease;
 }
 
 .step-connector.active {
-  background-color: var(--primary);
+  background-color: var(--border-accent);
 }
 
 /* Method Selection */
 .method-option {
   padding: 1.5rem;
-  border: 2px solid var(--neutral-medium);
+  border: 2px solid var(--border-primary);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.3s ease;
   text-align: center;
-  background-color: white;
+  background-color: var(--surface-primary);
   height: 100%;
 }
 
 .method-option:hover {
-  border-color: var(--primary-light);
-  box-shadow: 0 2px 8px rgba(115, 146, 226, 0.1);
+  border-color: var(--border-accent);
+  background-color: var(--state-hover);
 }
 
 .method-option.active {
-  border-color: var(--primary);
-  background-color: var(--primary-light);
+  border-color: var(--border-accent);
+  background-color: var(--state-selected);
 }
 
 .method-icon {
@@ -971,28 +948,28 @@ export default {
 }
 
 .method-icon.manual {
-  background-color: #e8f4f8;
-  color: var(--info);
+  background-color: var(--status-info-bg);
+  color: var(--status-info);
 }
 
 .method-icon.template {
-  background-color: #e8f5e8;
-  color: var(--success);
+  background-color: var(--status-success-bg);
+  color: var(--status-success);
 }
 
 .method-option.active .method-icon.manual {
-  background-color: var(--info);
-  color: white;
+  background-color: var(--status-info);
+  color: var(--text-inverse);
 }
 
 .method-option.active .method-icon.template {
-  background-color: var(--success);
-  color: white;
+  background-color: var(--status-success);
+  color: var(--text-inverse);
 }
 
 .method-details h6 {
   margin-bottom: 0.5rem;
-  color: var(--tertiary-dark);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
@@ -1005,7 +982,7 @@ export default {
 .bulk-form-container {
   max-height: 400px;
   overflow-y: auto;
-  border: 1px solid var(--neutral-medium);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
 }
 
@@ -1014,10 +991,10 @@ export default {
 }
 
 .bulk-suppliers-table th {
-  background-color: #f8f9fa;
+  background-color: var(--surface-secondary);
   font-weight: 600;
-  color: var(--tertiary-dark);
-  border-bottom: 2px solid var(--neutral-medium);
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--border-primary);
   font-size: 0.875rem;
 }
 
@@ -1034,16 +1011,16 @@ export default {
 
 /* Template Upload */
 .template-upload-area {
-  border: 2px dashed var(--neutral-medium);
+  border: 2px dashed var(--border-primary);
   border-radius: 12px;
   padding: 3rem 2rem;
   transition: all 0.3s ease;
-  background-color: #fafafa;
+  background-color: var(--surface-secondary);
 }
 
 .template-upload-area.dragover {
-  border-color: var(--primary);
-  background-color: var(--primary-light);
+  border-color: var(--border-accent);
+  background-color: var(--state-selected);
 }
 
 .uploaded-file-info {
@@ -1054,9 +1031,9 @@ export default {
 .stat-card {
   text-align: center;
   padding: 1rem;
-  background: var(--neutral-light);
+  background: var(--surface-secondary);
   border-radius: 8px;
-  border: 1px solid var(--neutral-medium);
+  border: 1px solid var(--border-primary);
 }
 
 .stat-number {
@@ -1067,7 +1044,7 @@ export default {
 
 .stat-label {
   font-size: 0.75rem;
-  color: var(--tertiary-medium);
+  color: var(--text-tertiary);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1076,21 +1053,8 @@ export default {
 .review-table-container {
   max-height: 300px;
   overflow-y: auto;
-  border: 1px solid var(--neutral-medium);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
-}
-
-/* Color classes */
-.text-primary-dark {
-  color: var(--primary-dark) !important;
-}
-
-.text-tertiary-dark {
-  color: var(--tertiary-dark) !important;
-}
-
-.text-tertiary-medium {
-  color: var(--tertiary-medium) !important;
 }
 
 /* Responsive adjustments */

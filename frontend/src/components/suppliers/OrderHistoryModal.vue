@@ -2,11 +2,11 @@
   <div class="container-fluid pt-2 pb-4 orders-history-page">
     <!-- Page Title with Back Button -->
     <div class="d-flex align-items-center mb-3">
-      <button class="btn btn-outline-secondary btn-sm me-3" @click="goBack">
+      <button class="btn btn-cancel btn-sm me-3" @click="goBack">
         <ArrowLeft :size="16" />
         Back
       </button>
-      <h1 class="h3 fw-semibold text-primary-dark mb-0">Purchase Orders History</h1>
+      <h1 class="h3 fw-semibold text-accent mb-0">Purchase Orders History</h1>
     </div>
 
     <!-- Summary Cards -->
@@ -59,16 +59,16 @@
 
     <!-- Loading State -->
     <div v-if="loading" class="text-center py-5">
-      <div class="spinner-border text-primary" role="status">
+      <div class="spinner-border text-accent" role="status">
         <span class="visually-hidden">Loading...</span>
       </div>
-      <p class="mt-3 text-tertiary-medium">Loading orders...</p>
+      <p class="mt-3 text-secondary">Loading orders...</p>
     </div>
 
     <!-- Error State -->
     <div v-if="error" class="alert alert-danger text-center" role="alert">
       <p class="mb-3">{{ error }}</p>
-      <button class="btn btn-primary" @click="refreshData">Try Again</button>
+      <button class="btn btn-refresh" @click="refreshData">Try Again</button>
     </div>
 
     <!-- Filters and Actions -->
@@ -77,11 +77,11 @@
         <div class="action-row">
           <!-- Left Side: Actions -->
           <div class="d-flex gap-2">
-            <button class="btn btn-success btn-sm btn-with-icon-sm" @click="createNewOrder">
+            <button class="btn btn-add btn-sm btn-with-icon-sm" @click="createNewOrder">
               <Plus :size="14" />
               NEW ORDER
             </button>
-            <button class="btn btn-outline-secondary btn-sm" @click="exportOrders">
+            <button class="btn btn-export btn-sm" @click="exportOrders">
               EXPORT
             </button>
           </div>
@@ -90,7 +90,7 @@
           <div class="d-flex align-items-center gap-2">
             <!-- Search Toggle -->
             <button 
-              class="btn btn-secondary btn-sm"
+              class="btn btn-view btn-sm"
               @click="toggleSearchMode"
               :class="{ 'active': searchMode }"
               style="height: calc(1.5em + 0.75rem + 2px); display: flex; align-items: center; justify-content: center; padding: 0 0.75rem;"
@@ -216,11 +216,11 @@
             />
           </td>
           <td>
-            <div class="fw-medium text-primary">{{ order.id }}</div>
+            <div class="fw-medium text-accent">{{ order.id }}</div>
           </td>
           <td>
-            <div class="fw-medium text-tertiary-dark">{{ order.supplier }}</div>
-            <small class="text-muted">{{ order.supplierEmail }}</small>
+            <div class="fw-medium text-primary">{{ order.supplier }}</div>
+            <small class="text-secondary">{{ order.supplierEmail }}</small>
           </td>
           <td>
             <span :class="getStatusBadgeClass(order.status)" class="badge">
@@ -229,7 +229,7 @@
           </td>
           <td>
             <div class="fw-medium">{{ formatDate(order.orderDate) }}</div>
-            <small class="text-muted">{{ getDaysAgo(order.orderDate) }}</small>
+            <small class="text-secondary">{{ getDaysAgo(order.orderDate) }}</small>
           </td>
           <td>
             <div class="fw-medium">{{ formatDate(order.expectedDelivery) }}</div>
@@ -239,7 +239,7 @@
             <div class="fw-bold">₱{{ formatCurrency(order.totalAmount) }}</div>
           </td>
           <td class="text-center">
-            <span class="badge bg-light text-dark">{{ order.items?.length || 0 }}</span>
+            <span class="badge">{{ order.items?.length || 0 }}</span>
           </td>
           <td>
             <div class="d-flex gap-1 justify-content-center">
@@ -278,13 +278,13 @@
     <div v-if="!loading && ordersComposable.filteredOrders.length === 0" class="text-center py-5">
       <div class="card">
         <div class="card-body py-5">
-          <Package :size="48" class="text-tertiary-medium mb-3" />
-          <p class="text-tertiary-medium mb-3">
+          <Package :size="48" class="text-secondary mb-3" />
+          <p class="text-secondary mb-3">
             {{ ordersComposable.allOrders.length === 0 ? 'No orders found' : 'No orders match the current filters' }}
           </p>
           <button 
             v-if="ordersComposable.allOrders.length === 0" 
-            class="btn btn-primary btn-with-icon" 
+            class="btn btn-add btn-with-icon"
             @click="createNewOrder"
           >
             <Plus :size="16" />
@@ -292,7 +292,7 @@
           </button>
           <button 
             v-else 
-            class="btn btn-secondary btn-with-icon"
+            class="btn btn-cancel btn-with-icon"
             @click="clearFilters"
           >
             <RefreshCw :size="16" />
@@ -512,40 +512,40 @@ export default {
       const expectedDate = new Date(order.expectedDelivery)
       const now = new Date()
       const diffDays = Math.ceil((expectedDate - now) / (1000 * 60 * 60 * 24))
-      
-      if (order.status === 'Received') return 'text-success'
-      if (order.status === 'Depleted') return 'text-muted'
-      if (diffDays < 0) return 'text-danger'
-      if (diffDays <= 2) return 'text-warning'
-      return 'text-muted'
+
+      if (order.status === 'Received') return 'text-status-success'
+      if (order.status === 'Depleted') return 'text-secondary'
+      if (diffDays < 0) return 'text-status-error'
+      if (diffDays <= 2) return 'text-status-warning'
+      return 'text-secondary'
     }
 
     const getStatusBadgeClass = (status) => {
       const statusClasses = {
-        'Pending Delivery': 'bg-warning text-dark',
-        'Partially Received': 'bg-info text-white',
-        'Received': 'bg-success text-white',
-        'Depleted': 'bg-secondary text-white',
-        'Mixed Status': 'bg-primary text-white'
+        'Pending Delivery': 'status-warning',
+        'Partially Received': 'status-info',
+        'Received': 'status-success',
+        'Depleted': '',
+        'Mixed Status': 'status-info'
       }
-      return statusClasses[status] || 'bg-secondary text-white'
+      return statusClasses[status] ?? ''
     }
 
     const getStatusText = (status) => {
-      return status // Status is already in the correct format
+      return status
     }
 
     const getRowClass = (order) => {
       const classes = []
-      
+
       if (selectedOrders.value.includes(order.id)) {
-        classes.push('table-primary')
+        classes.push('row-selected')
       }
-      
+
       if (order.status === 'Depleted') {
-        classes.push('text-muted')
+        classes.push('text-secondary')
       }
-      
+
       return classes.join(' ')
     }
 
@@ -606,35 +606,24 @@ export default {
 @import '@/assets/styles/buttons.css';
 
 .orders-history-page {
-  background-color: var(--neutral-light);
+  background-color: var(--surface-elevated);
   min-height: 100vh;
-}
-
-.text-primary-dark {
-  color: var(--primary-dark) !important;
-}
-
-.text-tertiary-dark {
-  color: var(--tertiary-dark) !important;
-}
-
-.text-tertiary-medium {
-  color: var(--tertiary-medium) !important;
 }
 
 /* Action Bar Container */
 .action-bar-container {
-  background: white;
+  background: var(--surface-primary);
+  border: 1px solid var(--border-primary);
   border-radius: 0.75rem;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
   overflow: visible;
   position: relative;
   z-index: 1000;
 }
 
 .action-bar-controls {
-  border-bottom: 1px solid var(--neutral);
-  background-color: white;
+  border-bottom: 1px solid var(--border-primary);
+  background-color: var(--surface-primary);
   position: relative;
   z-index: 1001;
 }
@@ -656,7 +645,7 @@ export default {
 .filter-label {
   font-size: 0.75rem;
   font-weight: 500;
-  color: var(--tertiary-medium);
+  color: var(--text-secondary);
   margin-bottom: 0.25rem;
   display: block;
 }
@@ -680,21 +669,21 @@ export default {
 
 /* Button States */
 .btn.active {
-  background-color: var(--primary);
-  border-color: var(--primary);
+  background-color: var(--border-accent);
+  border-color: var(--border-accent);
   color: white;
 }
 
 /* Form controls focus states */
 .form-select:focus,
 .form-control:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 0.2rem rgba(115, 146, 226, 0.25);
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 0.2rem var(--state-hover);
 }
 
 /* Table row selection */
-.table tbody tr.table-primary {
-  background-color: var(--primary-light) !important;
+.table tbody tr.row-selected {
+  background-color: var(--state-selected) !important;
 }
 
 /* Responsive adjustments */

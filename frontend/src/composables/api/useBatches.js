@@ -103,17 +103,7 @@ export function useBatches() {
     try {
       const response = await batchService.getBatchesByProduct(productId, status)
       const productBatches = response.data || []
-      
-      // ✅ FIX: Always update batches.value when called directly
-      // This ensures ProductAdjustments component gets the data
       batches.value = productBatches
-      
-      // Also update filters to reflect current view
-      filters.productId = productId
-      if (status) {
-        filters.status = status
-      }
-      
       return productBatches
     } catch (err) {
       error.value = err.message

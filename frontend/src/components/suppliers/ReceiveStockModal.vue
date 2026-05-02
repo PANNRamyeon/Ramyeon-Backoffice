@@ -30,126 +30,134 @@
             <div class="spinner-border text-primary" role="status">
               <span class="visually-hidden">Loading...</span>
             </div>
-            <p class="mt-3 loading-text">Loading pending stock...</p>
+            <p class="mt-3 loading-text">Loading pending shipments...</p>
           </div>
 
-          <!-- Pending Stock List -->
-          <div v-else-if="pendingBatches.length > 0">
-            <div class="alert alert-info mb-4">
-              <Clock :size="16" class="me-2" />
-              <strong>{{ pendingBatches.length }}</strong> pending batch(es) awaiting receipt
-            </div>
+          <template v-else>
+            <!-- Summary Card -->
+            <CardTemplate size="compact" shadow="sm" border-color="accent" border-position="start" class="mb-3">
+              <template #content>
+                <div class="d-flex align-items-center">
+                  <Clock :size="16" class="me-2 text-accent" />
+                  <span class="summary-text">
+                    <strong>{{ pendingShipments.length }}</strong>
+                    pending shipment(s) awaiting receipt
+                  </span>
+                </div>
+              </template>
+            </CardTemplate>
 
-            <div class="table-responsive">
-              <table class="table table-hover receive-stock-table">
-                <thead class="table-header-theme">
-                  <tr>
-                    <th style="width: 40px;">
-                      <input 
-                        type="checkbox" 
-                        class="form-check-input" 
-                        v-model="selectAll"
-                        @change="toggleSelectAll"
+            <!-- Table Card -->
+            <CardTemplate v-if="pendingShipments.length > 0" size="custom" padding="0" shadow="sm">
+              <template #content>
+                <div class="table-responsive">
+                  <table class="table table-hover receive-stock-table mb-0">
+                    <thead class="table-header-theme">
+                      <tr>
+                        <th style="width: 40px;">
+                          <input
+                            type="checkbox"
+                            class="form-check-input"
+                            v-model="selectAll"
+                            @change="toggleSelectAll"
+                          >
+                        </th>
+                        <th>Shipment ID</th>
+                        <th>Batch Number</th>
+                        <th>Invoice</th>
+                        <th>Shipment Date</th>
+                        <th>Expected Delivery</th>
+                        <th>Freight Cost</th>
+                        <th>Days Pending</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="shipment in pendingShipments"
+                        :key="shipment.shipment_id"
+                        :class="{ 'table-warning': isOverdue(shipment), 'table-active': selectedShipments.includes(shipment.shipment_id) }"
                       >
-                    </th>
-                    <th>Batch Number</th>
-                    <th>Product</th>
-                    <th>Order Date</th>
-                    <th>Expected Date</th>
-                    <th>Quantity</th>
-                    <th>Est. Cost</th>
-                    <th>Total</th>
-                    <th>Days Pending</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr 
-                    v-for="batch in pendingBatches" 
-                    :key="batch._id"
-                    :class="{ 'table-warning': isOverdue(batch), 'table-active': selectedBatches.includes(batch._id) }"
-                  >
-                    <td>
-                      <input 
-                        type="checkbox" 
-                        class="form-check-input" 
-                        :value="batch._id"
-                        v-model="selectedBatches"
-                      >
-                    </td>
-                    <td>
-                      <code class="batch-number-text">{{ batch.batch_number }}</code>
-                    </td>
-                    <td>
-                      <div>
-                        <strong class="product-name-text">{{ getProductName(batch) }}</strong>
-                        <br>
-                        <small class="product-id-text">{{ batch.product_id }}</small>
-                      </div>
-                    </td>
-                    <td class="table-cell-text">{{ formatDate(batch.created_at) }}</td>
-                    <td>
-                      <div class="table-cell-text">
-                        {{ formatDate(batch.expected_delivery_date) }}
-                        <br>
-                        <small v-if="isOverdue(batch)" class="text-danger">
-                          <AlertTriangle :size="12" class="me-1" />
-                          Overdue
-                        </small>
-                        <small v-else class="date-status-text">
-                          {{ getDaysUntil(batch.expected_delivery_date) }}
-                        </small>
-                      </div>
-                    </td>
-                    <td class="text-center">
-                      <span class="badge quantity-badge">{{ batch.quantity_received }}</span>
-                    </td>
-                    <td class="table-cell-text">₱{{ formatCurrency(batch.cost_price || 0) }}</td>
-                    <td class="fw-bold table-cell-text">₱{{ formatCurrency((batch.cost_price || 0) * batch.quantity_received) }}</td>
-                    <td class="text-center">
-                      <span class="badge" :class="getDaysPendingClass(batch)">
-                        {{ getDaysPending(batch) }} days
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
+                        <td>
+                          <input
+                            type="checkbox"
+                            class="form-check-input"
+                            :value="shipment.shipment_id"
+                            v-model="selectedShipments"
+                          >
+                        </td>
+                        <td>
+                          <code class="batch-number-text">{{ shipment.shipment_id }}</code>
+                        </td>
+                        <td>
+                          <code class="batch-number-text">{{ shipment.batch_number || 'N/A' }}</code>
+                        </td>
+                        <td class="table-cell-text">{{ shipment.invoice_number || 'N/A' }}</td>
+                        <td class="table-cell-text">{{ formatDate(shipment.shipment_date) }}</td>
+                        <td>
+                          <div class="table-cell-text">
+                            {{ formatDate(shipment.expected_delivery_date) }}
+                            <br>
+                            <small v-if="isOverdue(shipment)" class="text-status-error">
+                              <AlertTriangle :size="12" class="me-1" />
+                              Overdue
+                            </small>
+                            <small v-else class="date-status-text">
+                              {{ getDaysUntil(shipment.expected_delivery_date) }}
+                            </small>
+                          </div>
+                        </td>
+                        <td class="table-cell-text">₱{{ formatCurrency(shipment.freight_cost || 0) }}</td>
+                        <td class="text-center">
+                          <span class="badge" :class="getDaysPendingClass(shipment)">
+                            {{ getDaysPending(shipment) }} days
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+            </CardTemplate>
 
-          <!-- Empty State -->
-          <div v-else class="text-center py-5">
-            <Package :size="64" class="empty-state-icon mb-3" />
-            <h5 class="empty-state-text">No Pending Stock</h5>
-            <p class="empty-state-text">All orders from this supplier have been received.</p>
-          </div>
+            <!-- Empty State Card -->
+            <CardTemplate v-else size="md" shadow="sm">
+              <template #content>
+                <div class="text-center py-4">
+                  <Package :size="56" class="empty-state-icon mb-3" />
+                  <h5 class="empty-state-text">No Pending Shipments</h5>
+                  <p class="empty-state-text mb-0">All shipments from this supplier have been received.</p>
+                </div>
+              </template>
+            </CardTemplate>
+          </template>
         </div>
 
         <!-- Modal Footer -->
         <div class="modal-footer border-0 pt-4">
           <div class="d-flex justify-content-between align-items-center w-100">
             <div class="footer-info small">
-              <span v-if="selectedBatches.length > 0">
-                {{ selectedBatches.length }} batch(es) selected
+              <span v-if="selectedShipments.length > 0">
+                {{ selectedShipments.length }} shipment(s) selected
               </span>
             </div>
-            
+
             <div class="d-flex gap-3">
-              <button 
-                type="button" 
-                class="btn btn-outline-secondary px-4"
+              <button
+                type="button"
+                class="btn btn-cancel px-4"
                 @click="handleClose"
               >
                 Cancel
               </button>
-              <button 
-                type="button" 
-                class="btn btn-success px-4"
+              <button
+                type="button"
+                class="btn btn-save px-4"
                 @click="receiveSelected"
-                :disabled="selectedBatches.length === 0 || receiving"
+                :disabled="selectedShipments.length === 0 || receiving"
               >
                 <div v-if="receiving" class="spinner-border spinner-border-sm me-2"></div>
                 <Package :size="16" class="me-1" />
-                Receive {{ selectedBatches.length }} Batch(es)
+                Receive {{ selectedShipments.length }} Shipment(s)
               </button>
             </div>
           </div>
@@ -159,271 +167,118 @@
   </Teleport>
 </template>
 
-<script>
-import { ref, computed, watch, onMounted } from 'vue'
-import { 
-  Package,
-  Clock,
-  AlertTriangle
-} from 'lucide-vue-next'
+<script setup>
+import { ref, watch, onMounted } from 'vue'
+import { Package, Clock, AlertTriangle } from 'lucide-vue-next'
 import { useToast } from '@/composables/ui/useToast'
-import axios from 'axios'
+import { useShipments } from '@/composables/api/useShipments'
+import CardTemplate from '@/components/common/CardTemplate.vue'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+const props = defineProps({
+  show: { type: Boolean, default: false },
+  supplier: { type: Object, required: true }
+})
 
-export default {
-  name: 'ReceiveStockModal',
-  components: {
-    Package,
-    Clock,
-    AlertTriangle
-  },
-  emits: ['close', 'received'],
-  props: {
-    show: {
-      type: Boolean,
-      default: false
-    },
-    supplier: {
-      type: Object,
-      required: true
-    }
-  },
-  setup(props, { emit }) {
-    const { success: showSuccess, error: showError } = useToast()
-    
-    const loading = ref(false)
-    const receiving = ref(false)
-    const pendingBatches = ref([])
-    const selectedBatches = ref([])
-    const selectAll = ref(false)
-    
-    // ================ COMPUTED ================
-    
-    const selectedBatchObjects = computed(() => {
-      return pendingBatches.value.filter(batch => selectedBatches.value.includes(batch._id))
-    })
-    
-    // ================ METHODS ================
-    
-    async function loadPendingBatches() {
-      loading.value = true
-      
-      try {
-        const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || localStorage.getItem('authToken') || sessionStorage.getItem('authToken')
-        
-        const response = await axios.get(
-          `${API_BASE_URL}/batches/by-supplier/${props.supplier.id}/`,
-          {
-            params: { status: 'pending' },
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        )
-        
-        // Handle response structure: {success: true, data: [...]}
-        if (response.data.success && response.data.data) {
-          pendingBatches.value = response.data.data
-        } else if (Array.isArray(response.data)) {
-          pendingBatches.value = response.data
-        } else {
-          pendingBatches.value = []
-        }
-        
-        
-      } catch (error) {
-        console.error('Error loading pending batches:', error)
-        showError('Failed to load pending stock')
-      } finally {
-        loading.value = false
-      }
-    }
-    
-    function toggleSelectAll() {
-      if (selectAll.value) {
-        selectedBatches.value = pendingBatches.value.map(b => b._id)
-      } else {
-        selectedBatches.value = []
-      }
-    }
-    
-    async function receiveSelected() {
-      if (selectedBatches.value.length === 0) return
-      
-      receiving.value = true
-      
-      try {
-        const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || localStorage.getItem('authToken') || sessionStorage.getItem('authToken')
-        const results = {
-          successful: [],
-          failed: []
-        }
-        
-        // Activate each selected batch
-        for (const batch of selectedBatchObjects.value) {
-          try {
-            const response = await axios.post(
-              `${API_BASE_URL}/batches/activate/`,
-              {
-                batch_number: batch.batch_number,
-                product_id: batch.product_id,
-                supplier_id: props.supplier.id,
-                // date_received will be set automatically by backend to current time
-                notes: `Received via batch activation on ${new Date().toLocaleDateString()}`
-              },
-              {
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            )
-            
-            results.successful.push({
-              batch: batch.batch_number,
-              product: batch.product_id
-            })
-            
-          } catch (error) {
-            console.error('Error activating batch:', batch.batch_number, error)
-            results.failed.push({
-              batch: batch.batch_number,
-              error: error.message
-            })
-          }
-        }
-        
-        // ✅ Don't show toast here - let parent handle it to avoid duplicates
-        // Parent (SupplierDetails) will show the success/error toast
-        
-        // Emit event
-        emit('received', results)
-        
-        // Close modal
-        handleClose()
-        
-      } catch (error) {
-        console.error('Error receiving batches:', error)
-        showError('Failed to process stock receipt')
-      } finally {
-        receiving.value = false
-      }
-    }
-    
-    function getProductName(batch) {
-      // Try to get product name from batch data
-      // Check various possible field names
-      if (batch.product_name) return batch.product_name
-      if (batch.productName) return batch.productName
-      if (batch.product_info && batch.product_info.product_name) return batch.product_info.product_name
-      if (batch.product_id) return batch.product_id
-      return 'Unknown Product'
-    }
-    
-    function formatDate(dateString) {
-      if (!dateString) return 'N/A'
-      const date = new Date(dateString)
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      })
-    }
-    
-    function formatCurrency(amount) {
-      return new Intl.NumberFormat('en-PH', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      }).format(amount || 0)
-    }
-    
-    function isOverdue(batch) {
-      if (!batch.expected_delivery_date) return false
-      const expectedDate = new Date(batch.expected_delivery_date)
-      const today = new Date()
-      return expectedDate < today
-    }
-    
-    function getDaysUntil(dateString) {
-      if (!dateString) return 'No date set'
-      const expectedDate = new Date(dateString)
-      const today = new Date()
-      const diffTime = expectedDate - today
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-      
-      if (diffDays < 0) {
-        return `${Math.abs(diffDays)} days overdue`
-      } else if (diffDays === 0) {
-        return 'Due today'
-      } else if (diffDays === 1) {
-        return 'Due tomorrow'
-      } else {
-        return `${diffDays} days remaining`
-      }
-    }
-    
-    function getDaysPending(batch) {
-      const createdDate = new Date(batch.created_at)
-      const today = new Date()
-      const diffTime = Math.abs(today - createdDate)
-      return Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-    }
-    
-    function getDaysPendingClass(batch) {
-      const days = getDaysPending(batch)
-      if (days <= 3) return 'bg-success'
-      if (days <= 7) return 'bg-warning'
-      return 'bg-danger'
-    }
-    
-    function handleClose() {
-      emit('close')
-      selectedBatches.value = []
-      selectAll.value = false
-    }
-    
-    function handleOverlayClick() {
-      if (!receiving.value) {
-        handleClose()
-      }
-    }
-    
-    // ================ LIFECYCLE ================
-    
-    watch(() => props.show, (newVal) => {
-      if (newVal) {
-        loadPendingBatches()
-      }
-    })
-    
-    onMounted(() => {
-      if (props.show) {
-        loadPendingBatches()
-      }
-    })
-    
-    return {
-      loading,
-      receiving,
-      pendingBatches,
-      selectedBatches,
-      selectAll,
-      toggleSelectAll,
-      receiveSelected,
-      getProductName,
-      formatDate,
-      formatCurrency,
-      isOverdue,
-      getDaysUntil,
-      getDaysPending,
-      getDaysPendingClass,
-      handleClose,
-      handleOverlayClick
-    }
+const emit = defineEmits(['close', 'received'])
+
+const { error: showError } = useToast()
+const { pendingShipments, loading, fetchShipmentsBySupplier, updateShipment } = useShipments()
+
+const receiving = ref(false)
+const selectedShipments = ref([])
+const selectAll = ref(false)
+
+async function loadPendingShipments() {
+  try {
+    await fetchShipmentsBySupplier(props.supplier.id)
+  } catch {
+    showError('Failed to load pending shipments')
   }
 }
+
+function toggleSelectAll() {
+  if (selectAll.value) {
+    selectedShipments.value = pendingShipments.value.map(s => s.shipment_id)
+  } else {
+    selectedShipments.value = []
+  }
+}
+
+async function receiveSelected() {
+  if (!selectedShipments.value.length) return
+
+  receiving.value = true
+  const results = { successful: [], failed: [] }
+
+  for (const shipmentId of selectedShipments.value) {
+    try {
+      await updateShipment(shipmentId, { status: 'received' })
+      results.successful.push(shipmentId)
+    } catch (err) {
+      results.failed.push({ id: shipmentId, error: err.message })
+    }
+  }
+
+  receiving.value = false
+  emit('received', results)
+  handleClose()
+}
+
+function formatDate(dateString) {
+  if (!dateString) return 'N/A'
+  return new Date(dateString).toLocaleDateString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric'
+  })
+}
+
+function formatCurrency(amount) {
+  return new Intl.NumberFormat('en-PH', {
+    minimumFractionDigits: 2, maximumFractionDigits: 2
+  }).format(amount || 0)
+}
+
+function isOverdue(shipment) {
+  if (!shipment.expected_delivery_date) return false
+  return new Date(shipment.expected_delivery_date) < new Date()
+}
+
+function getDaysUntil(dateString) {
+  if (!dateString) return 'No date set'
+  const diffDays = Math.ceil((new Date(dateString) - new Date()) / (1000 * 60 * 60 * 24))
+  if (diffDays < 0) return `${Math.abs(diffDays)} days overdue`
+  if (diffDays === 0) return 'Due today'
+  if (diffDays === 1) return 'Due tomorrow'
+  return `${diffDays} days remaining`
+}
+
+function getDaysPending(shipment) {
+  return Math.ceil(Math.abs(new Date() - new Date(shipment.shipment_date)) / (1000 * 60 * 60 * 24))
+}
+
+function getDaysPendingClass(shipment) {
+  const days = getDaysPending(shipment)
+  if (days <= 3) return 'status-success'
+  if (days <= 7) return 'status-warning'
+  return 'status-error'
+}
+
+function handleClose() {
+  emit('close')
+  selectedShipments.value = []
+  selectAll.value = false
+}
+
+function handleOverlayClick() {
+  if (!receiving.value) handleClose()
+}
+
+watch(() => props.show, (newVal) => {
+  if (newVal) loadPendingShipments()
+})
+
+onMounted(() => {
+  if (props.show) loadPendingShipments()
+})
 </script>
 
 <style scoped>
@@ -443,18 +298,18 @@ export default {
 .modal-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, var(--success-light), var(--success));
+  background-color: var(--status-success-bg);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--success-dark);
+  color: var(--status-success);
 }
 
 .modal-header {
   padding: 1.5rem 1.75rem 0.9rem 1.75rem;
-  background: linear-gradient(135deg, var(--surface-tertiary), var(--surface-secondary));
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
 
@@ -575,12 +430,12 @@ export default {
 
 .table-warning {
   background-color: var(--surface-tertiary) !important;
-  border-left: 3px solid #f59e0b !important;
+  border-left: 3px solid var(--status-warning) !important;
 }
 
 .dark-theme .table-warning {
   background-color: var(--surface-secondary) !important;
-  border-left: 3px solid #fbbf24 !important;
+  border-left: 3px solid var(--status-warning) !important;
 }
 
 .table-warning td {
@@ -618,14 +473,12 @@ export default {
   border: 1px solid var(--border-primary);
 }
 
-/* Alert styling */
-.alert-info {
-  background-color: var(--surface-tertiary);
-  border: 1px solid var(--border-accent);
+.summary-text {
   color: var(--text-secondary);
+  font-size: 0.9rem;
 }
 
-.alert-info strong {
+.summary-text strong {
   color: var(--text-primary);
 }
 
