@@ -280,7 +280,7 @@ class Batch(Model):
     date_received = FixedUTCDateTimeAttribute()
     
     # ============= SUPPLIER INFORMATION =============
-    supplier_id = UnicodeAttribute()
+    supplier_id = UnicodeAttribute(null=True)
     
     # ============= STATUS AND METADATA =============
     status = UnicodeAttribute(default="pending")  # Initial status
@@ -310,6 +310,10 @@ class Batch(Model):
             # Set required fields
             kwargs['pk'] = 'batches'
             kwargs['sk'] = sk
+
+            # Auto-generate batch_number if not supplied
+            if not kwargs.get('batch_number'):
+                kwargs['batch_number'] = f"MANUAL-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
             
             # Set timestamps
             now = datetime.utcnow()
@@ -946,7 +950,21 @@ class Batch(Model):
                 "is_expired": self.is_expired(),
                 "days_until_expiry": self.days_until_expiry(),
                 "sync_logs_count": len(self.sync_logs),
-                "usage_history_count": len(self.usage_history)
+                "usage_history_count": len(self.usage_history),
+                "usage_history": [
+                    {
+                        "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
+                        "quantity_used": entry.quantity_used,
+                        "reason": entry.reason,
+                        "remaining_after": entry.remaining_after,
+                        "adjustment_type": entry.adjustment_type,
+                        "adjusted_by": entry.adjusted_by,
+                        "approved_by": entry.approved_by,
+                        "notes": entry.notes,
+                        "source": entry.source,
+                    }
+                    for entry in self.usage_history
+                ]
             }
         except Exception as e:
             logger.error(f"Error converting batch to dict: {str(e)}")

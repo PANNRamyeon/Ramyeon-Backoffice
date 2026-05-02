@@ -367,15 +367,28 @@ class BatchService:
             raise Exception(f"Error creating batch: {str(e)}")
 
     def get_batches_by_product(self, product_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get all batches for a specific product, with optional status filter"""
+        """Get all batches for a specific product, with optional status filter.
+
+        Tries both the given product_id and its alternate form (with/without PROD- prefix)
+        because Product.to_dict() strips the prefix while batch records may store it either way.
+        """
         try:
             batches = Batch.get_by_product_id(product_id)
-            
+
+            if not batches:
+                if product_id.upper().startswith("PROD-"):
+                    alt_id = product_id[5:]
+                else:
+                    alt_id = f"PROD-{product_id.zfill(5)}"
+                batches = Batch.get_by_product_id(alt_id)
+                if batches:
+                    logger.debug(f"get_batches_by_product: found batches via alternate id '{alt_id}' for '{product_id}'")
+
             if status:
                 batches = [b for b in batches if b.status == status]
-            
+
             return [b.to_dict() for b in batches]
-            
+
         except Exception as e:
             logger.error(f"Error getting batches for product {product_id}: {str(e)}")
             raise Exception(f"Error getting batches: {str(e)}")

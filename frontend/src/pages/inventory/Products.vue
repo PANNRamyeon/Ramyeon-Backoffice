@@ -467,6 +467,12 @@
       @close="showColumnFilter = false"
       @apply="handleColumnChanges"
     />
+
+    <DeleteConfirmationModal
+      ref="deleteConfirmationModal"
+      :is-loading="deleteLoading || bulkDeleteLoading"
+      @confirm="handleConfirmDelete"
+    />
   </div>
 </template>
 
@@ -481,6 +487,7 @@ import DataTable from '@/components/common/TableTemplate.vue'
 import CardTemplate from '@/components/common/CardTemplate.vue'
 import ImportModal from '@/components/products/ImportModal.vue'
 import ColumnFilterModal from '@/components/products/ColumnFilterModal.vue'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 
 export default {
   name: 'Products',
@@ -491,7 +498,8 @@ export default {
     ColumnFilterModal,
     ImportModal,
     DataTable,
-    CardTemplate
+    CardTemplate,
+    DeleteConfirmationModal
   },
   
   setup() {
@@ -518,6 +526,12 @@ export default {
       clearError
     } = useProducts()
 
+    // Clear all module-level state before the first render so navigating
+    // back never flashes stale search results or cached product data.
+    resetFilters()
+    products.value = []
+    loading.value = true
+
     // Use categories composable
     const {
       activeCategories,
@@ -531,15 +545,17 @@ export default {
     const showAddDropdown = ref(false)
     const showColumnFilter = ref(false)
     const selectedProductIds = ref([])
+    const deleteConfirmationModal = ref(null)
+    const productToDelete = ref(null)
     const currentPage = ref(1)
     const itemsPerPage = ref(20)
     const expiringCount = ref(0)
     const addDropdown = ref(null)
     const searchInput = ref(null)
 
-    // Sorting state
-    const sortColumn = ref(null)
-    const sortDirection = ref(null)
+    // Sorting state — default: alphabetical by name
+    const sortColumn = ref('name')
+    const sortDirection = ref('asc')
 
     // Visible columns state
     const visibleColumns = ref({
@@ -700,25 +716,39 @@ export default {
       }
     }
 
-    const handleDeleteProduct = async (product) => {
-      if (confirm(`Are you sure you want to delete "${product.product_name}"?`)) {
-        try {
-          await deleteProduct(product.product_id)
-        } catch (error) {
-          console.error('Failed to delete product:', error)
+    const handleDeleteProduct = (product) => {
+      productToDelete.value = product
+      deleteConfirmationModal.value?.openModal({
+        title: 'Delete Product',
+        message: `Are you sure you want to delete <strong>${product.product_name}</strong>? This action cannot be undone.`,
+        confirmText: 'Delete',
+        confirmClass: 'btn-delete'
+      })
+    }
+
+    const handleConfirmDelete = async () => {
+      try {
+        if (productToDelete.value) {
+          await deleteProduct(productToDelete.value.product_id)
+          productToDelete.value = null
+        } else {
+          await bulkDeleteProducts(selectedProductIds.value)
+          selectedProductIds.value = []
         }
+        deleteConfirmationModal.value?.closeModal()
+      } catch (error) {
+        console.error('Failed to delete:', error)
       }
     }
 
-    const handleDeleteSelected = async () => {
-      if (confirm(`Are you sure you want to delete ${selectedProductIds.value.length} products?`)) {
-        try {
-          await bulkDeleteProducts(selectedProductIds.value)
-          selectedProductIds.value = []
-        } catch (error) {
-          console.error('Failed to delete products:', error)
-        }
-      }
+    const handleDeleteSelected = () => {
+      const count = selectedProductIds.value.length
+      deleteConfirmationModal.value?.openModal({
+        title: `Delete ${count} Product${count === 1 ? '' : 's'}`,
+        message: `Are you sure you want to delete <strong>${count} product${count === 1 ? '' : 's'}</strong>? This action cannot be undone.`,
+        confirmText: `Delete ${count}`,
+        confirmClass: 'btn-delete'
+      })
     }
 
     const handleExport = async () => {
@@ -943,7 +973,9 @@ export default {
       handleSelectAll,
       handleProductSelect,
       handleDeleteProduct,
+      handleConfirmDelete,
       handleDeleteSelected,
+      deleteConfirmationModal,
       handleExport,
       handlePageChange,
       toggleSearchMode,
@@ -1033,7 +1065,7 @@ export default {
     },
 
     handleProductSuccess(result) {
-      // Item added successfully
+      this.handleRefresh()
     },
 
     handleStockUpdateSuccess(result) {

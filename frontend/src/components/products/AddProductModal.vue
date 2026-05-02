@@ -168,7 +168,7 @@
           </div>
 
           <!-- BATCH STOCK MANAGEMENT SECTION -->
-          <div class="mb-4">
+          <div v-if="!isEditMode" class="mb-4">
             <div class="surface-elevated p-3 rounded border-theme-subtle">
               <h5 class="text-primary mb-3">
                 <Package :size="20" />
@@ -340,15 +340,15 @@
               <label for="unit" class="form-label text-primary fw-medium">
                 Unit <span class="text-error">*</span>
               </label>
-              <select 
+              <select
                 id="unit"
-                v-model="productForm.unit" 
-                required 
+                v-model="productForm.unit"
+                required
                 :disabled="isLoading"
                 class="form-select input-theme"
-                :class="{ 
+                :class="{
                   'is-invalid': validationErrors.unit,
-                  'validation-error': validationErrors.unit 
+                  'validation-error': validationErrors.unit
                 }"
               >
                 <option value="">Select Unit</option>
@@ -364,32 +364,6 @@
               </div>
             </div>
 
-            <div class="col-md-6">
-              <label for="cost_price" class="form-label text-primary fw-medium">
-                Cost Price (₱) <span class="text-error">*</span>
-              </label>
-              <input
-                id="cost_price"
-                v-model.number="productForm.cost_price"
-                type="number"
-                step="0.01"
-                min="0"
-                required
-                :disabled="isLoading"
-                placeholder="0.00"
-                class="form-control input-theme"
-                :class="{
-                  'is-invalid': validationErrors.cost_price,
-                  'validation-error': validationErrors.cost_price
-                }"
-              />
-              <div v-if="validationErrors.cost_price" class="invalid-feedback">
-                {{ validationErrors.cost_price }}
-              </div>
-            </div>
-          </div>
-
-          <div class="row g-3 mb-3">
             <div class="col-md-6">
               <label for="selling_price" class="form-label text-primary fw-medium">
                 Selling Price (₱) <span class="text-error">*</span>
@@ -529,18 +503,24 @@
             <strong>Error:</strong> {{ error }}
           </div>
 
+          <!-- Submission error -->
+          <div v-if="error" class="submit-error d-flex align-items-center gap-2 mt-3">
+            <AlertCircle :size="16" class="flex-shrink-0" />
+            <span>{{ error }}</span>
+          </div>
+
           <div class="d-flex gap-2 justify-content-end pt-3 divider-theme">
-            <button 
-              type="button" 
-              @click="closeModal" 
+            <button
+              type="button"
+              @click="closeModal"
               :disabled="isLoading"
               class="btn btn-cancel"
             >
               Cancel
             </button>
-            <button 
-              type="submit" 
-              :disabled="isLoading" 
+            <button
+              type="submit"
+              :disabled="isLoading"
               class="btn btn-save btn-with-icon-sm"
               :class="{ 'btn-loading': isLoading }"
             >
@@ -559,10 +539,11 @@
 
 <script>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { X, Camera, Save, BarChart3, Package } from 'lucide-vue-next'
+import { X, Camera, Save, BarChart3, Package, AlertCircle } from 'lucide-vue-next'
 import { useModal } from '@/composables/ui/useModal'
 import { useProducts } from '@/composables/api/useProducts'
 import apiProductsService from '@/services/apiProducts'   // ✅ supplier API already available
+import batchService from '@/services/apiBatches'
 
 export default {
   name: 'AddProductModal',
@@ -650,7 +631,7 @@ export default {
       low_stock_threshold: 10,
       status: 'active',
       barcode: '',
-      is_taxable: true,
+      is_taxable: false,
       description: '',
       image_url: '',
       image_filename: '',
@@ -676,9 +657,10 @@ export default {
     })
 
     const marginPercentage = computed(() => {
-      const { cost_price, selling_price } = productForm.value
-      if (!cost_price || !selling_price || cost_price >= selling_price) return 0
-      return Math.round(((selling_price - cost_price) / selling_price) * 100)
+      const cost = createWithStock.value ? batchForm.value.cost_price : productForm.value.cost_price
+      const { selling_price } = productForm.value
+      if (!cost || !selling_price || cost >= selling_price) return 0
+      return Math.round(((selling_price - cost) / selling_price) * 100)
     })
 
     // ========== VALIDATION + METHODS (UNCHANGED) ==========
@@ -693,9 +675,6 @@ export default {
       }
       if (!productForm.value.unit) {
         errors.unit = 'Unit is required'
-      }
-      if (productForm.value.cost_price == null || productForm.value.cost_price < 0) {
-        errors.cost_price = 'Cost price must be 0 or greater'
       }
       if (!productForm.value.selling_price || productForm.value.selling_price <= 0) {
         errors.selling_price = 'Selling price must be greater than 0'
@@ -743,7 +722,7 @@ export default {
         low_stock_threshold: 10,
         status: 'active',
         barcode: '',
-        is_taxable: true,
+        is_taxable: false,
         description: '',
         image_url: '',
         image_filename: '',
@@ -839,15 +818,48 @@ export default {
         let result
         const formData = { ...productForm.value }
 
+        if (createWithStock.value) {
+          formData.cost_price = batchForm.value.cost_price
+        }
+
         if (!formData.category_id) {
           formData.category_id = 'UNCTGRY-001'
           formData.subcategory_name = 'General'
         }
 
+        console.log('[AddProductModal] createWithStock:', createWithStock.value)
+        console.log('[AddProductModal] productForm data:', formData)
+        console.log('[AddProductModal] batchForm data:', { ...batchForm.value })
+
         if (isEditMode.value) {
           result = await updateProduct(editingProduct.value.product_id, formData)
+          console.log('[AddProductModal] updateProduct result:', result)
         } else {
           result = await createProduct(formData)
+          console.log('[AddProductModal] createProduct result:', result)
+          console.log('[AddProductModal] created product_id:', result?.data?.product_id)
+
+          if (createWithStock.value && result.data?.product_id) {
+            const rawId = result.data.product_id
+            const canonicalProductId = String(rawId).startsWith('PROD-') ? rawId : `PROD-${String(rawId).padStart(5, '0')}`
+            const batchData = {
+              product_id: canonicalProductId,
+              quantity_received: batchForm.value.quantity_received,
+              cost_price: batchForm.value.cost_price,
+              expiry_date: batchForm.value.expiry_date,
+              date_received: batchForm.value.date_received || new Date().toISOString().split('T')[0],
+              status: 'active',
+            }
+            batchData.batch_number = batchForm.value.batch_number || `BN-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(Math.random()*10000).toString().padStart(4,'0')}`
+            if (batchForm.value.supplier_id) batchData.supplier_id = batchForm.value.supplier_id
+
+            console.log('[AddProductModal] canonical product_id:', canonicalProductId)
+            console.log('[AddProductModal] creating batch with data:', batchData)
+            const batchResult = await batchService.createBatch(batchData)
+            console.log('[AddProductModal] createBatch result:', batchResult)
+          } else if (createWithStock.value) {
+            console.warn('[AddProductModal] createWithStock=true but no product_id in result — batch NOT created')
+          }
         }
 
         emit('success', {
@@ -856,12 +868,13 @@ export default {
           action: isEditMode.value ? 'updated' : 'created',
           withBatch: !isEditMode.value && createWithStock.value
         })
+        closeModal()
 
       } catch (err) {
+        console.error('[AddProductModal] handleSubmit error:', err)
         setError(err.message || 'Failed to save product')
       } finally {
         setLoading(false)
-        closeModal()
       }
     }
 
@@ -936,6 +949,16 @@ export default {
 </script>
 
 <style scoped>
+.submit-error {
+  background-color: color-mix(in srgb, var(--status-error, #dc2626) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-error, #dc2626) 30%, transparent);
+  color: var(--status-error, #dc2626);
+  border-radius: 0.375rem;
+  padding: 0.6rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
 /* Existing styles plus new batch-specific styles */
 .batch-fields {
   background-color: var(--surface-secondary);

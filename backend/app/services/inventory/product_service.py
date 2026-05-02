@@ -109,7 +109,9 @@ class ProductService:
     @staticmethod
     def get_products_paginated(page_size: int = DEFAULT_PAGE_SIZE, page_token: str = None):
         """
-        Retrieves a page of active products for pagination.
+        Retrieves a page of all non-deleted products for the admin list.
+        Returns active, low_stock, and out_of_stock products — everything
+        except soft-deleted items.
         Only fetches one page from DynamoDB (no full load).
 
         Returns:
@@ -118,7 +120,7 @@ class ProductService:
         try:
             size = min(max(1, int(page_size)), MAX_PAGE_SIZE)
             last_key = _decode_page_token(page_token)
-            products, next_key = Product.get_all_active_products_paginated(limit=size, last_evaluated_key=last_key)
+            products, next_key = Product.get_all_non_deleted_paginated(limit=size, last_evaluated_key=last_key)
             next_token = _encode_page_token(next_key) if next_key else None
             return products, next_token
         except Exception as e:
@@ -381,6 +383,38 @@ class ProductService:
         except (DeleteError, UpdateError, ValueError) as e:
             logger.error(f"Error deleting product {product_id}: {str(e)}")
             return False
+
+    @staticmethod
+    def bulk_delete_products(product_ids: list, hard_delete: bool = False, deleted_by: str = "system", reason: str = "Bulk deleted via service") -> dict:
+        """
+        Delete multiple products in one call.
+
+        Returns:
+            dict: { success, deleted_count, failed_count, failed_ids }
+        """
+        deleted, failed = 0, []
+        for product_id in product_ids:
+            try:
+                ok = ProductService.delete_product(
+                    product_id,
+                    hard_delete=hard_delete,
+                    deleted_by=deleted_by,
+                    reason=reason,
+                )
+                if ok:
+                    deleted += 1
+                else:
+                    failed.append(product_id)
+            except Exception as e:
+                logger.error(f"bulk_delete_products: failed for {product_id}: {e}")
+                failed.append(product_id)
+
+        return {
+            "success": len(failed) == 0,
+            "deleted_count": deleted,
+            "failed_count": len(failed),
+            "failed_ids": failed,
+        }
 
     # ========== STOCK & METADATA HELPERS ==========
 
