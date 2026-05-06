@@ -19,8 +19,8 @@ class UserCreateSerializer(serializers.Serializer):
         help_text="Full name of the user"
     )
     role = serializers.ChoiceField(
-        choices=['admin', 'employee', 'customer'],
-        default='customer',
+        choices=['user', 'admin', 'manager', 'staff', 'cashier'],
+        default='user',
         help_text="User role in the system"
     )
     status = serializers.ChoiceField(

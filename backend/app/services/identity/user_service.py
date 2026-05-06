@@ -104,10 +104,12 @@ class UserService:
                     password_hash = self.hash_password(password)
                     user.update_password(password_hash)
                 
-                # Use User model's update_user method for other fields
-                # This handles validation and GSI updates automatically
-                if allowed_fields:
-                    user.update_user(**allowed_fields)
+                # Filter to only updatable fields (prevents tzinfo errors from frontend)
+                updatable_fields = ['username', 'email', 'full_name', 'role', 'status']
+                filtered_fields = {k: v for k, v in allowed_fields.items() if k in updatable_fields}
+                
+                if filtered_fields:
+                    user.update_user(**filtered_fields)
                 
                 action = 'updated'
             else:
@@ -266,7 +268,7 @@ class UserService:
             raise Exception(f"Error getting user: {str(e)}")
     
     def get_user_by_username(self, username, include_deleted=False):
-        """Get user by username using PynamoDB model GSI"""
+        """Get user by username using PynamoDB model (scan-based)"""
         try:
             if not username:
                 return None
@@ -285,7 +287,7 @@ class UserService:
             raise Exception(f"Error getting user by username: {str(e)}")
 
     def get_user_by_email(self, email, include_deleted=False):
-        """Get user by email using PynamoDB model GSI"""
+        """Get user by email using PynamoDB model (GSI-based)"""
         try:
             if not email:
                 return None
@@ -304,10 +306,9 @@ class UserService:
             raise Exception(f"Error getting user by email: {str(e)}")
     
     def get_disabled_users(self, page=1, limit=50):
-        """Get users with disabled status using PynamoDB model"""
+        """Get users with inactive status"""
         try:
-            # status 'disabled' – assuming that's a valid status value
-            users = User.get_users_by_role_status(status='disabled')
+            users = User.get_users_by_role_status(status='inactive')
             
             # Apply pagination
             skip = (page - 1) * limit
@@ -329,7 +330,7 @@ class UserService:
             raise Exception(f"Error getting disabled users: {str(e)}")
 
     def get_deleted_users(self, page=1, limit=50):
-        """Get all soft‑deleted users (similar to CategoryService.get_deleted_categories)"""
+        """Get all soft‑deleted users"""
         try:
             all_users = User.get_all_users(include_deleted=True)
             deleted_users = [u for u in all_users if u.isDeleted]
@@ -455,8 +456,8 @@ class UserService:
             user_dict = user.to_dict()
             user_name = user.full_name or user.username
             
-            # PERMANENTLY DELETE
-            user.delete()
+            # PERMANENTLY DELETE (calls User.hard_delete() -> self.delete())
+            user.hard_delete()
             
             # Critical notification
             self._send_user_notification('hard_deleted', user_name, user_id)

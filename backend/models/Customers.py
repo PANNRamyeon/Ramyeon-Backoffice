@@ -511,6 +511,12 @@ class Customer(Model):
             return []
         
     @classmethod
+    # DEPRECATION NOTICE:
+    # This classmethod performs authentication by directly comparing the provided password_hash
+    # against the stored bcrypt hash. For proper password verification, use the service-layer
+    # method CustomerService.authenticate_customer which handles plaintext passwords and
+    # constant-time comparison. This method is retained temporarily for compatibility and
+    # will be removed in a future refactoring.
     def authenticate(cls, email: str, password_hash: str) -> 'Customer | None':
         """
         Authenticate customer with email and password hash
@@ -546,6 +552,11 @@ class Customer(Model):
             return None
     
     @classmethod
+    # DEPRECATION NOTICE:
+    # This classmethod scans all customers to find a matching OAuth provider.
+    # It should be replaced by a service-layer method that uses a dedicated GSI
+    # for efficient lookup. Kept temporarily to avoid breaking the OAuth flow;
+    # coordinate with your partner before refactoring.
     def authenticate_oauth(cls, provider: str, provider_user_id: str, email: str = None) -> 'Customer | None':
         """
         Authenticate customer with OAuth provider

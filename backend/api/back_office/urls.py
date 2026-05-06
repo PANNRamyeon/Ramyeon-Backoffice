@@ -38,9 +38,12 @@ urlpatterns = [
     path('users/<str:user_id>/restore/', user_views.UserRestoreView.as_view(), name='users-restore'),
     path('users/<str:user_id>/hard-delete/', user_views.UserHardDeleteView.as_view(), name='users-hard-delete'),
     path('users/deleted/list/', user_views.DeletedUsersView.as_view(), name='users-deleted'),
-    path('users/search/by-email/', user_views.UserByEmailView.as_view(), name='users-by-email'),
-    path('users/search/by-username/', user_views.UserByUsernameView.as_view(), name='users-by-username'),
-    
+    path('users/search/by-email/<str:email>/', user_views.UserByEmailView.as_view(), name='users-by-email'),
+    path('users/search/by-username/<str:username>/', user_views.UserByUsernameView.as_view(), name='users-by-username'),
+   
+
+
+
     # ==================== CUSTOMERS ====================
     path('customers/', customer_views.CustomerListView.as_view(), name='customers-list'),
     path('customers/register/', customer_views.CustomerRegisterView.as_view(), name='customers-register'),

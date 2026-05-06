@@ -21,8 +21,9 @@ export function useUsers() {
     users.value.filter(user => user.status === 'active' && !user.isDeleted)
   )
 
+  // FIXED: now matches backend status 'inactive'
   const disabledUsers = computed(() => 
-    users.value.filter(user => user.status === 'disabled' && !user.isDeleted)
+    users.value.filter(user => user.status === 'inactive' && !user.isDeleted)
   )
 
   const totalUsers = computed(() => pagination.value.total)
@@ -44,8 +45,8 @@ export function useUsers() {
         page: params.page || pagination.value.page,
         limit: params.limit || pagination.value.limit,
         status: params.status,
-        role: params.role,        // ✅ added role filter
-        search: params.search,    // ✅ added search filter
+        role: params.role,
+        search: params.search,
         include_deleted: params.include_deleted || false
       })
 
@@ -67,7 +68,6 @@ export function useUsers() {
       loading.value = false
     }
   }
-
 
   /**
    * Fetch user by ID
@@ -191,14 +191,13 @@ export function useUsers() {
     try {
       const updatedUser = await userApiService.update(userId, userData)
 
-      // Update in local state
-      const index = users.value.findIndex(u => u._id === userId)
+      // Update in local state (using user_id)
+      const index = users.value.findIndex(u => u.user_id === userId)
       if (index !== -1) {
         users.value[index] = updatedUser
       }
 
-      // Update selected user if it's the same one
-      if (selectedUser.value?._id === userId) {
+      if (selectedUser.value?.user_id === userId) {
         selectedUser.value = updatedUser
       }
 
@@ -223,8 +222,8 @@ export function useUsers() {
     try {
       const response = await userApiService.softDelete(userId)
 
-      // Remove from local state
-      users.value = users.value.filter(u => u._id !== userId)
+      // Remove from local state using user_id
+      users.value = users.value.filter(u => u.user_id !== userId)
       pagination.value.total -= 1
 
       return response
@@ -248,11 +247,8 @@ export function useUsers() {
     try {
       const response = await userApiService.restore(userId)
 
-      // Remove from deleted users list
-      deletedUsers.value = deletedUsers.value.filter(u => u._id !== userId)
-
-      // Optionally refetch all users to show restored user
-      // await fetchUsers()
+      // Remove from deleted users list using user_id
+      deletedUsers.value = deletedUsers.value.filter(u => u.user_id !== userId)
 
       return response
     } catch (err) {
@@ -275,9 +271,9 @@ export function useUsers() {
     try {
       const response = await userApiService.hardDelete(userId)
 
-      // Remove from both local states
-      users.value = users.value.filter(u => u._id !== userId)
-      deletedUsers.value = deletedUsers.value.filter(u => u._id !== userId)
+      // Remove from both local states using user_id
+      users.value = users.value.filter(u => u.user_id !== userId)
+      deletedUsers.value = deletedUsers.value.filter(u => u.user_id !== userId)
       pagination.value.total -= 1
 
       return response
@@ -290,16 +286,10 @@ export function useUsers() {
     }
   }
 
-  /**
-   * Clear error state
-   */
   const clearError = () => {
     error.value = null
   }
 
-  /**
-   * Reset all state
-   */
   const resetState = () => {
     users.value = []
     selectedUser.value = null
@@ -314,23 +304,17 @@ export function useUsers() {
     }
   }
 
-  // Return public API
   return {
-    // State
     users,
     selectedUser,
     deletedUsers,
     loading,
     error,
     pagination,
-
-    // Computed
     activeUsers,
     disabledUsers,
     totalUsers,
     hasUsers,
-
-    // Methods
     fetchUsers,
     fetchUserById,
     fetchUserByEmail,
