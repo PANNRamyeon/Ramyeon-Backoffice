@@ -44,29 +44,32 @@ class UserApiService {
     }
   }
 
+  // Updated URL: search by email
   async getByEmail(email, includeDeleted = false) {
     try {
       const params = includeDeleted ? { include_deleted: true } : {};
-      const response = await api.get(`/users/email/${email}/`, { params });
+      const response = await api.get(`/users/search/by-email/${email}/`, { params });
       return this.handleResponse(response);
     } catch (error) {
       this.handleError(error);
     }
   }
 
+  // Updated URL: search by username
   async getByUsername(username, includeDeleted = false) {
     try {
       const params = includeDeleted ? { include_deleted: true } : {};
-      const response = await api.get(`/users/username/${username}/`, { params });
+      const response = await api.get(`/users/search/by-username/${username}/`, { params });
       return this.handleResponse(response);
     } catch (error) {
       this.handleError(error);
     }
   }
 
+  // Updated URL: deleted users list
   async getDeleted(params = {}) {
     try {
-      const response = await api.get('/users/deleted/', { params });
+      const response = await api.get('/users/deleted/list/', { params });
       return this.handleResponse(response);
     } catch (error) {
       this.handleError(error);

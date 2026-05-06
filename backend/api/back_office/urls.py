@@ -38,9 +38,12 @@ urlpatterns = [
     path('users/<str:user_id>/restore/', user_views.UserRestoreView.as_view(), name='users-restore'),
     path('users/<str:user_id>/hard-delete/', user_views.UserHardDeleteView.as_view(), name='users-hard-delete'),
     path('users/deleted/list/', user_views.DeletedUsersView.as_view(), name='users-deleted'),
-    path('users/search/by-email/', user_views.UserByEmailView.as_view(), name='users-by-email'),
-    path('users/search/by-username/', user_views.UserByUsernameView.as_view(), name='users-by-username'),
-    
+    path('users/search/by-email/<str:email>/', user_views.UserByEmailView.as_view(), name='users-by-email'),
+    path('users/search/by-username/<str:username>/', user_views.UserByUsernameView.as_view(), name='users-by-username'),
+   
+
+
+
     # ==================== CUSTOMERS ====================
     path('customers/', customer_views.CustomerListView.as_view(), name='customers-list'),
     path('customers/register/', customer_views.CustomerRegisterView.as_view(), name='customers-register'),
@@ -54,6 +57,10 @@ urlpatterns = [
     path('customers/<str:customer_id>/hard-delete/', customer_views.CustomerHardDeleteView.as_view(), name='customers-hard-delete'),
     path('customers/<str:customer_id>/loyalty/', customer_views.CustomerLoyaltyView.as_view(), name='customers-loyalty'),
     
+    #CUSTOMER QR CODE ENDPOINTS
+    path('customers/<str:customer_id>/qr', customer_views.CustomerQRGenerateView.as_view(), name='customer-qr-generate'),
+    path('qr/verify', customer_views.CustomerQRVerifyView.as_view(), name='customer-qr-verify'),
+
     # ==================== PRODUCTS ====================
     path('products/test/', product_views.TestTemplateView.as_view(), name='products-test'),
     path('products/', product_views.ProductListView.as_view(), name='products-list'),
@@ -129,22 +136,31 @@ urlpatterns = [
     
     # ==================== PROMOTIONS ====================
     path('promotions/health/', promotion_views.PromotionHealthCheckView.as_view(), name='promotions-health'),
-    path('promotions/', promotion_views.PromotionListView.as_view(), name='promotions-list'),
+    
+    # Specific named endpoints (must come BEFORE detail pattern)
     path('promotions/active/', promotion_views.ActivePromotionsView.as_view(), name='promotions-active'),
     path('promotions/deleted/', promotion_views.DeletedPromotionsView.as_view(), name='promotions-deleted'),
     path('promotions/statistics/', promotion_views.PromotionStatisticsView.as_view(), name='promotions-statistics'),
-    path('promotions/audit/', promotion_views.PromotionAuditView.as_view(), name='promotions-audit'),
     path('promotions/search/', promotion_views.PromotionSearchView.as_view(), name='promotions-search'),
-    path('promotions/report/', promotion_views.PromotionReportView.as_view(), name='promotions-report'),
     path('promotions/by-name/', promotion_views.PromotionByNameView.as_view(), name='promotions-by-name'),
+    path('promotions/apply/', promotion_views.PromotionApplicationView.as_view(), name='promotions-apply'),
+    
+    # Detail and nested actions
     path('promotions/<str:promotion_id>/', promotion_views.PromotionDetailView.as_view(), name='promotions-detail'),
     path('promotions/<str:promotion_id>/activate/', promotion_views.PromotionActivationView.as_view(), name='promotions-activate'),
     path('promotions/<str:promotion_id>/deactivate/', promotion_views.PromotionDeactivationView.as_view(), name='promotions-deactivate'),
     path('promotions/<str:promotion_id>/expire/', promotion_views.PromotionExpirationView.as_view(), name='promotions-expire'),
-    path('promotions/<str:promotion_id>/apply/', promotion_views.PromotionApplicationView.as_view(), name='promotions-apply'),
     path('promotions/<str:promotion_id>/restore/', promotion_views.PromotionRestoreView.as_view(), name='promotions-restore'),
     path('promotions/<str:promotion_id>/hard-delete/', promotion_views.PromotionHardDeleteView.as_view(), name='promotions-hard-delete'),
+    path('promotions/<str:promotion_id>/audit/', promotion_views.PromotionAuditView.as_view(), name='promotions-audit'),
+    path('promotions/<str:promotion_id>/report/', promotion_views.PromotionReportView.as_view(), name='promotions-report'),
     
+    # List/Create (should come last among promotions/ prefixes)
+    path('promotions/', promotion_views.PromotionListView.as_view(), name='promotions-list'),
+    
+    #QR code endpoint (must come after detail pattern to avoid conflicts)
+    path('promotions/<str:promotion_id>/qr/', promotion_views.PromotionQRView.as_view(), name='promotions-qr'),
+
     # ==================== SESSIONS ====================
     path('sessions/', session_views.SessionLogsView.as_view(), name='sessions-list'),
     path('sessions/active/', session_views.ActiveSessionsView.as_view(), name='sessions-active'),

@@ -20,7 +20,7 @@
         <div class="user-details">
           <div class="detail-row">
             <strong>ID:</strong>
-            <span>{{ formData._id }}</span>
+            <span>{{ formData.user_id }}</span>
           </div>
           <div class="detail-row">
             <strong>Username:</strong>
@@ -167,8 +167,11 @@
               @change="validateField('role')"
             >
               <option value="">Select Role</option>
+              <option value="user">User</option>
               <option value="admin">Admin</option>
-              <option value="employee">Employee</option>
+              <option value="manager">Manager</option>
+              <option value="staff">Staff</option>
+              <option value="cashier">Cashier</option>
             </select>
             <div v-if="validationErrors.role" class="invalid-feedback">
               {{ validationErrors.role }}
@@ -229,9 +232,9 @@ const { isVisible, isLoading, error, show, hide, setLoading, setError, clearErro
 // Mode: 'add', 'edit', 'view'
 const mode = ref('add')
 
-// Form data
+// Form data (now using user_id)
 const formData = ref({
-  _id: '',
+  user_id: '',
   username: '',
   email: '',
   full_name: '',
@@ -339,7 +342,7 @@ const validateForm = () => {
 
 const resetForm = () => {
   formData.value = {
-    _id: '',
+    user_id: '',
     username: '',
     email: '',
     full_name: '',
@@ -401,8 +404,9 @@ const openModal = (modalMode = 'add', userData = null) => {
   mode.value = modalMode
   
   if (userData) {
+    // Map backend's user_id to form's user_id
     formData.value = {
-      _id: userData._id || '',
+      user_id: userData.user_id || '',
       username: userData.username || '',
       email: userData.email || '',
       full_name: userData.full_name || '',
@@ -433,6 +437,7 @@ defineExpose({
 </script>
 
 <style scoped>
+/* (styles unchanged) */
 .modal-overlay {
   position: fixed;
   top: 0;

@@ -79,7 +79,7 @@ class UserService:
                 return None
             
             # Get existing user
-            user = User.get("users", user_id)
+            user = User.get_by_id(user_id)
             if not user or user.isDeleted:
                 return None
             
@@ -104,10 +104,12 @@ class UserService:
                     password_hash = self.hash_password(password)
                     user.update_password(password_hash)
                 
-                # Use User model's update_user method for other fields
-                # This handles validation and GSI updates automatically
-                if allowed_fields:
-                    user.update_user(**allowed_fields)
+                # Filter to only updatable fields (prevents tzinfo errors from frontend)
+                updatable_fields = ['username', 'email', 'full_name', 'role', 'status']
+                filtered_fields = {k: v for k, v in allowed_fields.items() if k in updatable_fields}
+                
+                if filtered_fields:
+                    user.update_user(**filtered_fields)
                 
                 action = 'updated'
             else:
@@ -128,9 +130,6 @@ class UserService:
             
             return user_dict
             
-        except User.DoesNotExist:
-            logger.error(f"User {user_id} not found")
-            return None
         except ValueError as ve:
             logger.error(f"Validation error updating user: {ve}")
             raise Exception(f"Validation error: {str(ve)}")
@@ -204,7 +203,19 @@ class UserService:
         try:
             # Get users with optional role/status filtering
             if role or status:
-                users = User.get_users_by_role_status(role=role, status=status)
+                # Note: get_users_by_role_status excludes deleted users by default.
+                # If include_deleted=True, we need to include them; fallback to scanning all users.
+                if include_deleted:
+                    # Use get_all_users and filter manually
+                    all_users = User.get_all_users(include_deleted=True)
+                    users = []
+                    for u in all_users:
+                        role_match = not role or u.role.upper() == role.upper()
+                        status_match = not status or u.status.upper() == status.upper()
+                        if role_match and status_match:
+                            users.append(u)
+                else:
+                    users = User.get_users_by_role_status(role=role, status=status)
             else:
                 users = User.get_all_users(include_deleted=include_deleted)
             
@@ -243,7 +254,7 @@ class UserService:
             if not user_id:
                 return None
             
-            user = User.get("users", user_id)
+            user = User.get_by_id(user_id)
             
             if not user:
                 return None
@@ -252,15 +263,12 @@ class UserService:
                 return None
             
             return user.to_dict()
-        except User.DoesNotExist:
-            logger.info(f"User {user_id} not found")
-            return None
         except Exception as e:
             logger.error(f"Error getting user {user_id}: {e}")
             raise Exception(f"Error getting user: {str(e)}")
     
     def get_user_by_username(self, username, include_deleted=False):
-        """Get user by username using PynamoDB model GSI"""
+        """Get user by username using PynamoDB model (scan-based)"""
         try:
             if not username:
                 return None
@@ -279,7 +287,7 @@ class UserService:
             raise Exception(f"Error getting user by username: {str(e)}")
 
     def get_user_by_email(self, email, include_deleted=False):
-        """Get user by email using PynamoDB model GSI"""
+        """Get user by email using PynamoDB model (GSI-based)"""
         try:
             if not email:
                 return None
@@ -298,9 +306,9 @@ class UserService:
             raise Exception(f"Error getting user by email: {str(e)}")
     
     def get_disabled_users(self, page=1, limit=50):
-        """Get users with disabled status using PynamoDB model"""
+        """Get users with inactive status"""
         try:
-            users = User.get_users_by_role_status(status='disabled')
+            users = User.get_users_by_role_status(status='inactive')
             
             # Apply pagination
             skip = (page - 1) * limit
@@ -321,6 +329,30 @@ class UserService:
             logger.error(f"Error getting disabled users: {e}")
             raise Exception(f"Error getting disabled users: {str(e)}")
 
+    def get_deleted_users(self, page=1, limit=50):
+        """Get all soft‑deleted users"""
+        try:
+            all_users = User.get_all_users(include_deleted=True)
+            deleted_users = [u for u in all_users if u.isDeleted]
+            
+            # Apply pagination
+            skip = (page - 1) * limit
+            total = len(deleted_users)
+            users_page = deleted_users[skip:skip + limit]
+            
+            users_data = [u.to_dict() for u in users_page]
+            
+            return {
+                'users': users_data,
+                'total': total,
+                'page': page,
+                'limit': limit,
+                'has_more': skip + limit < total
+            }
+        except Exception as e:
+            logger.error(f"Error getting deleted users: {e}")
+            raise Exception(f"Error getting deleted users: {str(e)}")
+
     def soft_delete_user(self, user_id, current_user=None):
         """Soft delete user using PynamoDB model"""
         try:
@@ -332,7 +364,7 @@ class UserService:
                 return False
             
             # Get user
-            user = User.get("users", user_id)
+            user = User.get_by_id(user_id)
             if not user or user.isDeleted:
                 logger.warning(f"User {user_id} not found or already deleted")
                 return False
@@ -360,9 +392,6 @@ class UserService:
             
             return True
             
-        except User.DoesNotExist:
-            logger.error(f"User {user_id} not found")
-            return False
         except Exception as e:
             logger.error(f"Error soft deleting user {user_id}: {e}")
             raise Exception(f"Error soft deleting user: {str(e)}")
@@ -374,7 +403,7 @@ class UserService:
                 return False
             
             # Get deleted user
-            user = User.get("users", user_id)
+            user = User.get_by_id(user_id)
             if not user or not user.isDeleted:
                 logger.warning(f"User {user_id} not found or not deleted")
                 return False
@@ -402,9 +431,6 @@ class UserService:
             
             return True
             
-        except User.DoesNotExist:
-            logger.error(f"User {user_id} not found")
-            return False
         except Exception as e:
             logger.error(f"Error restoring user {user_id}: {e}")
             raise Exception(f"Error restoring user: {str(e)}")
@@ -422,7 +448,7 @@ class UserService:
                 return False
             
             # Get user before permanent deletion
-            user = User.get("users", user_id)
+            user = User.get_by_id(user_id)
             if not user:
                 logger.error(f"User {user_id} not found")
                 return False
@@ -430,8 +456,8 @@ class UserService:
             user_dict = user.to_dict()
             user_name = user.full_name or user.username
             
-            # PERMANENTLY DELETE
-            user.delete()
+            # PERMANENTLY DELETE (calls User.hard_delete() -> self.delete())
+            user.hard_delete()
             
             # Critical notification
             self._send_user_notification('hard_deleted', user_name, user_id)
@@ -446,10 +472,6 @@ class UserService:
             logger.warning(f"User {user_id} PERMANENTLY DELETED")
             return True
             
-        except User.DoesNotExist:
-            logger.error(f"User {user_id} not found")
-            return False
         except Exception as e:
             logger.error(f"Error permanently deleting user {user_id}: {e}")
             raise Exception(f"Error permanently deleting user: {str(e)}")
-        

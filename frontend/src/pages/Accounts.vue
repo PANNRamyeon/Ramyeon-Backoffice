@@ -3,7 +3,6 @@
     <!-- Page Header -->
     <div class="page-header">
       <h1 class="page-title">User Management</h1>
-      <p class="page-subtitle">Manage system users and their permissions</p>
     </div>
 
     <!-- Action Bar -->
@@ -68,7 +67,7 @@
               :indeterminate.prop="someSelected"
             />
           </th>
-          <th>ID</th>
+          <th>User ID</th>
           <th>Username</th>
           <th>Full Name</th>
           <th>Email</th>
@@ -82,19 +81,19 @@
       <template #body>
         <tr 
           v-for="user in users" 
-          :key="user._id"
-          :class="{ 'table-primary': selectedUsers.includes(user._id) }"
+          :key="user.user_id"
+          :class="{ 'table-primary': selectedUsers.includes(user.user_id) }"
         >
           <td class="checkbox-column">
             <input 
               type="checkbox" 
               class="form-check-input"
-              :value="user._id"
+              :value="user.user_id"
               v-model="selectedUsers"
             />
           </td>
           <td>
-            <span class="badge bg-primary">{{ user._id }}</span>
+            <span class="badge bg-primary">{{ user.user_id }}</span>
           </td>
           <td>{{ user.username }}</td>
           <td>{{ user.full_name }}</td>
@@ -202,7 +201,7 @@ const successMessage = ref(null)
 const exporting = ref(false)
 
 /* -------------------------------------------
-   ACTION BAR CONFIG (must be above handlers)
+   ACTION BAR CONFIG
 ------------------------------------------- */
 const addOptions = [
   {
@@ -223,7 +222,7 @@ const selectionActions = [
 ]
 
 /* -------------------------------------------
-   FILTER CONFIGURATION
+   FILTER CONFIGURATION (role options expanded)
 ------------------------------------------- */
 const filters = computed(() => [
   {
@@ -232,8 +231,10 @@ const filters = computed(() => [
     value: roleFilter.value,
     options: [
       { value: 'all', label: 'All Roles' },
+      { value: 'user', label: 'User' },
       { value: 'admin', label: 'Admin' },
-      { value: 'employee', label: 'Employee' }
+      { value: 'staff', label: 'Staff' },
+      { value: 'cashier', label: 'Cashier' }
     ]
   },
   {
@@ -249,7 +250,7 @@ const filters = computed(() => [
 ])
 
 /* -------------------------------------------
-   SELECTION COMPUTED
+   SELECTION COMPUTED (using user.user_id)
 ------------------------------------------- */
 const allSelected = computed(() =>
   users.value.length > 0 && selectedUsers.value.length === users.value.length
@@ -317,11 +318,11 @@ const handlePageChange = (page) => {
 }
 
 /* -------------------------------------------
-   SELECTION
+   SELECTION (using user_id)
 ------------------------------------------- */
 const toggleSelectAll = (e) => {
   if (e.target.checked) {
-    selectedUsers.value = users.value.map(u => u._id)
+    selectedUsers.value = users.value.map(u => u.user_id)
   } else {
     selectedUsers.value = []
   }
@@ -338,8 +339,10 @@ const editUser = (user) => accountModal.value?.show('edit', user)
 
 const handleModalSubmit = async (userData, mode) => {
   try {
+    // Use user_id if available, fallback to _id (until modal is updated)
+    const userId = userData.user_id || userData._id
     if (mode === 'edit') {
-      await updateUser(userData._id, userData)
+      await updateUser(userId, userData)
       showSuccess('User updated successfully')
     } else {
       await createUser(userData)
@@ -374,7 +377,7 @@ const confirmDeleteUser = async (user) => {
   if (!confirm(`Delete user "${user.username}"?`)) return
 
   try {
-    await deleteUserService(user._id)
+    await deleteUserService(user.user_id)
     showSuccess(`User "${user.username}" deleted`)
     await applyFilters()
   } catch (err) {
@@ -383,17 +386,17 @@ const confirmDeleteUser = async (user) => {
 }
 
 /* -------------------------------------------
-   EXPORT
+   EXPORT (using user_id)
 ------------------------------------------- */
 const exportData = () => {
   exporting.value = true
   try {
-    const headers = ['ID', 'Username', 'Full Name', 'Email', 'Role', 'Status', 'Last Login']
+    const headers = ['User ID', 'Username', 'Full Name', 'Email', 'Role', 'Status', 'Last Login']
 
     const csvContent = [
       headers.join(','),
       ...users.value.map(user => [
-        user._id,
+        user.user_id,
         user.username,
         user.full_name,
         user.email,
@@ -438,9 +441,8 @@ onMounted(() => {
 })
 </script>
 
-
-
 <style scoped>
+/* (styles unchanged, kept for completeness) */
 .accounts-page {
   padding: 1.5rem;
   max-width: 1400px;

@@ -1,68 +1,43 @@
-// services/apiPromotion.js - Updated with data transformation
+// services/apiPromotions.js
 import { api } from './api.js';
 
 class PromotionApiService {
   handleResponse(response) {
     if (!response || !response.data) {
-      return {
-        success: false,
-        message: "No response from server"
-      };
+      return { success: false, message: "No response from server" };
     }
-
     return response.data;
   }
 
   handleError(error) {
-    console.error("❌ Full error object:", error);
-    console.error("❌ Error response:", error.response);
-    console.error("❌ Error response data:", error.response?.data);
-    console.error("❌ Error response status:", error.response?.status);
-    console.error("❌ Error message:", error.message);
-    
+    console.error("❌ API Error:", error);
     if (error.response) {
       const { data, status } = error.response;
-      
-      // ✅ NEW: Extract and log all error details
-      let errorMessage = data.message || data.detail || `Request failed with status ${status}`;
-      let errorDetails = [];
-      
-      // Log detailed validation errors
-      if (data.errors) {
-        console.error("❌ Validation errors:", data.errors);
-        if (Array.isArray(data.errors)) {
-          errorDetails = data.errors;
-          // Join array errors into a readable message
-          if (data.errors.length > 0) {
-            errorMessage += '\n' + data.errors.join('\n');
-          }
-        }
+      let message = data.message || data.detail || `Request failed with status ${status}`;
+      let errors = [];
+      if (data.errors && Array.isArray(data.errors)) {
+        errors = data.errors;
+        message += '\n' + data.errors.join('\n');
       }
-      if (data.message) {
-        console.error("❌ Backend message:", data.message);
-      }
-      if (data.detail) {
-        console.error("❌ Backend detail:", data.detail);
-      }
-      
-      // ✅ Return proper error object with full details
-      return {
-        success: false,
-        message: errorMessage,
-        errors: errorDetails,
-        status
-      };
+      return { success: false, message, errors, status };
     }
-    
-    // ✅ Return proper error object for non-response errors
-    return {
-      success: false,
-      message: error.message || "An unknown error occurred",
-      errors: []
-    };
+    return { success: false, message: error.message || "An unknown error occurred", errors: [] };
   }
 
-  // Data transformation methods
+  // -------------------------------
+  // Helper to normalise any date-like value to ISO 8601
+  // -------------------------------
+  _normalizeDate(value) {
+    if (!value) return value;
+    if (value instanceof Date) return value.toISOString();
+    const date = new Date(value);
+    if (!isNaN(date.getTime())) return date.toISOString();
+    return value; // fallback (should never happen with proper input)
+  }
+
+  // -------------------------------
+  // Transformation helpers
+  // -------------------------------
   transformToBackend(frontendData) {
     let targetType = 'all';
     let targetIds = [];
@@ -77,17 +52,29 @@ class PromotionApiService {
       }
     }
 
+    // Build discount_value as a string
+    let discountValue;
+    if (frontendData.discount_type === 'percentage') {
+      discountValue = `${parseFloat(frontendData.discount_value)}%`;
+    } else {
+      discountValue = parseFloat(frontendData.discount_value).toString();
+    }
+
     const backendData = {
       name: frontendData.promotion_name,
       type: frontendData.discount_type,
-      discount_value: parseFloat(frontendData.discount_value),
+      discount_value: discountValue,
+      promotion_type: frontendData.discount_type,
       target_type: targetType,
       target_ids: targetIds,
-      start_date: frontendData.start_date,
-      end_date: frontendData.end_date,
+      start_date: this._normalizeDate(frontendData.start_date),        // ✅ normalised
+      end_date: this._normalizeDate(frontendData.end_date),            // ✅ normalised
       description: frontendData.description || '',
       usage_limit: frontendData.usage_limit ? parseInt(frontendData.usage_limit) : null,
-      status: frontendData.status
+      status: frontendData.status === 'scheduled' ? 'draft' : frontendData.status,
+      recurrence_rule: frontendData.recurrence_rule || null,
+      min_purchase_amount: frontendData.min_purchase_amount !== undefined ? parseFloat(frontendData.min_purchase_amount) : 100,
+      per_customer_limit: frontendData.per_customer_limit ? parseInt(frontendData.per_customer_limit) : null,
     };
 
     return backendData;
@@ -96,34 +83,20 @@ class PromotionApiService {
   transformUpdateToBackend(frontendData = {}) {
     const backendData = {};
 
-    const normalizeDate = (value) => {
-      if (!value) return value;
-      if (value instanceof Date) return value.toISOString();
-      const parsedDate = new Date(value);
-      return Number.isNaN(parsedDate.getTime()) ? value : parsedDate.toISOString();
-    };
-
-    const normalizeNumber = (value) => {
-      if (value === '' || value === null || value === undefined) return null;
-      const parsed = Number(value);
-      return Number.isNaN(parsed) ? value : parsed;
-    };
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'promotion_name')) {
       backendData.name = frontendData.promotion_name;
     }
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'discount_type')) {
       backendData.type = frontendData.discount_type;
+      backendData.promotion_type = frontendData.discount_type;
     }
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'discount_value')) {
-      const normalizedDiscount = normalizeNumber(frontendData.discount_value);
-      if (normalizedDiscount !== null) {
-        backendData.discount_value = normalizedDiscount;
+      const discountType = frontendData.discount_type || 'fixed_amount';
+      const value = parseFloat(frontendData.discount_value);
+      if (!isNaN(value)) {
+        backendData.discount_value = discountType === 'percentage' ? `${value}%` : value.toString();
       }
     }
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'affected_category')) {
       if (frontendData.affected_category === 'all') {
         backendData.target_type = 'all';
@@ -133,26 +106,29 @@ class PromotionApiService {
         backendData.target_ids = [frontendData.affected_category];
       }
     }
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'start_date')) {
-      backendData.start_date = normalizeDate(frontendData.start_date);
+      backendData.start_date = this._normalizeDate(frontendData.start_date);   // ✅
     }
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'end_date')) {
-      backendData.end_date = normalizeDate(frontendData.end_date);
+      backendData.end_date = this._normalizeDate(frontendData.end_date);       // ✅
     }
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'description')) {
       backendData.description = frontendData.description || '';
     }
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'usage_limit')) {
-      const normalizedUsageLimit = normalizeNumber(frontendData.usage_limit);
-      backendData.usage_limit = normalizedUsageLimit;
+      backendData.usage_limit = frontendData.usage_limit ? parseInt(frontendData.usage_limit) : null;
     }
-
     if (Object.prototype.hasOwnProperty.call(frontendData, 'status')) {
-      backendData.status = frontendData.status;
+      backendData.status = frontendData.status === 'scheduled' ? 'draft' : frontendData.status;
+    }
+    if (Object.prototype.hasOwnProperty.call(frontendData, 'recurrence_rule')) {
+      backendData.recurrence_rule = frontendData.recurrence_rule;
+    }
+    if (Object.prototype.hasOwnProperty.call(frontendData, 'min_purchase_amount')) {
+      backendData.min_purchase_amount = frontendData.min_purchase_amount === '' ? 0 : parseFloat(frontendData.min_purchase_amount);
+    }
+    if (Object.prototype.hasOwnProperty.call(frontendData, 'per_customer_limit')) {
+      backendData.per_customer_limit = frontendData.per_customer_limit ? parseInt(frontendData.per_customer_limit) : null;
     }
 
     return backendData;
@@ -160,7 +136,6 @@ class PromotionApiService {
 
   transformToFrontend(backendData) {
     let affectedCategory = 'all';
-
     if (backendData.target_type === 'categories' && backendData.target_ids?.length > 0) {
       affectedCategory = backendData.target_ids[0];
     }
@@ -180,12 +155,16 @@ class PromotionApiService {
       usage_limit: backendData.usage_limit,
       current_usage: backendData.current_usage || 0,
       description: backendData.description || '',
-      affected_category: affectedCategory
+      affected_category: affectedCategory,
+      recurrence_rule: backendData.recurrence_rule || null,
+      min_purchase_amount: backendData.min_purchase_amount != null ? backendData.min_purchase_amount : 100,
+      per_customer_limit: backendData.per_customer_limit || null,
     };
   }
 
-  // PROMOTION CRUD OPERATIONS
-
+  // -------------------------------
+  // API Methods
+  // -------------------------------
   async getAllPromotions(params = {}) {
     try {
       const backendParams = { ...params };
@@ -193,43 +172,35 @@ class PromotionApiService {
         backendParams.type = params.discount_type;
         delete backendParams.discount_type;
       }
+      if (backendParams.status && backendParams.status === 'scheduled') {
+        backendParams.status = 'draft';
+      }
 
       const response = await api.get('/promotions/', { params: backendParams });
       const data = this.handleResponse(response);
 
       if (data.promotions && Array.isArray(data.promotions)) {
-        const transformedPromotions = data.promotions.map(promotion => {
-          try {
-            return this.transformToFrontend(promotion);
-          } catch (transformError) {
-            return promotion;
-          }
+        const transformed = data.promotions.map(p => {
+          try { return this.transformToFrontend(p); } catch { return p; }
         });
-
         return {
           success: data.success || true,
-          promotions: transformedPromotions,
+          promotions: transformed,
           pagination: data.pagination || {
             current_page: 1,
             total_pages: 1,
             total_items: data.promotions.length,
-            items_per_page: params.limit || 20
-          }
+            items_per_page: params.limit || 20,
+          },
         };
       }
 
       return {
         success: data.success || true,
         promotions: [],
-        pagination: data.pagination || {
-          current_page: 1,
-          total_pages: 1,
-          total_items: 0,
-          items_per_page: params.limit || 20
-        }
+        pagination: { current_page: 1, total_pages: 1, total_items: 0, items_per_page: params.limit || 20 },
       };
     } catch (error) {
-      console.error("Error fetching promotions:", error);
       return this.handleError(error);
     }
   }
@@ -238,16 +209,11 @@ class PromotionApiService {
     try {
       const response = await api.get(`/promotions/${promotionId}/`);
       const data = this.handleResponse(response);
-
-      if (data.success && data.promotion) {
-        return {
-          success: true,
-          promotion: this.transformToFrontend(data.promotion)
-        };
+      if (data.promotion) {
+        return { success: true, promotion: this.transformToFrontend(data.promotion) };
       }
       return data;
     } catch (error) {
-      console.error(`Error fetching promotion ${promotionId}:`, error);
       return this.handleError(error);
     }
   }
@@ -257,22 +223,11 @@ class PromotionApiService {
       const backendData = this.transformToBackend(promotionData);
       const response = await api.post('/promotions/', backendData);
       const data = this.handleResponse(response);
-
-      if (data && data.promotion) {
-        return {
-          success: true,
-          promotion: this.transformToFrontend(data.promotion),
-          message: data.message || "Promotion created successfully"
-        };
+      if (data.promotion) {
+        return { success: true, promotion: this.transformToFrontend(data.promotion) };
       }
-
-      return {
-        success: true,
-        promotion: data,
-        message: "Promotion created successfully"
-      };
+      return { success: true, promotion: data };
     } catch (error) {
-      console.error("Error creating promotion:", error);
       return this.handleError(error);
     }
   }
@@ -282,17 +237,11 @@ class PromotionApiService {
       const backendData = this.transformUpdateToBackend(promotionData);
       const response = await api.put(`/promotions/${promotionId}/`, backendData);
       const data = this.handleResponse(response);
-
-      if (data.success && data.promotion) {
-        return {
-          success: true,
-          promotion: this.transformToFrontend(data.promotion),
-          message: data.message
-        };
+      if (data.promotion) {
+        return { success: true, promotion: this.transformToFrontend(data.promotion) };
       }
       return data;
     } catch (error) {
-      console.error(`Error updating promotion ${promotionId}:`, error);
       return this.handleError(error);
     }
   }
@@ -302,7 +251,6 @@ class PromotionApiService {
       const response = await api.delete(`/promotions/${promotionId}/`);
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error deleting promotion ${promotionId}:`, error);
       return this.handleError(error);
     }
   }
@@ -311,43 +259,33 @@ class PromotionApiService {
     try {
       const deletePromises = promotionIds.map(id => this.deletePromotion(id));
       const results = await Promise.allSettled(deletePromises);
-
       return {
         success: true,
         results: results.map((result, index) => ({
           promotion_id: promotionIds[index],
           success: result.status === 'fulfilled',
-          error: result.status === 'rejected' ? result.reason.message : null
-        }))
+          error: result.status === 'rejected' ? result.reason.message : null,
+        })),
       };
     } catch (error) {
-      console.error("Error in bulk delete promotions:", error);
       return this.handleError(error);
     }
   }
 
-  // SEARCH AND FILTERING
   async searchPromotions(searchQuery, filters = {}) {
     try {
-      const params = {
-        search_query: searchQuery,
-        ...filters
-      };
-
+      const params = { search_query: searchQuery, ...filters };
       if (filters.discount_type && filters.discount_type !== 'all') {
         params.type = filters.discount_type;
         delete params.discount_type;
       }
-
       const response = await api.get('/promotions/search/', { params });
       const data = this.handleResponse(response);
-
       return {
         success: data.success,
-        promotions: data.promotions?.map(p => this.transformToFrontend(p)) || []
+        promotions: (data.promotions || []).map(p => this.transformToFrontend(p)),
       };
     } catch (error) {
-      console.error("Error searching promotions:", error);
       return this.handleError(error);
     }
   }
@@ -356,24 +294,20 @@ class PromotionApiService {
     try {
       const response = await api.get('/promotions/active/');
       const data = this.handleResponse(response);
-
       return {
         success: data.success,
-        promotions: data.promotions?.map(p => this.transformToFrontend(p)) || []
+        promotions: (data.promotions || []).map(p => this.transformToFrontend(p)),
       };
     } catch (error) {
-      console.error("Error fetching active promotions:", error);
       return this.handleError(error);
     }
   }
 
-  // PROMOTION LIFECYCLE
   async activatePromotion(promotionId) {
     try {
       const response = await api.post(`/promotions/${promotionId}/activate/`);
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error activating promotion ${promotionId}:`, error);
       return this.handleError(error);
     }
   }
@@ -383,24 +317,20 @@ class PromotionApiService {
       const response = await api.post(`/promotions/${promotionId}/deactivate/`);
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error deactivating promotion ${promotionId}:`, error);
       return this.handleError(error);
     }
   }
 
-  // EXPORT
   async exportPromotions(filters = {}, format = 'csv') {
     try {
       const data = await this.getAllPromotions(filters);
       const exportData = {
         promotions: data.promotions,
         exported_at: new Date().toISOString(),
-        format: format
+        format: format,
       };
-
       return JSON.stringify(exportData, null, 2);
     } catch (error) {
-      console.error("Error exporting promotions:", error);
       return this.handleError(error);
     }
   }

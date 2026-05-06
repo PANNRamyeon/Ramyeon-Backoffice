@@ -1,63 +1,53 @@
-# Backend Requirements for PANN POS System
-# Updated for Production Deployment - June 2025
-
-# Django Framework
-Django==5.2.1
-djangorestframework==3.16.0
-django-cors-headers==4.7.0
-
-# AWS DynamoDB Database
-pynamodb>=6.0.0
-boto3>=1.34.0  # AWS SDK for Python, used by PynamoDB and custom database logic
-pymongo>=4.6.0  # Required for migration scripts from MongoDB
-
-# Environment & Configuration
-python-decouple==3.8
-python-dotenv==1.0.1
-
-# Authentication & Security
-bcrypt==4.3.0
-cryptography==45.0.3
-python-jose==3.5.0
-passlib==1.7.4
-PyJWT==2.8.0
-
-# Date & Time
-pytz==2025.2
-tzdata==2025.2
-
-# Production Server & Static Files
-gunicorn==21.2.0
-whitenoise==6.6.0
-
-# HTTP Requests (for API integrations)
-requests==2.31.0
-requests-oauthlib==1.3.1
-
-# Core Dependencies
 asgiref==3.8.1
+bcrypt==4.3.0
+boto3==1.42.37
+botocore==1.42.37
+certifi==2025.10.5
 cffi==1.17.1
+charset-normalizer==3.4.4
+colorama==0.4.6
+cryptography==45.0.3
+dataclasses==0.6
+Django==5.2.1
+django-cors-headers==4.7.0
+djangorestframework==3.16.0
+djongo==1.2.31
+dnspython==2.7.0
 ecdsa==0.19.1
+et_xmlfile==2.0.0
+gunicorn==21.2.0
+idna==3.11
+jmespath==1.1.0
+MarkupSafe==3.0.3
+motor==3.7.1
+numpy==2.3.1
+oauthlib==3.3.1
+openpyxl==3.1.5
+packaging==25.0
+pandas==2.3.1
+passlib==1.7.4
+pillow==12.2.0
 pyasn1==0.6.1
 pycparser==2.22
+PyJWT==2.8.0
+pymongo==4.13.0
+pynamodb==6.1.0
+python-dateutil==2.9.0.post0
+python-decouple==3.8
+python-dotenv==1.0.1
+python-http-client==3.3.7
+python-jose==3.5.0
+pytz==2025.2
+qrcode==8.2
+requests==2.31.0
+requests-oauthlib==1.3.1
 rsa==4.9.1
+s3transfer==0.16.0
+sendgrid==6.11.0
 six==1.17.0
 sqlparse==0.5.3
-pandas>=1.3.0
-openpyxl>=3.0.0
-
-
-# Email & SMS
-sendgrid==6.11.0
-# twilio==8.12.0
-
-# Development & Testing (not installed in production)
-# pytest==7.4.4
-# pytest-django==4.8.0
-# black==23.12.1
-# flake8==7.0.0
-
-# Payment Integration (Future)
-# Add when implementing PayMongo/HitPay
-# requests==2.31.0
-# stripe==7.12.0
+starkbank-ecdsa==2.2.0
+tzdata==2025.2
+urllib3==2.5.0
+Werkzeug==3.1.3
+whitenoise==6.6.0

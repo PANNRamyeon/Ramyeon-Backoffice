@@ -1,44 +1,30 @@
 from django.urls import path
 from . import views
 
-app_name = 'notifications'
-
 urlpatterns = [
-    # ================================================================
-    # BULK OPERATIONS - PUT THESE FIRST (most specific)
-    # ================================================================
+    # Creation
+    path('create/', views.create_notification, name='create_notification'),
+    path('create-inventory-alert/', views.create_inventory_alert, name='create_inventory_alert'),
+
+    # Retrieval
+    path('list/', views.list_notifications, name='list_notifications'),
+    path('get/<str:notification_id>/', views.get_notification, name='get_notification'),
+    path('recent/', views.recent_notifications, name='recent_notifications'),
+    path('all/', views.all_notifications, name='all_notifications'),
+    path('unread-count/', views.unread_count, name='unread_count'),
+
+    # Status updates
+    path('mark-read/<str:notification_id>/', views.mark_notification_read, name='mark_notification_read'),
+    path('mark-unread/<str:notification_id>/', views.mark_notification_unread, name='mark_notification_unread'),
     path('mark-all-read/', views.mark_all_notifications_read, name='mark_all_read'),
-    path('mark-all-unread/', views.mark_all_notifications_unread, name='mark_all_unread'),
-    path('archive-all-read/', views.archive_all_read_notifications, name='archive_all_read'),
-    
-    # ================================================================
-    # SPECIAL ENDPOINTS - BEFORE GENERIC PATTERNS
-    # ================================================================
-    path('recent/', views.recent_notifications, name='recent'),
-    path('all/', views.all_notifications, name='all'),
-    path('archived/', views.get_archived_notifications, name='archived'),
-    path('stats/', views.notification_stats, name='stats'),
-    
-    # ================================================================
-    # EMAIL VERIFICATION ENDPOINTS
-    # ================================================================
-    path('email/verify/', views.verify_email, name='verify_email'),  # Legacy link-based
-    path('email/verify-code/', views.verify_code, name='verify_code'),  # Code-based verification
-    path('email/send-code/', views.send_verification_code, name='send_verification_code'),
-    path('email/resend-verification/', views.resend_verification_email, name='resend_verification'),  # Legacy (now sends code)
-    
-    # ================================================================
-    # CREATION ENDPOINTS
-    # ================================================================
-    path('create/', views.create_notification, name='create'),
-    path('create/inventory-alert/', views.create_inventory_alert, name='inventory_alert'),
-    
-    # ================================================================
-    # LIST/FILTER ENDPOINTS
-    # ================================================================
-    path('list/', views.list_notifications, name='list'),
-    path('<str:notification_id>/mark-read/', views.mark_notification_read, name='mark_read'),
-    path('<str:notification_id>/archive/', views.archive_notification, name='archive'),
-    path('<str:notification_id>/unarchive/', views.unarchive_notification, name='unarchive'),
-    path('<str:notification_id>/delete/', views.delete_notification, name='delete'),
+
+    # Archive
+    path('archive/<str:notification_id>/', views.archive_notification, name='archive_notification'),
+    path('unarchive/<str:notification_id>/', views.unarchive_notification, name='unarchive_notification'),
+
+    # Deletion
+    path('delete/<str:notification_id>/', views.delete_notification, name='delete_notification'),
+
+    # Statistics
+    path('stats/', views.notification_stats, name='notification_stats'),
 ]

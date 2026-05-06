@@ -79,9 +79,9 @@ export function usePromotions() {
         limit: pagination.value.items_per_page
       }
 
-      // Discount type
+      // Discount type – send as 'discount_type', the API service will convert to 'type'
       if (filters.value.discountType !== 'all') {
-        params.type = filters.value.discountType
+          params.discount_type = filters.value.discountType
       }
 
       // Status

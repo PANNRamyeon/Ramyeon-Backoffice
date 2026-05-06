@@ -1,98 +1,593 @@
-# notifications/models.py
-from django.db import models
-from django.contrib.auth.models import User
-from django.utils import timezone
-import uuid
+"""
+Notifications Model – Single Table Design (no new GSIs)
+PK = notifications#<YYYY-MM-DD>   (date‑sharded)
+SK = NOTIF-#####                   (global 5‑digit sequence)
+Auto‑archive on read after 90 days, auto‑delete via TTL after 120 days.
+Includes optional include_archived parameter for frontend.
+"""
+from pynamodb.models import Model
+from pynamodb.attributes import (
+    UnicodeAttribute, BooleanAttribute, NumberAttribute,
+    UTCDateTimeAttribute, JSONAttribute
+)
+from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
+from datetime import datetime, timedelta, timezone, date
+import logging
+from typing import Optional, List, Dict, Any, Tuple
 
-class Notification(models.Model):
-    PRIORITY_CHOICES = [
-        ('low', 'Low'),
-        ('medium', 'Medium'),
-        ('high', 'High'),
-        ('urgent', 'Urgent'),
-    ]
-    
-    NOTIFICATION_TYPE_CHOICES = [
-        ('inventory', 'Inventory'),
-        ('order', 'Order'),
-        ('payment', 'Payment'),
-        ('system', 'System'),
-        ('promotion', 'Promotion'),
-        ('alert', 'Alert'),
-    ]
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    title = models.CharField(max_length=255)
-    message = models.TextField()
-    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
-    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
-    is_read = models.BooleanField(default=False)
-    created_at = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
-    notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPE_CHOICES)
-    
-    # Metadata stored as JSON field
-    metadata = models.JSONField(default=dict, blank=True)
-    
+logger = logging.getLogger(__name__)
+
+
+# ============= GLOBAL SECONDARY INDEXES =============
+class NotificationTypeIndex(GlobalSecondaryIndex):
     class Meta:
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['recipient', 'is_read']),
-            models.Index(fields=['created_at']),
-            models.Index(fields=['priority']),
-            models.Index(fields=['notification_type']),
-        ]
+        index_name = 'notification-type-index'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+    notification_type = UnicodeAttribute(hash_key=True)
+    created_at = UTCDateTimeAttribute(range_key=True)
+
+class PriorityIndex(GlobalSecondaryIndex):
+    class Meta:
+        index_name = 'notification-priority-index'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+    priority = UnicodeAttribute(hash_key=True)
+    created_at = UTCDateTimeAttribute(range_key=True)
+
+class IsReadIndex(GlobalSecondaryIndex):
+    class Meta:
+        index_name = 'notification-is-read-index'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+    is_read = BooleanAttribute(hash_key=True)
+    created_at = UTCDateTimeAttribute(range_key=True)
+
+class ActionTypeIndex(GlobalSecondaryIndex):
+    class Meta:
+        index_name = 'notification-action-type-index'
+        projection = AllProjection()
+        read_capacity_units = 5
+        write_capacity_units = 5
+    action_type = UnicodeAttribute(hash_key=True)
+    created_at = UTCDateTimeAttribute(range_key=True)
+
+
+# ============= MAIN NOTIFICATION MODEL =============
+class Notification(Model):
+    """
+    NOTIFICATION MODEL – Automatic archiving + TTL deletion.
     
-    def __str__(self):
-        return f"{self.title} - {self.recipient.username}"
-    
-    def mark_as_read(self):
-        """Mark notification as read"""
-        self.is_read = True
-        self.save(update_fields=['is_read', 'updated_at'])
-    
-    def mark_as_unread(self):
-        """Mark notification as unread"""
-        self.is_read = False
-        self.save(update_fields=['is_read', 'updated_at'])
-    
-    @property
-    def is_high_priority(self):
-        """Check if notification is high priority"""
-        return self.priority in ['high', 'urgent']
-    
+    - PK = notifications#<YYYY-MM-DD>   (date shard)
+    - SK = NOTIF-#####                  (globally unique 5‑digit)
+    - Lazy archive: any read that finds the item older than ARCHIVE_AFTER_DAYS
+      will mark archived=True and save before returning it (unless include_archived=True).
+    - TTL set to DELETE_AFTER_DAYS for automatic deletion by DynamoDB.
+    """
+    class Meta:
+        table_name = DYNAMO_TABLE_NAME
+        region = AWS_REGION
+        if DYNAMODB_LOCAL:
+            host = DYNAMODB_LOCAL_HOST
+        read_capacity_units = 10
+        write_capacity_units = 20
+
+    # Configurable thresholds
+    ARCHIVE_AFTER_DAYS = 90
+    DELETE_AFTER_DAYS = 120
+
+    # Primary keys
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK")
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")
+
+    # GSIs
+    type_index = NotificationTypeIndex()
+    priority_index = PriorityIndex()
+    is_read_index = IsReadIndex()
+    action_type_index = ActionTypeIndex()
+
+    # Content
+    title = UnicodeAttribute()
+    message = UnicodeAttribute()
+    priority = UnicodeAttribute()
+    notification_type = UnicodeAttribute()
+    action_type = UnicodeAttribute(null=True)
+
+    # Status
+    is_read = BooleanAttribute(default=False)
+    archived = BooleanAttribute(default=False)
+
+    # Timestamps
+    created_at = UTCDateTimeAttribute()
+    updated_at = UTCDateTimeAttribute()
+    delivered_at = UTCDateTimeAttribute(null=True)
+
+    # TTL for automatic deletion
+    ttl = NumberAttribute(null=True, attr_name="TTL")
+
+    # Metadata
+    metadata = JSONAttribute(null=True)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    VALID_PRIORITIES = {"low", "medium", "high", "critical"}
+    VALID_TYPES = {
+        "system", "user", "order", "inventory", "promotion",
+        "alert", "reminder", "security", "maintenance", "update"
+    }
+
+    @staticmethod
+    def validate_priority(priority: str) -> bool:
+        return priority in Notification.VALID_PRIORITIES
+
+    @staticmethod
+    def validate_notification_type(notification_type: str) -> bool:
+        return notification_type in Notification.VALID_TYPES
+
+    @staticmethod
+    def _date_partition(dt: datetime) -> str:
+        return f"notifications#{dt.strftime('%Y-%m-%d')}"
+
+    # ------------------------------------------------------------------
+    #  Core creation method
+    # ------------------------------------------------------------------
     @classmethod
-    def create_inventory_alert(cls, recipient, product_id, current_stock, product_name=None):
-        """Helper method to create inventory alerts"""
-        title = f"Low Stock Alert"
-        message = f"{product_name or 'Product'} is running low"
-        
-        return cls.objects.create(
-            title=title,
-            message=message,
-            priority='high',
-            recipient=recipient,
-            notification_type='inventory',
-            metadata={
-                'product_id': product_id,
-                'current_stock': current_stock,
-            }
+    def create_notification(cls, title: str, message: str,
+                            notification_type: str, priority: str = "medium",
+                            action_type: str = None, metadata: Dict = None,
+                            delivered_at: datetime = None) -> 'Notification':
+        """Create a new notification with auto‑generated SK and TTL."""
+        if not cls.validate_notification_type(notification_type):
+            raise ValueError(f"Invalid notification type: {notification_type}")
+        if not cls.validate_priority(priority):
+            raise ValueError(f"Invalid priority: {priority}")
+
+        now = datetime.now(timezone.utc)
+        partition = cls._date_partition(now)
+
+        # SK: NOTIF-##### (globally unique)
+        sk = generate_sk('NOTIF', 'notification_seq')
+
+        # TTL: delete automatically after DELETE_AFTER_DAYS
+        expiry = int((now + timedelta(days=cls.DELETE_AFTER_DAYS)).timestamp())
+
+        notification = cls(
+            pk=partition,
+            sk=sk,
+            title=title.strip(),
+            message=message.strip(),
+            notification_type=notification_type,
+            priority=priority,
+            action_type=action_type,
+            metadata=metadata or {},
+            delivered_at=delivered_at or now,
+            is_read=False,
+            archived=False,
+            created_at=now,
+            updated_at=now,
+            ttl=expiry
         )
+        notification.save()
+        # Optional stats update (best‑effort)
+        cls._increment_stats(total=1, unread=1,
+                             urgent=1 if priority in ('high','critical') else 0)
+        logger.info(f"Notification created: {sk} - Type: {notification_type}, Priority: {priority}")
+        return notification
+
+    # ------------------------------------------------------------------
+    #  Automatic archiving logic (lazy)
+    # ------------------------------------------------------------------
+    def _auto_archive_if_needed(self) -> None:
+        """
+        If the notification is older than ARCHIVE_AFTER_DAYS and not yet
+        archived, mark it archived now and save.
+        """
+        if not self.archived and self.created_at is not None:
+            age = datetime.now(timezone.utc) - self.created_at
+            if age > timedelta(days=self.ARCHIVE_AFTER_DAYS):
+                logger.info(f"Auto‑archiving notification {self.sk}")
+                self.archive()  # will save and update stats
+
+    # ------------------------------------------------------------------
+    #  Lookup by ID (scans backwards over date partitions)
+    # ------------------------------------------------------------------
+    @classmethod
+    def get_by_id(cls, notification_id: str, include_archived: bool = False) -> 'Notification | None':
+        """
+        Fetch by SK (e.g., 'NOTIF-00001').
+        Scans recent date partitions backwards (up to TTL horizon).
+        If include_archived is True, returns even if archived.
+        Otherwise, triggers auto‑archive if old and returns None if archived.
+        """
+        if not notification_id.startswith('NOTIF-'):
+            notification_id = f"NOTIF-{notification_id}"
+
+        today = date.today()
+        max_days = cls.DELETE_AFTER_DAYS + 1
+
+        for days_ago in range(max_days):
+            d = today - timedelta(days=days_ago)
+            partition = cls._date_partition(
+                datetime(d.year, d.month, d.day, tzinfo=timezone.utc))
+            try:
+                result = cls.query(partition, cls.sk == notification_id, limit=1)
+                for item in result:
+                    if item.archived and not include_archived:
+                        return None
+                    # If not including archived, auto‑archive if old (but item is not archived yet)
+                    if not include_archived:
+                        item._auto_archive_if_needed()
+                    return item
+            except Exception as e:
+                logger.warning(f"Error scanning partition {partition}: {e}")
+                continue
+        return None
+
+    @classmethod
+    def get_by_id_including_archived(cls, notification_id: str) -> 'Notification | None':
+        """Shortcut to retrieve a notification even if it's archived."""
+        return cls.get_by_id(notification_id, include_archived=True)
+
+    # ------------------------------------------------------------------
+    #  GSI‑backed queries (with pagination, server‑side filtering, and include_archived)
+    # ------------------------------------------------------------------
+    @classmethod
+    def _archive_batch(cls, items: List['Notification']) -> None:
+        """Lazily archive a batch of fetched items (only when include_archived=False)."""
+        for item in items:
+            if not item.archived:
+                item._auto_archive_if_needed()
+
+    @classmethod
+    def get_by_type(cls, notification_type: str,
+                    limit: int = 50, last_key: dict = None,
+                    include_archived: bool = False) -> Tuple[List['Notification'], Optional[dict]]:
+        filter_condition = None if include_archived else (cls.archived == False)
+        result = cls.type_index.query(
+            notification_type,
+            scan_index_forward=False,
+            filter_condition=filter_condition,
+            limit=limit,
+            last_evaluated_key=last_key
+        )
+        items = list(result)
+        if not include_archived:
+            cls._archive_batch(items)
+        return items, result.last_evaluated_key
+
+    @classmethod
+    def get_by_priority(cls, priority: str,
+                        limit: int = 50, last_key: dict = None,
+                        include_archived: bool = False) -> Tuple[List['Notification'], Optional[dict]]:
+        filter_condition = None if include_archived else (cls.archived == False)
+        result = cls.priority_index.query(
+            priority,
+            scan_index_forward=False,
+            filter_condition=filter_condition,
+            limit=limit,
+            last_evaluated_key=last_key
+        )
+        items = list(result)
+        if not include_archived:
+            cls._archive_batch(items)
+        return items, result.last_evaluated_key
+
+    @classmethod
+    def get_unread_notifications(cls, limit: int = 100, last_key: dict = None,
+                                 include_archived: bool = False) -> Tuple[List['Notification'], Optional[dict]]:
+        filter_condition = None if include_archived else (cls.archived == False)
+        result = cls.is_read_index.query(
+            False,
+            scan_index_forward=False,
+            filter_condition=filter_condition,
+            limit=limit,
+            last_evaluated_key=last_key
+        )
+        items = list(result)
+        if not include_archived:
+            cls._archive_batch(items)
+        return items, result.last_evaluated_key
+
+    @classmethod
+    def get_by_action_type(cls, action_type: str,
+                           limit: int = 50, last_key: dict = None,
+                           include_archived: bool = False) -> Tuple[List['Notification'], Optional[dict]]:
+        if not action_type:
+            return [], None
+        filter_condition = None if include_archived else (cls.archived == False)
+        result = cls.action_type_index.query(
+            action_type,
+            scan_index_forward=False,
+            filter_condition=filter_condition,
+            limit=limit,
+            last_evaluated_key=last_key
+        )
+        items = list(result)
+        if not include_archived:
+            cls._archive_batch(items)
+        return items, result.last_evaluated_key
+
+    @classmethod
+    def get_recent_notifications(cls, hours: int = 24,
+                                 limit: int = 100,
+                                 include_archived: bool = False) -> List['Notification']:
+        """
+        Get recent notifications using date partitions.
+        """
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(hours=hours)
+        items = []
+
+        d = start.date()
+        while d <= now.date():
+            partition = cls._date_partition(
+                datetime(d.year, d.month, d.day, tzinfo=timezone.utc))
+            try:
+                for item in cls.query(partition,
+                                      scan_index_forward=False,
+                                      limit=limit - len(items)):
+                    if item.created_at >= start:
+                        if not include_archived and item.archived:
+                            continue
+                        items.append(item)
+                        if len(items) >= limit:
+                            break
+            except Exception:
+                pass
+            if len(items) >= limit:
+                break
+            d += timedelta(days=1)
+
+        if not include_archived:
+            cls._archive_batch(items)
+        return items
+
+    # ------------------------------------------------------------------
+    #  Stats (best‑effort counter item)
+    # ------------------------------------------------------------------
+    @classmethod
+    def _update_stats(cls, **increments):
+        try:
+            update_expr = ""
+            expr_attr_names = {}
+            expr_attr_vals = {}
+            for i, (field, delta) in enumerate(increments.items()):
+                if delta == 0:
+                    continue
+                place = f"#f{i}"
+                expr_attr_names[place] = field
+                val_place = f":v{i}"
+                expr_attr_vals[val_place] = delta
+                update_expr += f" ADD {place} {val_place}"
+            if not update_expr:
+                return
+
+            conn = cls._get_connection()
+            # Pass table_name (positional) and key (positional) correctly:
+            conn.update_item(
+                cls.Meta.table_name,                    # 1st positional
+                {"PK": "NOTIF_STATS", "SK": "COUNTS"},  # 2nd positional (key)
+                update_expression=update_expr.strip(),
+                expression_attribute_names=expr_attr_names,
+                expression_attribute_values=expr_attr_vals
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update notification stats: {e}")
+
+    @classmethod
+    def _increment_stats(cls, total=0, unread=0, urgent=0):
+        cls._update_stats(total=total, unread=unread, urgent=urgent)
+
+    @classmethod
+    def _decrement_stats(cls, total=0, unread=0, urgent=0):
+        cls._update_stats(total=-total, unread=-unread, urgent=-urgent)
+
+    @classmethod
+    def get_unread_count(cls) -> int:
+        try:
+            conn = cls._get_connection()
+            response = conn.get_item(
+                table_name=cls.Meta.table_name,
+                key={"PK": "NOTIF_STATS", "SK": "COUNTS"},
+                consistent_read=False
+            )
+            item = response.get("Item")
+            if item:
+                return int(item.get("unread", 0))
+        except Exception:
+            pass
+        # Fallback (slow) – count via GSI
+        count = 0
+        for item in cls.is_read_index.query(False, scan_index_forward=False, limit=1000):
+            if not item.archived:
+                count += 1
+        return count
+
+    @classmethod
+    def mark_all_as_read(cls) -> int:
+        count = 0
+        last_key = None
+        while True:
+            items, last_key = cls.get_unread_notifications(limit=500, last_key=last_key)
+            for notif in items:
+                notif.mark_as_read()
+                count += 1
+            if not last_key:
+                break
+        return count
+
+    # ------------------------------------------------------------------
+    #  Instance methods (state changes with stats updates)
+    # ------------------------------------------------------------------
+    def mark_as_read(self) -> 'Notification':
+        if not self.is_read:
+            self.is_read = True
+            self.updated_at = datetime.now(timezone.utc)
+            self.save()
+            self._decrement_stats(unread=1)
+            logger.info(f"Notification {self.sk} marked as read")
+        return self
+
+    def mark_as_unread(self) -> 'Notification':
+        if self.is_read:
+            self.is_read = False
+            self.updated_at = datetime.now(timezone.utc)
+            self.save()
+            self._increment_stats(unread=1)
+            logger.info(f"Notification {self.sk} marked as unread")
+        return self
+
+    def archive(self) -> 'Notification':
+        if not self.archived:
+            self.archived = True
+            self.updated_at = datetime.now(timezone.utc)
+            self.save()
+            self._decrement_stats(total=1)
+            if not self.is_read:
+                self._decrement_stats(unread=1)
+            if self.priority in ('high', 'critical'):
+                self._decrement_stats(urgent=1)
+            logger.info(f"Notification {self.sk} archived")
+        return self
+
+    def unarchive(self) -> 'Notification':
+        if self.archived:
+            self.archived = False
+            self.updated_at = datetime.now(timezone.utc)
+            self.save()
+            self._increment_stats(total=1)
+            if not self.is_read:
+                self._increment_stats(unread=1)
+            if self.priority in ('high', 'critical'):
+                self._increment_stats(urgent=1)
+            logger.info(f"Notification {self.sk} unarchived")
+        return self
+
+    def is_urgent(self) -> bool:
+        return self.priority in ("high", "critical")
+
+    def get_age_days(self) -> float:
+        if not self.created_at:
+            return 0.0
+        delta = datetime.now(timezone.utc) - self.created_at
+        return delta.days + delta.seconds / 86400.0
+
+    def is_actionable(self) -> bool:
+        return bool(self.action_type)
+
+    def to_dict(self) -> dict:
+        return {
+            "notification_id": self.sk,
+            "title": self.title,
+            "message": self.message,
+            "priority": self.priority,
+            "notification_type": self.notification_type,
+            "action_type": self.action_type,
+            "is_read": self.is_read,
+            "archived": self.archived,
+            "is_urgent": self.is_urgent(),
+            "is_actionable": self.is_actionable(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "delivered_at": self.delivered_at.isoformat() if self.delivered_at else None,
+            "age_days": round(self.get_age_days(), 1),
+            "metadata": self.metadata or {}
+        }
+
+    def to_summary_dict(self) -> dict:
+        return {
+            "notification_id": self.sk,
+            "title": self.title,
+            "priority": self.priority,
+            "notification_type": self.notification_type,
+            "action_type": self.action_type,
+            "is_read": self.is_read,
+            "is_urgent": self.is_urgent(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "age_days": round(self.get_age_days(), 1)
+        }
+
+    def save(self, condition=None, **kwargs):
+        self.updated_at = datetime.now(timezone.utc)
+        return super().save(condition=condition, **kwargs)
 
 
-# Optional: Create a manager for common queries
-class NotificationManager(models.Manager):
-    def unread_for_user(self, user):
-        """Get unread notifications for a user"""
-        return self.filter(recipient=user, is_read=False)
-    
-    def high_priority_for_user(self, user):
-        """Get high priority notifications for a user"""
-        return self.filter(recipient=user, priority__in=['high', 'urgent'])
-    
-    def by_type_for_user(self, user, notification_type):
-        """Get notifications by type for a user"""
-        return self.filter(recipient=user, notification_type=notification_type)
+# ============= Convenience factories =============
+    @classmethod
+    def create_system_notification(cls, title: str, message: str,
+                                   priority: str = "medium",
+                                   metadata: Dict = None) -> 'Notification':
+        return cls.create_notification(
+            title=title, message=message,
+            notification_type="system", priority=priority,
+            action_type="system_alert", metadata=metadata)
 
-# Add the manager to the model (add this line to the Notification class)
-# objects = NotificationManager()
+    @classmethod
+    def create_order_notification(cls, title: str, message: str,
+                                  order_id: str, order_status: str,
+                                  priority: str = "medium") -> 'Notification':
+        metadata = {
+            "event": "order_update",
+            "order_id": order_id,
+            "order_status": order_status,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        return cls.create_notification(
+            title=title, message=message,
+            notification_type="order", priority=priority,
+            action_type="view_order", metadata=metadata)
+
+    @classmethod
+    def create_inventory_notification(cls, title: str, message: str,
+                                      product_id: str, batch_id: str,
+                                      change_type: str,
+                                      priority: str = "high") -> 'Notification':
+        metadata = {
+            "event": "inventory_change",
+            "product_id": product_id,
+            "batch_id": batch_id,
+            "change_type": change_type,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        return cls.create_notification(
+            title=title, message=message,
+            notification_type="inventory", priority=priority,
+            action_type="update_inventory", metadata=metadata)
+
+    @classmethod
+    def create_security_notification(cls, title: str, message: str,
+                                     event_type: str, ip_address: str = None,
+                                     priority: str = "critical") -> 'Notification':
+        metadata = {
+            "event": "security_alert",
+            "event_type": event_type,
+            "ip_address": ip_address,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        return cls.create_notification(
+            title=title, message=message,
+            notification_type="security", priority=priority,
+            action_type="review_security", metadata=metadata)
+
+    @classmethod
+    def notify_inventory_low(cls, product_id: str, product_name: str,
+                             current_quantity: int, threshold: int) -> 'Notification':
+        return cls.create_inventory_notification(
+            title=f"Low Inventory Alert: {product_name}",
+            message=f"Inventory for {product_name} is low. Current: {current_quantity}, Threshold: {threshold}",
+            product_id=product_id, batch_id="N/A",
+            change_type="low_stock", priority="high")
+
+    @classmethod
+    def notify_order_status_change(cls, order_id: str, order_number: str,
+                                   old_status: str, new_status: str) -> 'Notification':
+        priority = "medium" if new_status in ("processing", "shipped") else "low"
+        return cls.create_order_notification(
+            title=f"Order Status Updated: {order_number}",
+            message=f"Order {order_number} status changed from {old_status} to {new_status}",
+            order_id=order_id, order_status=new_status, priority=priority)
