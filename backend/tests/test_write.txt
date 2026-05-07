@@ -1,0 +1,130 @@
+File	Function	Notification Status	Alert Level
+auth_services.py	login()	Missing (failed login / blocked non-admin)	High	done
+	logout()	Existing (via session log only – no admin notification)	None (optional Low)
+	verify_password()	No notification needed	–
+	create_access_token()	No notification needed	–
+	create_refresh_token()	No notification needed	–
+	verify_token()	No notification needed	–
+	get_current_user()	No notification needed	–
+	refresh_access_token()	No notification needed	–
+category_service.py	create_category()	Existing	Medium
+	update_category()	Existing	Medium
+	soft_delete_category()	Existing	Medium
+	hard_delete_category()	Existing	High
+	restore_category()	Existing	Medium
+	add_subcategory()	Existing	Low
+	remove_subcategory()	Existing	Low
+	add_product_to_subcategory()	Missing	Low	done
+	remove_product_from_subcategory()	Missing	Low	done
+	move_product_to_none_subcategory()	Missing	Low	done
+	bulk_soft_delete_categories()	Existing (via individual soft_delete_category calls)	Medium
+	bulk_update_categories_status()	Existing (bulk_updated)	Low
+	get_all_categories()	No notification needed	–
+	get_category_by_id()	No notification needed	–
+	get_active_categories()	No notification needed	–
+	search_categories()	No notification needed	–
+	get_subcategories()	No notification needed	–
+	get_subcategory_products_with_details()	No notification needed	–
+	get_category_stats()	No notification needed	–
+	get_category_delete_info()	No notification needed	–
+	get_deleted_categories()	No notification needed	–
+customer_service.py	create_customer_with_password()	Existing	Medium
+	update_customer()	Existing	Medium
+	soft_delete_customer()	Existing	High
+	restore_customer()	Existing	Medium
+	hard_delete_customer()	Existing	High
+	update_loyalty_points()	Missing (optional)	Low
+	get_customers()	No notification needed	–
+	get_customer_by_id()	No notification needed	–
+	get_customer_by_email()	No notification needed	–
+	search_customers()	No notification needed	–
+	get_customer_statistics()	No notification needed	–
+product_service.py	create_product()	Missing	Low	done
+	update_product()	Missing	Low	done
+	delete_product() (soft)	Missing	Medium	done
+	delete_product() (hard)	Missing	High	done
+	update_stock_by_id()	Missing (low / out-of-stock detection)	High	done
+	update_stock_by_sku()	Missing (low / out-of-stock detection)	High	done
+	restock_product()	Existing (via batch_service.create_batch – inherits batch notification)	Low
+	get_all_products()	No notification needed	–
+	get_products_paginated()	No notification needed	–
+	get_product_by_id()	No notification needed	–
+	get_product_by_sku()	No notification needed	–
+	get_product_by_barcode()	No notification needed	–
+	get_low_stock_products()	No notification needed	–
+	get_out_of_stock_products()	No notification needed	–
+	get_expiring_soon_products()	No notification needed	–
+	get_products_by_category()	No notification needed	–
+	get_products_by_status()	No notification needed	–
+	get_products_needing_pos_sync()	No notification needed	–
+	get_product_count()	No notification needed	–
+promotions_service.py	create_promotion()	Missing	Medium	done
+	update_promotion()	Missing	Medium	done
+	activate_promotion()	Missing	Medium	done
+	deactivate_promotion()	Missing	Medium	done
+	expire_promotion()	Missing (delegates to deactivate_promotion – fix deactivate first)	Medium	done
+	delete_promotion() (soft)	Missing	Medium	done
+	hard_delete_promotion()	Missing	Critical	done
+	restore_promotion()	Missing	Medium	done
+	apply_promotion_to_order()	Optional (Low) – no notification currently	Low
+	get_active_promotions()	No notification needed	–
+	get_promotion_by_id()	No notification needed	–
+	get_all_promotions()	No notification needed	–
+	get_deleted_promotions_paginated()	No notification needed	–
+	get_promotion_audit_history()	No notification needed	–
+	get_promotion_statistics()	No notification needed	–
+supplier_service.py	create_supplier()	Existing (v4 MongoDB only – pending DynamoDB migration)	Low
+	update_supplier()	Existing (v4 MongoDB only – pending DynamoDB migration)	Low
+	delete_supplier() (soft)	Existing (v4 MongoDB only – pending DynamoDB migration)	Medium
+	delete_supplier() (hard)	Existing (v4 MongoDB only – pending DynamoDB migration)	High
+	restore_supplier()	Existing (v4 MongoDB only – pending DynamoDB migration)	Low
+	add_purchase_order()	Existing (v4 MongoDB only – pending DynamoDB migration)	Low
+	update_purchase_order()	Existing (v4 MongoDB only – pending DynamoDB migration)	Low
+	delete_purchase_order() (soft)	Existing (v4 MongoDB only – pending DynamoDB migration)	Medium
+	delete_purchase_order() (hard)	Existing (v4 MongoDB only – pending DynamoDB migration)	High
+	restore_purchase_order()	Existing (v4 MongoDB only – pending DynamoDB migration)	Low
+	get_suppliers()	No notification needed	–
+	get_supplier_by_id()	No notification needed	–
+	get_purchase_orders()	No notification needed	–
+	get_purchase_order_by_id()	No notification needed	–
+	get_deleted_suppliers()	No notification needed	–
+	get_deleted_purchase_orders()	No notification needed	–
+user_service.py	create_user()	Existing	Medium
+	update_user_profile()	Existing (updated / password_changed)	Medium
+	soft_delete_user()	Existing	Medium
+	restore_user()	Existing	Medium
+	hard_delete_user()	Existing	High (Critical)
+	get_users()	No notification needed	–
+	get_user_by_id()	No notification needed	–
+	get_user_by_username()	No notification needed	–
+	get_user_by_email()	No notification needed	–
+	get_disabled_users()	No notification needed	–
+
+
+Priority	File	Function	Alert Level
+🔴 Critical	promotions_service.py	hard_delete_promotion()	Critical	done
+🟠 High	auth_services.py	login() (failed / non-admin block)	High	done
+🟠 High	product_service.py	delete_product() (hard)	High	done
+🟠 High	product_service.py	update_stock_by_id() (low / out-of-stock detection)	High	done
+🟠 High	product_service.py	update_stock_by_sku() (low / out-of-stock detection)	High	done
+🟡 Medium	product_service.py	create_product()	Medium	done
+🟡 Medium	product_service.py	update_product()	Medium	done
+🟡 Medium	product_service.py	delete_product() (soft)	Medium	done
+🟡 Medium	promotions_service.py	create_promotion()	Medium	done
+🟡 Medium	promotions_service.py	update_promotion()	Medium	done
+🟡 Medium	promotions_service.py	activate_promotion()	Medium	done
+🟡 Medium	promotions_service.py	deactivate_promotion()	Medium	done
+🟡 Medium	promotions_service.py	expire_promotion()	Medium	done
+🟡 Medium	promotions_service.py	delete_promotion() (soft)	Medium	done
+🟡 Medium	promotions_service.py	restore_promotion()	Medium	done
+🟢 Low	category_service.py	add_product_to_subcategory()	Low	done
+🟢 Low	category_service.py	remove_product_from_subcategory()	Low	done
+🟢 Low	category_service.py	move_product_to_none_subcategory()	Low	done
+🟢 Low	customer_service.py	update_loyalty_points() (optional)	Low
+🟢 Low	promotions_service.py	apply_promotion_to_order() (optional)	Low
+
+
+Known Bug – batch_service.py
+_send_batch_notification() uses notification_type = "info" for stock_ordered and activated paths.
+"info" is not in Notification.VALID_TYPES → causes ValueError on every call.
+Fix: change "info" to "inventory".	done

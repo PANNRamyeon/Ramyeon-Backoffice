@@ -1,78 +1,63 @@
 <!-- components/NotificationBell.vue -->
 <template>
   <div class="notification-container">
-    <!-- Notification Bell Icon -->
-    <button 
+    <!-- Bell button -->
+    <button
       class="notification-bell"
-      @click="toggleDropdown"
       :class="{ 'has-notifications': unreadCount > 0 }"
+      @click="toggleDropdown"
     >
-      <span class="bell-icon">
-        🔔
-      </span>
-      
-      <!-- Notification Badge -->   
-      <span 
-        v-if="unreadCount > 0" 
-        class="notification-badge"
-      >
+      <BellIcon :size="22" />
+      <span v-if="unreadCount > 0" class="notification-badge">
         {{ unreadCount > 99 ? '99+' : unreadCount }}
       </span>
     </button>
 
-    <!-- Notification Dropdown -->
-    <div 
-      v-if="showDropdown" 
-      class="notification-dropdown"
-      @click.stop
-    >
+    <!-- Dropdown -->
+    <div v-if="showDropdown" class="notification-dropdown" @click.stop>
       <!-- Header -->
       <div class="dropdown-header">
-        <h3>Recent Notifications</h3>
+        <h3>Notifications</h3>
         <div class="header-actions">
-          <button 
+          <button
             v-if="unreadCount > 0"
-            @click="markAllAsRead"
             class="mark-all-read"
             :disabled="markingAllAsRead"
+            @click="markAllAsRead"
           >
             {{ markingAllAsRead ? 'Marking...' : 'Mark all read' }}
           </button>
-          <button @click="showDropdown = false" class="close-btn">
-            ✕
+          <button class="close-btn" @click="showDropdown = false">
+            <XIcon :size="16" />
           </button>
         </div>
       </div>
 
-      <!-- Notification List -->
+      <!-- List -->
       <div class="notification-list">
         <div v-if="loading" class="loading-state">
           <div class="spinner"></div>
-          <p>Loading notifications...</p>
+          <p>Loading...</p>
         </div>
 
         <div v-else-if="notifications.length === 0" class="empty-state">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" class="empty-icon">
-            <path d="M12 2C13.1 2 14 2.9 14 4C14 4.74 13.6 5.39 13 5.73V7C13 10.97 16.03 14 20 14V16C20 16.55 19.55 17 19 17H5C4.45 17 4 16.55 4 16V14C7.97 14 11 10.97 11 7V5.73C10.4 5.39 10 4.74 10 4C10 2.9 10.9 2 12 2Z" fill="#d1d5db"/>
-          </svg>
+          <BellOffIcon :size="40" class="empty-icon" />
           <p>No recent notifications</p>
         </div>
 
         <div v-else>
-          <div 
-            v-for="notification in notifications" 
-            :key="notification.id"
+          <div
+            v-for="notification in notifications"
+            :key="notification.notification_id"
             class="notification-item"
-            :class="{ 
-              'unread': !notification.is_read,
-              [`priority-${notification.priority}`]: true 
+            :class="{
+              unread: !notification.is_read,
+              [`priority-${notification.priority}`]: true
             }"
-            @click="markAsRead(notification)"
+            @click="handleItemClick(notification)"
           >
-            <!-- Priority Indicator -->
             <div class="priority-indicator" :class="`priority-${notification.priority}`"></div>
-            
-            <!-- Notification Content -->
+
             <div class="notification-content">
               <div class="notification-header">
                 <h4>{{ notification.title }}</h4>
@@ -80,11 +65,30 @@
               </div>
               <p class="notification-message">{{ notification.message }}</p>
               <div class="notification-meta">
-                <span class="notification-type">{{ notification.notification_type || 'System' }}</span>
+                <span class="notification-type">{{ notification.notification_type }}</span>
                 <span class="priority-badge" :class="`priority-${notification.priority}`">
                   {{ formatPriority(notification.priority) }}
                 </span>
               </div>
+            </div>
+
+            <!-- Per-item actions, shown on hover via CSS -->
+            <div class="item-actions" @click.stop>
+              <button
+                v-if="!notification.is_read"
+                class="action-btn"
+                title="Mark as read"
+                @click="markAsRead(notification)"
+              >
+                <CheckIcon :size="14" />
+              </button>
+              <button
+                class="action-btn"
+                title="Archive"
+                @click="archiveNotification(notification)"
+              >
+                <ArchiveIcon :size="14" />
+              </button>
             </div>
           </div>
         </div>
@@ -98,187 +102,148 @@
       </div>
     </div>
 
-    <!-- Overlay to close dropdown -->
-    <div 
-      v-if="showDropdown" 
+    <!-- Click-outside overlay -->
+    <div
+      v-if="showDropdown"
       class="notification-overlay"
       @click="showDropdown = false"
     ></div>
   </div>
 </template>
 
-<script>
+<script setup>
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { BellIcon, BellOffIcon, XIcon, CheckIcon, ArchiveIcon } from 'lucide-vue-next'
 import apiNotifications from '../services/apiNotifications'
-export default {
-  name: 'NotificationBell',
-  data() {
-    return {
-      notifications: [],
-      unreadCount: 0,
-      showDropdown: false,
-      loading: false,
-      markingAllAsRead: false,
-      pollInterval: null
-    }
-  },
-  
-  mounted() {
-    this.fetchNotifications()
-    this.startPolling()
-  },
-  
-  beforeUnmount() {
-    this.stopPolling()
-  },
-  
-  methods: {
-    // ================================================================
-    // DATA FETCHING METHODS
-    // ================================================================
-    
-    async fetchNotifications() {
-      this.loading = true
-      try {
-        const result = await apiNotifications.getRecent()
-        
-        if (result.success) {
-          this.notifications = result.data || []
-          this.updateUnreadCount()
-        } else {
-          this.notifications = []
-        }
-      } catch (error) {
-        this.notifications = []
-      } finally {
-        this.loading = false
-      }
-    },
 
-    // ================================================================
-    // UI STATE MANAGEMENT
-    // ================================================================
-    
-    updateUnreadCount() {
-      this.unreadCount = this.notifications.filter(n => !n.is_read).length
-    },
+const notifications = ref([])
+const unreadCount = ref(0)
+const showDropdown = ref(false)
+const loading = ref(false)
+const markingAllAsRead = ref(false)
+let pollInterval = null
 
-    toggleDropdown() {
-      this.showDropdown = !this.showDropdown
-      if (this.showDropdown) {
-        this.fetchNotifications() // Always fetch fresh data when opening dropdown
-      }
-    },
+// ── Fetching ──────────────────────────────────────────────────────
 
-    closeDropdown() {
-      this.showDropdown = false
-    },
-
-    // ================================================================
-    // NOTIFICATION ACTIONS
-    // ================================================================
-    
-    async markAsRead(notification) {
-      if (notification.is_read) return
-
-      const notificationId = notification.id || notification._id;
-      
-      // Vue 3 way - direct assignment
-      notification.isMarkingRead = true;
-
-      try {
-        await apiNotifications.MarkAsRead(notificationId)
-        notification.is_read = true
-        this.updateUnreadCount()
-      } catch (error) {
-        // Error marking notification as read
-      } finally {
-        // Vue 3 way - direct assignment
-        notification.isMarkingRead = false;
-      }
-    },
-
-    async markAllAsRead() {
-      if (this.unreadCount === 0) return
-      
-      this.markingAllAsRead = true
-      try {
-        await apiNotifications.MarkAllAsRead()
-        
-        // Update all notifications to read status
-        this.notifications.forEach(notification => {
-          notification.is_read = true
-        })
-        
-        // Update counts
-        this.unreadCount = 0
-      } catch (error) {
-        await this.fallbackMarkAllAsRead()
-      } finally {
-        this.markingAllAsRead = false
-      }
-    },
-
-    async fallbackMarkAllAsRead() {
-      const unreadNotifications = this.notifications.filter(n => !n.is_read)
-      for (const notification of unreadNotifications) {
-        await this.markAsRead(notification)
-      }
-    },
-
-    // ================================================================
-    // POLLING AND BACKGROUND UPDATES
-    // ================================================================
-    
-    startPolling() {
-      // Poll for new notifications every 30 seconds
-      this.pollInterval = setInterval(() => {
-        if (!this.showDropdown) {
-          this.fetchNotifications()
-        }
-      }, 30000)
-    },
-
-    stopPolling() {
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval)
-        this.pollInterval = null
-      }
-    },
-
-    // ================================================================
-    // UTILITY METHODS
-    // ================================================================
-    
-    formatTimeAgo(dateString) {
-      const now = new Date()
-      const notificationDate = new Date(dateString)
-      const diffInSeconds = Math.floor((now - notificationDate) / 1000)
-
-      if (diffInSeconds < 60) {
-        return 'Just now'
-      } else if (diffInSeconds < 3600) {
-        const minutes = Math.floor(diffInSeconds / 60)
-        return `${minutes}m ago`
-      } else if (diffInSeconds < 86400) {
-        const hours = Math.floor(diffInSeconds / 3600)
-        return `${hours}h ago`
-      } else {
-        const days = Math.floor(diffInSeconds / 86400)
-        return `${days}d ago`
-      }
-    },
-
-    formatPriority(priority) {
-      const priorities = {
-        low: 'Low',
-        medium: 'Medium',
-        high: 'High',
-        urgent: 'Urgent'
-      }
-      return priorities[priority] || priority
-    }
+async function fetchUnreadCount() {
+  try {
+    const result = await apiNotifications.getUnreadCount()
+    if (result?.success) unreadCount.value = result.data?.unread_count ?? 0
+  } catch {
+    // badge holds last known value until next poll
   }
 }
+
+async function fetchNotifications() {
+  loading.value = true
+  try {
+    const result = await apiNotifications.getRecent({ limit: 10 })
+    notifications.value = result?.success ? (result.data || []) : []
+  } catch {
+    notifications.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+// ── UI state ──────────────────────────────────────────────────────
+
+async function toggleDropdown() {
+  showDropdown.value = !showDropdown.value
+  if (showDropdown.value) {
+    await fetchNotifications()
+    await fetchUnreadCount()
+  }
+}
+
+function closeDropdown() {
+  showDropdown.value = false
+}
+
+// ── Actions ───────────────────────────────────────────────────────
+
+async function handleItemClick(notification) {
+  if (!notification.is_read) await markAsRead(notification)
+}
+
+async function markAsRead(notification) {
+  if (notification.is_read) return
+  try {
+    await apiNotifications.MarkAsRead(notification.notification_id)
+    notification.is_read = true
+    if (unreadCount.value > 0) unreadCount.value--
+  } catch {
+    // next poll will resync badge
+  }
+}
+
+async function markAllAsRead() {
+  if (unreadCount.value === 0) return
+  markingAllAsRead.value = true
+  try {
+    await apiNotifications.MarkAllAsRead()
+    notifications.value.forEach(n => { n.is_read = true })
+    unreadCount.value = 0
+  } catch {
+    const unread = notifications.value.filter(n => !n.is_read)
+    for (const n of unread) await markAsRead(n)
+  } finally {
+    markingAllAsRead.value = false
+  }
+}
+
+async function archiveNotification(notification) {
+  try {
+    await apiNotifications.Archive(notification.notification_id)
+    notifications.value = notifications.value.filter(
+      n => n.notification_id !== notification.notification_id
+    )
+    if (!notification.is_read && unreadCount.value > 0) unreadCount.value--
+  } catch {
+    // silent — item stays in list until next refresh
+  }
+}
+
+// ── Polling ───────────────────────────────────────────────────────
+
+function startPolling() {
+  // Poll only the lightweight unread count; list refreshes on dropdown open
+  pollInterval = setInterval(() => {
+    if (!showDropdown.value) fetchUnreadCount()
+  }, 30000)
+}
+
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval)
+    pollInterval = null
+  }
+}
+
+// ── Formatters ────────────────────────────────────────────────────
+
+function formatTimeAgo(dateString) {
+  const diff = Math.floor((Date.now() - new Date(dateString)) / 1000)
+  if (diff < 60) return 'Just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
+function formatPriority(priority) {
+  return { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' }[priority] ?? priority
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────
+
+onMounted(() => {
+  fetchUnreadCount()
+  startPolling()
+})
+
+onBeforeUnmount(() => {
+  stopPolling()
+})
 </script>
 
 <style scoped>
@@ -295,6 +260,9 @@ export default {
   cursor: pointer;
   transition: all 0.2s ease;
   color: #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .notification-bell:hover {
@@ -304,10 +272,6 @@ export default {
 
 .notification-bell.has-notifications {
   color: #6366f1;
-}
-
-.bell-icon {
-  font-size: 24px;
 }
 
 .notification-badge {
@@ -394,12 +358,11 @@ export default {
   background: none;
   border: none;
   color: #6b7280;
-  font-size: 1.25rem;
   cursor: pointer;
   padding: 0.25rem;
   border-radius: 4px;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -415,7 +378,8 @@ export default {
   overflow-y: auto;
 }
 
-.loading-state, .empty-state {
+.loading-state,
+.empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -440,6 +404,7 @@ export default {
 
 .empty-icon {
   margin-bottom: 0.5rem;
+  color: #d1d5db;
 }
 
 .notification-item {
@@ -453,6 +418,10 @@ export default {
 
 .notification-item:hover {
   background-color: #f9fafb;
+}
+
+.notification-item:hover .item-actions {
+  opacity: 1;
 }
 
 .notification-item.unread {
@@ -470,26 +439,17 @@ export default {
   flex-shrink: 0;
 }
 
-.priority-indicator.priority-low {
-  background-color: #10b981;
-}
-
-.priority-indicator.priority-medium {
-  background-color: #f59e0b;
-}
-
-.priority-indicator.priority-high {
-  background-color: #ef4444;
-}
-
-.priority-indicator.priority-urgent {
+.priority-indicator.priority-low      { background-color: #10b981; }
+.priority-indicator.priority-medium   { background-color: #f59e0b; }
+.priority-indicator.priority-high     { background-color: #ef4444; }
+.priority-indicator.priority-critical {
   background-color: #dc2626;
   animation: pulse 2s infinite;
 }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  50%       { opacity: 0.5; }
 }
 
 .notification-content {
@@ -549,24 +509,37 @@ export default {
   font-weight: 500;
 }
 
-.priority-badge.priority-low {
-  background-color: #d1fae5;
-  color: #065f46;
+.priority-badge.priority-low      { background-color: #d1fae5; color: #065f46; }
+.priority-badge.priority-medium   { background-color: #fef3c7; color: #92400e; }
+.priority-badge.priority-high     { background-color: #fee2e2; color: #991b1b; }
+.priority-badge.priority-critical { background-color: #fecaca; color: #7f1d1d; }
+
+.item-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  margin-left: 0.5rem;
+  flex-shrink: 0;
 }
 
-.priority-badge.priority-medium {
-  background-color: #fef3c7;
-  color: #92400e;
+.action-btn {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background-color 0.15s;
 }
 
-.priority-badge.priority-high {
-  background-color: #fee2e2;
-  color: #991b1b;
-}
-
-.priority-badge.priority-urgent {
-  background-color: #fecaca;
-  color: #7f1d1d;
+.action-btn:hover {
+  color: #6366f1;
+  background-color: #e0e7ff;
 }
 
 .dropdown-footer {

@@ -3,111 +3,90 @@ import { ref, computed, readonly } from 'vue'
 import customerApiService from '@/services/apiCustomers.js'
 
 export function useCustomers() {
-  // Reactive state
+  // State
   const customers = ref([])
   const selectedCustomer = ref(null)
   const isLoading = ref(false)
   const error = ref(null)
   const statistics = ref(null)
-  
-  // Pagination state
-  const currentPage = ref(1)
-  const totalCustomers = ref(0)
-  const hasMore = ref(false)
-  const filtersApplied = ref({})
 
-  // Computed properties
+  // Cursor-based pagination (backend uses next_key, not page numbers)
+  const nextKey = ref(null)
+  const hasMore = ref(false)
+  const totalCustomers = ref(0)
+
+  // Computed
   const customersCount = computed(() => customers.value.length)
   const hasCustomers = computed(() => customers.value.length > 0)
-  const activeCustomers = computed(() => 
-    customers.value.filter(c => c.status === 'active')
-  )
-  const inactiveCustomers = computed(() => 
-    customers.value.filter(c => c.status !== 'active')
-  )
+  const activeCustomers = computed(() => customers.value.filter(c => c.status === 'active'))
+  const inactiveCustomers = computed(() => customers.value.filter(c => c.status !== 'active'))
 
-  // Helper functions
-  const clearError = () => {
-    error.value = null
-  }
+  const clearError = () => { error.value = null }
 
   const resetPagination = () => {
-    currentPage.value = 1
+    nextKey.value = null
     hasMore.value = false
     totalCustomers.value = 0
   }
 
-  // CRUD Operations
+  // ==================== CRUD ====================
 
-  /**
-   * Fetch customers with pagination and filters
-   * @param {Object} params - Query parameters
-   * @param {boolean} append - Whether to append to existing customers or replace
-   */
   const fetchCustomers = async (params = {}, append = false) => {
     isLoading.value = true
     error.value = null
 
     try {
-      const queryParams = {
-        page: currentPage.value,
-        limit: 50,
-        ...params
+      const queryParams = { limit: 50, ...params }
+
+      // Pass cursor key for subsequent pages
+      if (append && nextKey.value) {
+        queryParams.start_key = nextKey.value
       }
 
       const response = await customerApiService.getCustomers(queryParams)
-      
+      const page = response.customers || []
+
       if (append) {
-        customers.value.push(...(response.customers || []))
+        customers.value.push(...page)
       } else {
-        customers.value = response.customers || []
+        customers.value = page
       }
 
-      // Update pagination info
-      totalCustomers.value = response.total || 0
+      // Backend returns next_key and has_more, no total count
+      nextKey.value = response.next_key || null
       hasMore.value = response.has_more || false
-      filtersApplied.value = response.filters_applied || {}
+      totalCustomers.value = append
+        ? totalCustomers.value + page.length
+        : page.length
 
       return response
     } catch (err) {
       error.value = err.message || 'Failed to fetch customers'
-      if (!append) {
-        customers.value = []
-      }
+      if (!append) customers.value = []
       throw err
     } finally {
       isLoading.value = false
     }
   }
 
-  /**
-   * Load more customers (pagination)
-   */
+  // Append next page using the cursor from the last response
   const loadMoreCustomers = async (params = {}) => {
     if (!hasMore.value || isLoading.value) return
-
-    currentPage.value += 1
     await fetchCustomers(params, true)
   }
 
-  /**
-   * Refresh customers list
-   */
   const refreshCustomers = async (params = {}) => {
     resetPagination()
     await fetchCustomers(params)
   }
 
-  /**
-   * Get single customer by ID
-   */
   const getCustomer = async (customerId) => {
     isLoading.value = true
     error.value = null
 
     try {
       const response = await customerApiService.getCustomer(customerId)
-      selectedCustomer.value = response.customer || response
+      selectedCustomer.value = response
       return selectedCustomer.value
     } catch (err) {
       error.value = err.message || 'Failed to fetch customer'
@@ -118,21 +97,14 @@ export function useCustomers() {
     }
   }
 
-  /**
-   * Create new customer
-   */
   const createCustomer = async (customerData) => {
     isLoading.value = true
     error.value = null
 
     try {
-      const response = await customerApiService.createCustomer(customerData)
-      const newCustomer = response.customer || response
-
-      // Add to beginning of local array
+      const newCustomer = await customerApiService.createCustomer(customerData)
       customers.value.unshift(newCustomer)
       totalCustomers.value += 1
-
       return newCustomer
     } catch (err) {
       error.value = err.message || 'Failed to create customer'
@@ -142,29 +114,17 @@ export function useCustomers() {
     }
   }
 
-  /**
-   * Update existing customer
-   */
   const updateCustomer = async (customerId, customerData) => {
     isLoading.value = true
     error.value = null
 
     try {
-      const response = await customerApiService.updateCustomer(customerId, customerData)
-      const updatedCustomer = response.customer || response
+      const updatedCustomer = await customerApiService.updateCustomer(customerId, customerData)
 
-      // Update in local array
-      const index = customers.value.findIndex(c => 
-        c._id === customerId || c.customer_id === customerId
-      )
-      if (index !== -1) {
-        customers.value[index] = updatedCustomer
-      }
+      const index = customers.value.findIndex(c => c.customer_id === customerId)
+      if (index !== -1) customers.value[index] = updatedCustomer
 
-      // Update selected customer if it's the same one
-      if (selectedCustomer.value && 
-          (selectedCustomer.value._id === customerId || 
-           selectedCustomer.value.customer_id === customerId)) {
+      if (selectedCustomer.value?.customer_id === customerId) {
         selectedCustomer.value = updatedCustomer
       }
 
@@ -177,9 +137,6 @@ export function useCustomers() {
     }
   }
 
-  /**
-   * Delete customer (soft delete)
-   */
   const deleteCustomer = async (customerId) => {
     isLoading.value = true
     error.value = null
@@ -187,16 +144,10 @@ export function useCustomers() {
     try {
       const response = await customerApiService.deleteCustomer(customerId)
 
-      // Remove from local array since it's now soft deleted
-      customers.value = customers.value.filter(c => 
-        c._id !== customerId && c.customer_id !== customerId
-      )
+      customers.value = customers.value.filter(c => c.customer_id !== customerId)
       totalCustomers.value = Math.max(0, totalCustomers.value - 1)
 
-      // Clear selected customer if it's the deleted one
-      if (selectedCustomer.value && 
-          (selectedCustomer.value._id === customerId || 
-          selectedCustomer.value.customer_id === customerId)) {
+      if (selectedCustomer.value?.customer_id === customerId) {
         selectedCustomer.value = null
       }
 
@@ -209,44 +160,20 @@ export function useCustomers() {
     }
   }
 
-  /**
-   * Delete multiple customers
-   */
-  const deleteMultipleCustomers = async (customerIds) => {
-    isLoading.value = true
-    error.value = null
-
-    try {
-      const response = await customerApiService.deleteMultipleCustomers(customerIds)
-
-      // Remove from local array
-      customers.value = customers.value.filter(c => 
-        !customerIds.includes(c._id) && !customerIds.includes(c.customer_id)
-      )
-      totalCustomers.value = Math.max(0, totalCustomers.value - customerIds.length)
-
-      return response
-    } catch (err) {
-      error.value = err.message || 'Failed to delete customers'
-      throw err
-    } finally {
-      isLoading.value = false
-    }
-  }
-
-  /**
-   * Restore deleted customer
-   */
+  // Restore re-fetches the customer from the API since the backend only
+  // returns {"message": "..."} — not the restored customer data
   const restoreCustomer = async (customerId) => {
     isLoading.value = true
     error.value = null
 
     try {
-      const response = await customerApiService.restoreCustomer(customerId)
-      const restoredCustomer = response.customer || response
+      await customerApiService.restoreCustomer(customerId)
+      const restoredCustomer = await customerApiService.getCustomer(customerId)
 
-      // Add back to customers list if we're viewing all customers
-      if (!filtersApplied.value.include_deleted) {
+      const index = customers.value.findIndex(c => c.customer_id === customerId)
+      if (index !== -1) {
+        customers.value[index] = restoredCustomer
+      } else {
         customers.value.unshift(restoredCustomer)
         totalCustomers.value += 1
       }
@@ -260,45 +187,43 @@ export function useCustomers() {
     }
   }
 
-  /**
-   * Get deleted customers
-   */
-  const getDeletedCustomers = async (params = {}) => {
+  const hardDeleteCustomer = async (customerId) => {
     isLoading.value = true
     error.value = null
 
     try {
-      const response = await customerApiService.getDeletedCustomers(params)
+      const response = await customerApiService.hardDeleteCustomer(customerId)
+
+      customers.value = customers.value.filter(c => c.customer_id !== customerId)
+      totalCustomers.value = Math.max(0, totalCustomers.value - 1)
+
+      if (selectedCustomer.value?.customer_id === customerId) {
+        selectedCustomer.value = null
+      }
+
       return response
     } catch (err) {
-      error.value = err.message || 'Failed to fetch deleted customers'
+      error.value = err.message || 'Failed to permanently delete customer'
       throw err
     } finally {
       isLoading.value = false
     }
   }
 
-  // Search and Filter Operations
+  // ==================== SEARCH & FILTER ====================
 
-  /**
-   * Search customers
-   */
+  // Backend search returns a plain array, not a paginated object
   const searchCustomers = async (query) => {
-    if (!query || !query.trim()) {
-      return await refreshCustomers()
-    }
+    if (!query?.trim()) return refreshCustomers()
 
     isLoading.value = true
     error.value = null
 
     try {
-      const response = await customerApiService.searchCustomers(query)
-      customers.value = response.customers || response || []
-      
-      // Reset pagination for search results
+      const results = await customerApiService.searchCustomers(query)
+      customers.value = Array.isArray(results) ? results : (results.customers || [])
       resetPagination()
       totalCustomers.value = customers.value.length
-
       return customers.value
     } catch (err) {
       error.value = err.message || 'Search failed'
@@ -309,39 +234,49 @@ export function useCustomers() {
     }
   }
 
-  /**
-   * Filter customers by status
-   */
   const filterByStatus = async (status) => {
-    const params = status ? { status } : {}
     resetPagination()
-    await fetchCustomers(params)
+    await fetchCustomers(status ? { status } : {})
   }
 
-  // Loyalty Operations
+  // ==================== EXPORT / IMPORT ====================
 
-  /**
-   * Update customer loyalty points
-   */
+  const exportCustomers = async (params = {}) => {
+    error.value = null
+    try {
+      await customerApiService.exportCustomers(params)
+    } catch (err) {
+      error.value = err.message || 'Export failed'
+      throw err
+    }
+  }
+
+  const importCustomers = async (file) => {
+    isLoading.value = true
+    error.value = null
+    try {
+      return await customerApiService.importCustomers(file)
+    } catch (err) {
+      error.value = err.message || 'Import failed'
+      throw err
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  // ==================== LOYALTY ====================
+
   const updateLoyaltyPoints = async (customerId, points, reason = 'Manual adjustment') => {
     isLoading.value = true
     error.value = null
 
     try {
-      const response = await customerApiService.updateLoyaltyPoints(customerId, points, reason)
-      const updatedCustomer = response.customer || response
+      const updatedCustomer = await customerApiService.updateLoyaltyPoints(customerId, points, reason)
 
-      // Update in local arrays
-      const index = customers.value.findIndex(c => 
-        c._id === customerId || c.customer_id === customerId
-      )
-      if (index !== -1) {
-        customers.value[index] = updatedCustomer
-      }
+      const index = customers.value.findIndex(c => c.customer_id === customerId)
+      if (index !== -1) customers.value[index] = updatedCustomer
 
-      if (selectedCustomer.value && 
-          (selectedCustomer.value._id === customerId || 
-           selectedCustomer.value.customer_id === customerId)) {
+      if (selectedCustomer.value?.customer_id === customerId) {
         selectedCustomer.value = updatedCustomer
       }
 
@@ -354,18 +289,16 @@ export function useCustomers() {
     }
   }
 
-  // Analytics Operations
+  // ==================== STATISTICS ====================
 
-  /**
-   * Fetch customer statistics
-   */
   const fetchStatistics = async () => {
     isLoading.value = true
     error.value = null
 
     try {
       const response = await customerApiService.getCustomerStatistics()
-      statistics.value = response.statistics || response
+      // Backend returns stats dict directly, no wrapping key
+      statistics.value = response
       return statistics.value
     } catch (err) {
       error.value = err.message || 'Failed to fetch statistics'
@@ -376,63 +309,43 @@ export function useCustomers() {
     }
   }
 
-  /**
-   * Export customers to CSV
-   */
-  const exportCustomers = async (includeDeleted = false) => {
-    isLoading.value = true;
-    error.value = null;
+  // ==================== QR CODE ====================
+
+  const generateQRToken = async (customerId, expiryHours = 720) => {
+    isLoading.value = true
+    error.value = null
 
     try {
-      const blob = await customerApiService.exportCustomers(includeDeleted);
-      const url = window.URL.createObjectURL(new Blob([blob]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', 'customers_export.csv');
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      const response = await customerApiService.generateQRToken(customerId, expiryHours)
+      return response
     } catch (err) {
-      error.value = err.message || 'Failed to export customers';
-      throw err;
+      error.value = err.message || 'Failed to generate QR token'
+      throw err
     } finally {
-      isLoading.value = false;
+      isLoading.value = false
     }
-  };
-
-  /**
-   * Import customers from CSV file
-   */
-  const importCustomers = async (file) => {
-    isLoading.value = true;
-    error.value = null;
-
-    try {
-      const response = await customerApiService.importCustomers(file);
-      await refreshCustomers(); // Refresh after import
-      return response;
-    } catch (err) {
-      error.value = err.message || 'Failed to import customers';
-      throw err;
-    } finally {
-      isLoading.value = false;
-    }
-  };
-
-  // Utility methods
-
-  /**
-   * Find customer by ID in local array
-   */
-  const findCustomerById = (customerId) => {
-    return customers.value.find(c => 
-      c._id === customerId || c.customer_id === customerId
-    )
   }
 
-  /**
-   * Clear all data
-   */
+  const verifyQRToken = async (token) => {
+    isLoading.value = true
+    error.value = null
+
+    try {
+      const response = await customerApiService.verifyQRToken(token)
+      return response
+    } catch (err) {
+      error.value = err.message || 'QR token verification failed'
+      throw err
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  // ==================== UTILITIES ====================
+
+  const findCustomerById = (customerId) =>
+    customers.value.find(c => c.customer_id === customerId)
+
   const clearData = () => {
     customers.value = []
     selectedCustomer.value = null
@@ -442,20 +355,15 @@ export function useCustomers() {
   }
 
   return {
-    exportCustomers,
-    importCustomers,
     // State (readonly)
     customers: readonly(customers),
     selectedCustomer: readonly(selectedCustomer),
     isLoading: readonly(isLoading),
     error: readonly(error),
     statistics: readonly(statistics),
-    
-    // Pagination state (readonly)
-    currentPage: readonly(currentPage),
-    totalCustomers: readonly(totalCustomers),
+    nextKey: readonly(nextKey),
     hasMore: readonly(hasMore),
-    filtersApplied: readonly(filtersApplied),
+    totalCustomers: readonly(totalCustomers),
 
     // Computed
     customersCount,
@@ -463,7 +371,7 @@ export function useCustomers() {
     activeCustomers,
     inactiveCustomers,
 
-    // CRUD methods
+    // CRUD
     fetchCustomers,
     loadMoreCustomers,
     refreshCustomers,
@@ -471,23 +379,30 @@ export function useCustomers() {
     createCustomer,
     updateCustomer,
     deleteCustomer,
-    deleteMultipleCustomers,
     restoreCustomer,
-    getDeletedCustomers,
+    hardDeleteCustomer,
 
-    // Search and filter methods
+    // Export / Import
+    exportCustomers,
+    importCustomers,
+
+    // Search & filter
     searchCustomers,
     filterByStatus,
 
-    // Loyalty methods
+    // Loyalty
     updateLoyaltyPoints,
 
-    // Analytics methods
+    // Statistics
     fetchStatistics,
 
-    // Utility methods
+    // QR
+    generateQRToken,
+    verifyQRToken,
+
+    // Utilities
     findCustomerById,
     clearData,
-    clearError
+    clearError,
   }
 }

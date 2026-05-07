@@ -1,11 +1,14 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from django.http import HttpResponse
 from app.services.identity.customer_service import CustomerService
 from app.services.identity.auth_services import AuthService
 import logging
 import json
 import base64
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -410,10 +413,10 @@ class CustomerQRGenerateView(APIView):
     def get(self, request, customer_id):
         try:
             # Authorization removed – any caller can generate QR now
-            expiry_hours = int(request.query_params.get('expiry_hours', 24))
-            if expiry_hours < 1 or expiry_hours > 168:
+            expiry_hours = int(request.query_params.get('expiry_hours', 720))
+            if expiry_hours < 1 or expiry_hours > 720:
                 return Response(
-                    {"error": "expiry_hours must be between 1 and 168"},
+                    {"error": "expiry_hours must be between 1 and 720"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -475,4 +478,67 @@ class CustomerQRVerifyView(APIView):
 
         except Exception as e:
             logger.error(f"Error verifying QR token: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CustomerExportView(APIView):
+    """Export customers to CSV. Query param: include_deleted=true|false"""
+    def __init__(self):
+        self.customer_service = CustomerService()
+
+    def get(self, request):
+        try:
+            include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'
+            csv_output = self.customer_service.export_customers_to_csv(include_deleted=include_deleted)
+            response = HttpResponse(csv_output.getvalue(), content_type='text/csv')
+            response['Content-Disposition'] = 'attachment; filename="customers_export.csv"'
+            return response
+        except Exception as e:
+            logger.error(f"Error exporting customers: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CustomerImportView(APIView):
+    """Import customers from a CSV file. Multipart POST with field name 'file'."""
+    def __init__(self):
+        self.customer_service = CustomerService()
+
+    def post(self, request):
+        try:
+            if 'file' not in request.FILES:
+                return Response(
+                    {"error": "No file provided. Use 'file' as the form field name."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            uploaded_file = request.FILES['file']
+            if not uploaded_file.name.lower().endswith('.csv'):
+                return Response(
+                    {"error": "Only CSV files are supported."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
+                for chunk in uploaded_file.chunks():
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+
+            try:
+                results = self.customer_service.import_customers_from_csv(
+                    tmp_path,
+                    current_user=_get_current_user(request)
+                )
+            finally:
+                os.unlink(tmp_path)
+
+            return Response({
+                'message': (
+                    f"Import completed: {results['created']} created, "
+                    f"{results['skipped']} skipped out of {results['total']} rows."
+                ),
+                'results': results
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error in CustomerImportView.post: {e}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

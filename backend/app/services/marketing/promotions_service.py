@@ -6,6 +6,7 @@ from pynamodb.exceptions import PynamoDBException
 from pynamodb.expressions.condition import Condition
 
 from models.Promotions import Promotion, PromotionManager, UsageHistoryItem
+from notifications.services import notification_service
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,33 @@ logger = logging.getLogger(__name__)
 class PromotionService:
     def __init__(self, current_user: str = "system"):
         self.current_user = current_user
+
+    def _send_promotion_notification(self, action_type: str, promotion_name: str,
+                                     promotion_id: str = None, metadata: dict = None):
+        """Send promotion lifecycle notifications."""
+        templates = {
+            'created':      {'title': 'Promotion Created',             'message': f"Promotion '{promotion_name}' has been created",             'priority': 'medium'},
+            'updated':      {'title': 'Promotion Updated',             'message': f"Promotion '{promotion_name}' has been updated",             'priority': 'medium'},
+            'activated':    {'title': 'Promotion Activated',           'message': f"Promotion '{promotion_name}' is now active",                'priority': 'medium'},
+            'deactivated':  {'title': 'Promotion Deactivated',         'message': f"Promotion '{promotion_name}' has been deactivated",         'priority': 'medium'},
+            'soft_deleted': {'title': 'Promotion Deleted',             'message': f"Promotion '{promotion_name}' has been deleted",             'priority': 'medium'},
+            'hard_deleted': {'title': 'Promotion Permanently Deleted', 'message': f"Promotion '{promotion_name}' has been permanently deleted", 'priority': 'critical'},
+            'restored':     {'title': 'Promotion Restored',            'message': f"Promotion '{promotion_name}' has been restored",            'priority': 'medium'},
+        }
+        template = templates.get(action_type)
+        if not template:
+            return
+        try:
+            notification_service.create_notification(
+                title=template['title'],
+                message=template['message'],
+                priority=template['priority'],
+                notification_type='promotion',
+                metadata={'promotion_id': promotion_id or '', 'promotion_name': promotion_name,
+                          'action_type': f'promotion_{action_type}', **(metadata or {})}
+            )
+        except Exception as e:
+            logger.error(f"Failed to send promotion notification: {e}")
 
     @staticmethod
     def _build_filter_condition(
@@ -208,6 +236,7 @@ class PromotionService:
             if "min_purchase_amount" not in promo_data or promo_data["min_purchase_amount"] is None:
                 promo_data["min_purchase_amount"] = 100
             promo = Promotion.create_promotion(**promo_data)
+            self._send_promotion_notification('created', getattr(promo, 'name', promo.sk), promo.sk)
             return {"success": True, "promotion": promo.to_dict()}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
@@ -220,6 +249,7 @@ class PromotionService:
             if not promo:
                 return {"success": False, "error": "Promotion not found"}
             promo.update_promotion(updated_by=self.current_user, **promo_data)
+            self._send_promotion_notification('updated', getattr(promo, 'name', promo.sk), promotion_id)
             return {"success": True, "promotion": promo.to_dict()}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
@@ -231,7 +261,9 @@ class PromotionService:
             promo = Promotion.get_by_id(promotion_id)
             if not promo or promo.isDeleted:
                 return {"success": False, "error": "Promotion not found or already deleted"}
+            promo_name = getattr(promo, 'name', promo.sk)
             promo.soft_delete(deleted_by=self.current_user, reason=reason)
+            self._send_promotion_notification('soft_deleted', promo_name, promotion_id)
             return {"success": True, "message": "Promotion soft‑deleted"}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
@@ -244,6 +276,7 @@ class PromotionService:
             if not promo:
                 return {"success": False, "error": "Promotion not found"}
             promo.activate(self.current_user, reason)
+            self._send_promotion_notification('activated', getattr(promo, 'name', promo.sk), promotion_id)
             return {"success": True, "promotion": promo.to_dict()}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
@@ -256,6 +289,7 @@ class PromotionService:
             if not promo:
                 return {"success": False, "error": "Promotion not found"}
             promo.deactivate(self.current_user, reason)
+            self._send_promotion_notification('deactivated', getattr(promo, 'name', promo.sk), promotion_id)
             return {"success": True, "promotion": promo.to_dict()}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
@@ -457,6 +491,7 @@ class PromotionService:
             return {"success": False, "error": "Promotion not found"}
         try:
             promo.restore(self.current_user)
+            self._send_promotion_notification('restored', getattr(promo, 'name', promo.sk), promotion_id)
             return {"success": True, "promotion": promo.to_dict()}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -468,7 +503,9 @@ class PromotionService:
         if not promo:
             return {"success": False, "error": "Promotion not found"}
         try:
+            promo_name = getattr(promo, 'name', promo.sk)
             promo.delete()
+            self._send_promotion_notification('hard_deleted', promo_name, promotion_id)
             return {"success": True, "message": "Promotion permanently deleted"}
         except Exception as e:
             return {"success": False, "error": str(e)}

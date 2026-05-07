@@ -1,22 +1,18 @@
 """
 SessionLog Model - Following ERD Specification for Employee Session Tracking
-PK = "session_logs", SK = "SES-#####" (5-digit format)
+PK = "session_logs", SK = "SESS-#####" (5-digit format)
 Single Table Design using RamyeonCornerDB
 """
-import os
 from pynamodb.models import Model
-from pynamodb.attributes import (
-    UnicodeAttribute, UTCDateTimeAttribute,
-    NumberAttribute
-)
+from pynamodb.attributes import UnicodeAttribute, NumberAttribute
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import logging
 
-# Import existing utils for consistency
-from app.utils import generate_sk, get_dynamo_table, DYNAMO_TABLE_NAME, AWS_REGION
-from models.Branch import Branch  # For branch validation
+from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION
+from app.custom_attributes import FixedUTCDateTimeAttribute
+from models.Branch import Branch
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +25,7 @@ class SessionLog(Model):
     
     ERD Fields:
     - PK = session_logs
-    - SK = SES-#####
+    - SK = SESS-#####
     - branch_id (String)
     - username (String)
     - login_time (ISODATE)
@@ -50,15 +46,15 @@ class SessionLog(Model):
     
     # ============= PRIMARY KEYS =============
     pk = UnicodeAttribute(hash_key=True, attr_name="PK", default="session_logs")
-    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "SES-00001" (5-digit)
+    sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "SESS-00001" (5-digit)
     
     # ============= SESSION LOG DATA =============
     branch_id = UnicodeAttribute()  # Required for employee tracking
     username = UnicodeAttribute()  # Employee username (required)
     
     # ============= TIMESTAMPS =============
-    login_time = UTCDateTimeAttribute()
-    logout_time = UTCDateTimeAttribute(null=True)
+    login_time = FixedUTCDateTimeAttribute()
+    logout_time = FixedUTCDateTimeAttribute(null=True)
     
     # ============= SESSION DURATION =============
     # Stored as seconds, formatted as ISO duration in to_dict()
@@ -108,7 +104,7 @@ class SessionLog(Model):
             projection = AllProjection()
         
         pk = UnicodeAttribute(hash_key=True)  # Will be set to 'session_logs'
-        login_time = UTCDateTimeAttribute(range_key=True)
+        login_time = FixedUTCDateTimeAttribute(range_key=True)
     
     class EmployeeIndex(GlobalSecondaryIndex):
         """GSI for querying by employee ID"""
@@ -166,7 +162,7 @@ class SessionLog(Model):
                 logger.warning(f"Branch {branch_id} not found, but creating session anyway")
             
             # Generate 5-digit SK using utils.py
-            sk_value = generate_sk('SES-', 'session_seq')
+            sk_value = generate_sk('SESS', 'session_logs')
             
             # Create and save session log
             session_log = cls(
@@ -199,15 +195,15 @@ class SessionLog(Model):
         Get session log by ID
         
         Args:
-            session_id: Format "SES-00001" or just "00001"
+            session_id: Format "SESS-00001" or just "00001"
         
         Returns:
             SessionLog or None if not found
         """
         try:
             # Ensure proper format
-            if not session_id.startswith('SES-'):
-                session_id = f"SES-{session_id.zfill(5)}"
+            if not session_id.startswith('SESS-'):
+                session_id = f"SESS-{session_id.zfill(5)}"
             
             return cls.get("session_logs", session_id)
         except cls.DoesNotExist:
@@ -349,8 +345,7 @@ class SessionLog(Model):
             # Query by date index
             for session in cls.date_index.query(
                 "session_logs",
-                cls.login_time >= start_date,
-                filter_condition=cls.login_time <= end_date
+                cls.login_time.between(start_date, end_date)
             ):
                 sessions.append(session)
             
@@ -590,7 +585,10 @@ class SessionLog(Model):
             hours = seconds // 3600
             minutes = (seconds % 3600) // 60
             secs = seconds % 60
-            
+
+            if not (hours or minutes or secs):
+                return "PT0S"
+
             iso_duration = "PT"
             if hours > 0:
                 iso_duration += f"{hours}H"
@@ -598,7 +596,7 @@ class SessionLog(Model):
                 iso_duration += f"{minutes}M"
             if secs > 0:
                 iso_duration += f"{secs}S"
-            
+
             return iso_duration
         except Exception as e:
             logger.error(f"Error converting duration to ISO format: {str(e)}")
@@ -661,7 +659,7 @@ class SessionLog(Model):
         """
         try:
             data = {
-                "session_id": self.sk.replace("SES-", ""),
+                "session_id": self.sk.replace("SESS-", ""),
                 "branch_id": self.branch_id,
                 "username": self.username,
                 "status": self.status,
@@ -712,7 +710,7 @@ class SessionLog(Model):
         """
         try:
             return {
-                "id": self.sk.replace("SES-", ""),
+                "id": self.sk.replace("SESS-", ""),
                 "username": self.username,
                 "employee_name": self.employee_name or self.username,
                 "branch_id": self.branch_id,
@@ -743,10 +741,10 @@ def validate_session_log_id(session_id: str) -> bool:
         if not session_id:
             return False
         
-        if not session_id.startswith('SES-'):
+        if not session_id.startswith('SESS-'):
             return False
-        
-        number_part = session_id[4:]  # Remove "SES-"
+
+        number_part = session_id[5:]  # Remove "SESS-"
         if len(number_part) != 5:
             return False
         
@@ -778,7 +776,7 @@ def validate_session_log_data(username: str, branch_id: str) -> tuple[bool, str]
         return False, "Branch ID is required"
     
     # Validate branch format (optional)
-    from Branch import validate_branch_id
+    from models.Branch import validate_branch_id
     if not validate_branch_id(branch_id):
         logger.warning(f"Branch ID {branch_id} may not be in correct format")
     
@@ -1102,7 +1100,7 @@ class SessionLogManager:
                             logout_reason="overnight_auto_end",
                             status="ended"
                         )
-                        ended_sessions.append(session.sk.replace("SES-", ""))
+                        ended_sessions.append(session.sk.replace("SESS-", ""))
             
             return {
                 "ended_sessions": ended_sessions,

@@ -52,14 +52,16 @@ urlpatterns = [
     path('customers/statistics/', customer_views.CustomerStatisticsView.as_view(), name='customers-statistics'),
     path('customers/search/', customer_views.CustomerSearchView.as_view(), name='customers-search'),
     path('customers/by-email/', customer_views.CustomerByEmailView.as_view(), name='customers-by-email'),
+    path('customers/export/', customer_views.CustomerExportView.as_view(), name='customers-export'),
+    path('customers/import/', customer_views.CustomerImportView.as_view(), name='customers-import'),
     path('customers/<str:customer_id>/', customer_views.CustomerDetailView.as_view(), name='customers-detail'),
     path('customers/<str:customer_id>/restore/', customer_views.CustomerRestoreView.as_view(), name='customers-restore'),
     path('customers/<str:customer_id>/hard-delete/', customer_views.CustomerHardDeleteView.as_view(), name='customers-hard-delete'),
     path('customers/<str:customer_id>/loyalty/', customer_views.CustomerLoyaltyView.as_view(), name='customers-loyalty'),
     
     #CUSTOMER QR CODE ENDPOINTS
-    path('customers/<str:customer_id>/qr', customer_views.CustomerQRGenerateView.as_view(), name='customer-qr-generate'),
-    path('qr/verify', customer_views.CustomerQRVerifyView.as_view(), name='customer-qr-verify'),
+    path('customers/<str:customer_id>/qr/', customer_views.CustomerQRGenerateView.as_view(), name='customer-qr-generate'),
+    path('qr/verify/', customer_views.CustomerQRVerifyView.as_view(), name='customer-qr-verify'),
 
     # ==================== PRODUCTS ====================
     path('products/test/', product_views.TestTemplateView.as_view(), name='products-test'),
@@ -175,7 +177,7 @@ urlpatterns = [
     path('sessions/bulk-control/', session_views.BulkSessionControlView.as_view(), name='sessions-bulk-control'),
     path('sessions/<str:session_id>/', session_views.SessionDetailView.as_view(), name='sessions-detail'),
     path('sessions/<str:session_id>/force-logout/', session_views.ForceLogoutView.as_view(), name='sessions-force-logout'),
-    path('sessions/user/<str:user_id>/', session_views.UserSessionsView.as_view(), name='sessions-by-user'),
+    path('sessions/user/<str:username>/', session_views.UserSessionsView.as_view(), name='sessions-by-user'),
     
     # ==================== SALES LOGS ====================
     path('sales-logs/', saleslog_views.SalesLogView.as_view(), name='sales-logs-list'),

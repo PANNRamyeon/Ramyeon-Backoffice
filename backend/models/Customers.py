@@ -248,8 +248,7 @@ class Customer(Model):
             if phone_number and not cls.validate_phone(phone_number):
                 raise ValueError(f"Invalid phone number format: {phone_number}")
             
-            # Generate 4-digit SK using utils.py
-            sk = generate_sk('CUST', 'customer_seq', width=4)   # prefix without hyphen, width 4
+            sk = generate_sk('CUST', 'customer_seq', width=5)
             
             # Create customer
             customer = cls(
@@ -327,7 +326,8 @@ class Customer(Model):
                         logger.info(f"Updated OAuth provider {provider} for customer {existing.sk}")
                         return existing
                 
-                # Add new provider
+                # Set auth_mode first so add_auth_provider's save() captures it
+                existing.auth_mode = "oauth"
                 existing.add_auth_provider({
                     "provider": provider,
                     "provider_user_id": provider_user_id,
@@ -340,15 +340,11 @@ class Customer(Model):
                     "last_login": datetime.utcnow()
                 })
                 
-                # Update auth mode to oauth
-                existing.auth_mode = "oauth"
-                existing.save()
-                
                 logger.info(f"Added OAuth provider {provider} to existing customer {existing.sk}")
                 return existing
             
             # Create new customer
-            sk = generate_sk('CUST', 'customer_seq', width=4)   
+            sk = generate_sk('CUST', 'customer_seq', width=5)
             
             customer = cls(
                 pk="customers",
@@ -386,23 +382,24 @@ class Customer(Model):
             raise
     
     @classmethod
-    def get_by_id(cls, customer_id: str) -> 'Customer | None':
+    def get_by_id(cls, customer_id: str, include_deleted: bool = False) -> 'Customer | None':
         """
         Get customer by ID (SK)
-        
+
         Args:
-            customer_id: Format "CUST-0001" or just "0001"
-        
+            customer_id: Format "CUST-00001" or just "00001"
+            include_deleted: If True, returns soft-deleted customers too
+
         Returns:
             Customer or None if not found
         """
         try:
             # Ensure proper format
             if not customer_id.startswith('CUST-'):
-                customer_id = f"CUST-{customer_id.zfill(4)}"  # Pad to 4 digits if needed
-            
+                customer_id = f"CUST-{customer_id.zfill(5)}"
+
             customer = cls.get("customers", customer_id)
-            if customer and customer.isDeleted:
+            if customer and customer.isDeleted and not include_deleted:
                 return None
             return customer
         except cls.DoesNotExist:
@@ -484,9 +481,8 @@ class Customer(Model):
                         if len(customers) >= limit:
                             break
                 except Exception as e:
-                    # Log the customer ID that causes the error
                     logger.error(f"Error processing customer {customer.sk}: {e}")
-                    raise  # re-raise to see the full traceback
+                    continue
             return customers
         except Exception as e:
             logger.error(f"Error searching customers: {str(e)}")
@@ -510,47 +506,6 @@ class Customer(Model):
             logger.error(f"Error getting all customers: {str(e)}")
             return []
         
-    @classmethod
-    # DEPRECATION NOTICE:
-    # This classmethod performs authentication by directly comparing the provided password_hash
-    # against the stored bcrypt hash. For proper password verification, use the service-layer
-    # method CustomerService.authenticate_customer which handles plaintext passwords and
-    # constant-time comparison. This method is retained temporarily for compatibility and
-    # will be removed in a future refactoring.
-    def authenticate(cls, email: str, password_hash: str) -> 'Customer | None':
-        """
-        Authenticate customer with email and password hash
-        
-        Args:
-            email: Customer email
-            password_hash: Hashed password to verify
-        
-        Returns:
-            Customer if authentication successful, None otherwise
-        """
-        try:
-            customer = cls.get_by_email(email)
-            if not customer:
-                return None
-            
-            # Check if customer has password set
-            if not customer.password_set or not customer.password:
-                return None
-            
-            # Verify password (in production, use proper password verification)
-            if customer.password == password_hash:
-                # Update last login for email/password auth
-                customer.updated_at = datetime.utcnow()
-                customer.save()
-                logger.info(f"Customer authenticated: {customer.sk}")
-                return customer
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Authentication error for email {email}: {str(e)}")
-            return None
-    
     @classmethod
     # DEPRECATION NOTICE:
     # This classmethod scans all customers to find a matching OAuth provider.
@@ -970,20 +925,19 @@ class CustomerManager:
         dynamodb = boto3.resource('dynamodb', **client_kwargs)
         table = dynamodb.Table(DYNAMO_TABLE_NAME)
 
-        # Scan for customer items (PK = 'customers')
+        from boto3.dynamodb.conditions import Key
         items = []
         last_key = None
         while True:
-            scan_kwargs = {
-                'FilterExpression': 'PK = :pk',
-                'ExpressionAttributeValues': {':pk': 'customers'}
+            query_kwargs = {
+                'KeyConditionExpression': Key('PK').eq('customers')
             }
             if last_key:
-                scan_kwargs['ExclusiveStartKey'] = last_key
+                query_kwargs['ExclusiveStartKey'] = last_key
             try:
-                response = table.scan(**scan_kwargs)
+                response = table.query(**query_kwargs)
             except Exception as e:
-                logger.error(f"DynamoDB scan failed: {e}")
+                logger.error(f"DynamoDB query failed: {e}")
                 return {}
             items.extend(response.get('Items', []))
             last_key = response.get('LastEvaluatedKey')

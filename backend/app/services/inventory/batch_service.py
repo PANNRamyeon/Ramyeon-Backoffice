@@ -102,7 +102,7 @@ class BatchService:
                 notification_type = "alert"
             elif action_type in ['stock_ordered', 'activated']:
                 priority = "low"
-                notification_type = "info"
+                notification_type = "inventory"
             else:
                 priority = "low"
                 notification_type = "system"

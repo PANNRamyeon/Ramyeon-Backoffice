@@ -27,4 +27,10 @@ urlpatterns = [
 
     # Statistics
     path('stats/', views.notification_stats, name='notification_stats'),
+
+    # Email verification
+    path('email/verify/', views.verify_email, name='verify_email'),
+    path('email/resend/', views.resend_verification_email, name='resend_verification_email'),
+    path('email/send-code/', views.send_verification_code, name='send_verification_code'),
+    path('email/verify-code/', views.verify_code, name='verify_code'),
 ]

@@ -77,12 +77,9 @@
       </template>
 
       <template #body>
-         <tr v-for="customer in paginatedCustomers" :key="customer._id || customer.customer_id" class="hover-surface transition-theme">
+         <tr v-for="customer in paginatedCustomers" :key="customer.customer_id" class="hover-surface transition-theme">
           <td>
-            <span class="badge surface-tertiary text-accent border-theme-subtle fw-medium"
-              style="font-family: var(--font-mono, 'Courier New', monospace);">
-              {{ customer.customer_id || customer._id }}
-            </span>
+            <span class="badge bg-primary">{{ customer.customer_id }}</span>
           </td>
           <td>
             <div class="fw-medium text-tertiary-dark">
@@ -95,7 +92,7 @@
             </div>
           </td>
           <td><div class="text-secondary">{{ customer.email }}</div></td>
-          <td><div class="text-secondary">{{ customer.phone || 'N/A' }}</div></td>
+          <td><div class="text-secondary">{{ customer.phone_number || 'N/A' }}</div></td>
           <td class="text-center">
             <span class="badge bg-success text-inverse fw-medium">
               {{ customer.loyalty_points || 0 }}
@@ -138,9 +135,9 @@
                 class="btn btn-outline-danger action-btn btn-icon-only btn-sm shadow-sm"
                 @click="deleteCustomer(customer)"
                 title="Delete Customer"
-                :disabled="deletingCustomerId === (customer._id || customer.customer_id)"
+                :disabled="deletingCustomerId === customer.customer_id"
               >
-                <Trash2 v-if="deletingCustomerId !== (customer._id || customer.customer_id)" :size="14" />
+                <Trash2 v-if="deletingCustomerId !== customer.customer_id" :size="14" />
                 <div v-else class="spinner-border spinner-border-sm"></div>
               </button>
             </div>
@@ -257,9 +254,9 @@ const {
   fetchCustomers,
   fetchStatistics,
   deleteCustomer: deleteCustomerAPI,
-  clearError,
+  exportCustomers,
   importCustomers,
-  exportCustomers
+  clearError
 } = useCustomers()
 
 // =====================
@@ -277,6 +274,7 @@ const selectedCustomer = ref(null)
 const customerToDelete = ref(null)
 const deletingCustomerId = ref(null)
 const selectedCustomers = ref([])
+const selectionActions = ref([])
 
 // =====================
 // FILTERS
@@ -327,8 +325,6 @@ const buildQueryParams = () => {
   }
   // search
   if (searchValue.value && searchValue.value.trim()) params.search = searchValue.value.trim()
-  // pagination
-  params.page = currentPage.value
   params.limit = itemsPerPage.value
   return params
 }
@@ -380,27 +376,27 @@ const handleSearchClear = async () => {
 }
 
 const handleImport = async (event) => {
-  const file = event.target.files[0]
+  const file = event.target.files?.[0]
+  event.target.value = ''
   if (!file) return
   try {
-    isLoading.value = true
-    await importCustomers(file)
-    alert('✅ Customers imported successfully!')
+    const result = await importCustomers(file)
+    alert(result?.message || 'Import completed.')
     await fetchCustomers(buildQueryParams())
   } catch (err) {
-    alert('❌ Import failed: ' + err.message)
-  } finally {
-    isLoading.value = false
-    event.target.value = ''
+    alert(`Import failed: ${err.message}`)
   }
 }
 
 const handleExport = async () => {
+  exporting.value = true
   try {
-    exporting.value = true
-    await exportCustomers()
+    const params = {}
+    const statusFilter = filters.value.find(f => f.key === 'status')?.value
+    if (statusFilter && statusFilter !== 'all') params.status = statusFilter
+    await exportCustomers(params)
   } catch (err) {
-    alert('❌ Export failed: ' + err.message)
+    alert(`Export failed: ${err.message}`)
   } finally {
     exporting.value = false
   }
@@ -468,10 +464,12 @@ const closeDeleteModal = () => {
   customerToDelete.value = null
   deleteModalInstance.value?.hide()
 }
+const cancelDelete = closeDeleteModal
+const handleModeChanged = (mode) => { modalMode.value = mode }
 const confirmDelete = async () => {
   if (!customerToDelete.value) return
   try {
-    deletingCustomerId.value = customerToDelete.value._id || customerToDelete.value.customer_id
+    deletingCustomerId.value = customerToDelete.value.customer_id
     await deleteCustomerAPI(deletingCustomerId.value)
     closeDeleteModal()
     deletingCustomerId.value = null

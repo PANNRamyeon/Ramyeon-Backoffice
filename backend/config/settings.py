@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'rest_framework',  # Add this line
     'corsheaders',
     'app',  # Add this line
+    'notifications',
 ]
 
 MIDDLEWARE = [

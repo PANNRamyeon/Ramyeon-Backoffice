@@ -3,11 +3,38 @@ from models.Batches import Batch
 from models.Categories import Category
 from pynamodb.exceptions import DoesNotExist, PutError, DeleteError, UpdateError
 from app.utils.singleton import get_singleton
+from notifications.services import notification_service
 import base64
 import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _send_product_notification(action_type: str, product_name: str, product_id: str = None, metadata: dict = None):
+    """Send product lifecycle and stock-level notifications."""
+    templates = {
+        'created':      {'title': 'Product Created',             'message': f"Product '{product_name}' has been created",             'priority': 'low'},
+        'updated':      {'title': 'Product Updated',             'message': f"Product '{product_name}' has been updated",             'priority': 'low'},
+        'soft_deleted': {'title': 'Product Deleted',             'message': f"Product '{product_name}' has been deleted",             'priority': 'medium'},
+        'hard_deleted': {'title': 'Product Permanently Deleted', 'message': f"Product '{product_name}' has been permanently deleted", 'priority': 'high'},
+        'low_stock':    {'title': 'Low Stock Alert',             'message': f"Product '{product_name}' is running low on stock",      'priority': 'high'},
+        'out_of_stock': {'title': 'Out of Stock Alert',          'message': f"Product '{product_name}' is out of stock",              'priority': 'high'},
+    }
+    template = templates.get(action_type)
+    if not template:
+        return
+    try:
+        notification_service.create_notification(
+            title=template['title'],
+            message=template['message'],
+            priority=template['priority'],
+            notification_type='inventory',
+            metadata={'product_id': product_id or '', 'product_name': product_name,
+                      'action_type': f'product_{action_type}', **(metadata or {})}
+        )
+    except Exception as e:
+        logger.error(f"Failed to send product notification: {e}")
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
@@ -56,6 +83,7 @@ class ProductService:
             product = Product.create_product(**data)
             logger.info(f"Successfully created product {product.sk}")
             Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
+            _send_product_notification('created', product.product_name, product.sk)
             return product
         except (PutError, ValueError) as e:
             logger.error(f"Error creating product: {str(e)}")
@@ -238,6 +266,7 @@ class ProductService:
                 Category.adjust_subcategory_count(old_category_id, old_subcategory_name, -1)
                 Category.adjust_subcategory_count(new_category_id, new_subcategory_name, +1)
 
+            _send_product_notification('updated', product.product_name, product_id)
             # Re-fetch the instance to ensure the returned object is up-to-date
             return ProductService.get_product_by_id(product_id)
         except UpdateError as e:
@@ -364,9 +393,11 @@ class ProductService:
             if hard_delete:
                 product.delete()
                 logger.info(f"Successfully hard-deleted product {product_id}")
+                _send_product_notification('hard_deleted', product.product_name, product_id)
             else:
                 product.soft_delete(deleted_by=deleted_by, reason=reason)
                 logger.info(f"Successfully soft-deleted product {product_id}")
+                _send_product_notification('soft_deleted', product.product_name, product_id)
             Category.adjust_subcategory_count(category_id, subcategory_name, -1)
             return True
         except (DeleteError, UpdateError, ValueError) as e:
@@ -386,14 +417,23 @@ class ProductService:
         if not product:
             raise ValueError(f"Product with ID {product_id} not found.")
 
+        prior_status = getattr(product, 'status', None)
         try:
-            return product.update_stock(
+            result = product.update_stock(
                 quantity_change=quantity_change,
                 source=source,
                 terminal_id=terminal_id,
                 transaction_id=transaction_id,
                 reason=reason,
             )
+            try:
+                new_status = getattr(result, 'status', None) or getattr(product, 'status', None)
+                if new_status in ('low_stock', 'out_of_stock') and new_status != prior_status:
+                    action = 'out_of_stock' if new_status == 'out_of_stock' else 'low_stock'
+                    _send_product_notification(action, product.product_name, product_id)
+            except Exception:
+                pass
+            return result
         except Exception as e:
             logger.error(f"Error updating stock for product {product_id}: {str(e)}")
             raise
@@ -409,14 +449,23 @@ class ProductService:
         if not product:
             raise ValueError(f"Product with SKU {sku} not found.")
 
+        prior_status = getattr(product, 'status', None)
         try:
-            return product.update_stock(
+            result = product.update_stock(
                 quantity_change=quantity_change,
                 source=source,
                 terminal_id=terminal_id,
                 transaction_id=transaction_id,
                 reason=reason,
             )
+            try:
+                new_status = getattr(result, 'status', None) or getattr(product, 'status', None)
+                if new_status in ('low_stock', 'out_of_stock') and new_status != prior_status:
+                    action = 'out_of_stock' if new_status == 'out_of_stock' else 'low_stock'
+                    _send_product_notification(action, product.product_name, product.sk)
+            except Exception:
+                pass
+            return result
         except Exception as e:
             logger.error(f"Error updating stock for product with SKU {sku}: {str(e)}")
             raise

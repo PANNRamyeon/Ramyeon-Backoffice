@@ -1,308 +1,236 @@
-// services/apiCustomers.js - Updated to match backend CustomerService
+// services/apiCustomers.js
 import { api } from './api.js';
 
 class CustomerApiService {
-  // Helper method to handle responses
   handleResponse(response) {
     return response.data;
   }
 
-  // Helper method to handle errors
   handleError(error) {
-    const message = error.response?.data?.error || 
-                   error.response?.data?.message || 
-                   error.response?.data?.detail ||
-                   error.message || 
-                   'An unexpected error occurred';
-    
+    const message = error.response?.data?.error ||
+                    error.response?.data?.message ||
+                    error.response?.data?.detail ||
+                    error.message ||
+                    'An unexpected error occurred';
     console.error('Customer API Error:', {
       status: error.response?.status,
       data: error.response?.data,
       message
     });
-    
     throw new Error(message);
   }
 
-  // CUSTOMER CRUD OPERATIONS
+  // ==================== CRUD ====================
 
-  /**
-   * Get all customers with pagination and filters
-   * @param {Object} params - Query parameters (page, limit, status, etc.)
-   * @returns {Promise<Object>} Customers data with pagination
-   */
   async getCustomers(params = {}) {
     try {
       const response = await api.get('/customers/', { params });
       return this.handleResponse(response);
     } catch (error) {
-      console.error('Error fetching customers:', error);
       this.handleError(error);
     }
   }
 
-  /**
-   * Get customer by ID
-   * @param {string} customerId - Customer ID (CUST-##### format)
-   * @returns {Promise<Object>} Customer data
-   */
   async getCustomer(customerId) {
     try {
       const response = await api.get(`/customers/${customerId}/`);
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error fetching customer ${customerId}:`, error);
       this.handleError(error);
     }
   }
 
-  /**
-   * Create new customer
-   * @param {Object} customerData - Customer data
-   * @returns {Promise<Object>} Created customer
-   */
   async createCustomer(customerData) {
     try {
       const response = await api.post('/customers/', customerData);
       return this.handleResponse(response);
     } catch (error) {
-      console.error('Error creating customer:', error);
       this.handleError(error);
     }
   }
 
-  /**
-   * Update customer
-   * @param {string} customerId - Customer ID
-   * @param {Object} customerData - Updated customer data
-   * @returns {Promise<Object>} Updated customer
-   */
   async updateCustomer(customerId, customerData) {
     try {
       const response = await api.put(`/customers/${customerId}/`, customerData);
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error updating customer ${customerId}:`, error);
       this.handleError(error);
     }
   }
 
-  /**
-   * Delete customer (soft delete - sets isDeleted: true)
-   * @param {string} customerId - Customer ID
-   * @returns {Promise<Object>} Deletion confirmation
-   */
+  // Soft delete — sets isDeleted: true
   async deleteCustomer(customerId) {
     try {
-      // Try using DELETE on the main endpoint (same pattern as create but with DELETE)
       const response = await api.delete(`/customers/${customerId}/`);
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error soft deleting customer ${customerId}:`, error);
       this.handleError(error);
     }
   }
 
-  /**
-   * Restore soft deleted customer
-   * @param {string} customerId - Customer ID
-   * @returns {Promise<Object>} Restored customer
-   */
+  // Restore a soft-deleted customer
   async restoreCustomer(customerId) {
     try {
-      const response = await api.patch(`/customers/${customerId}/restore/`);
+      const response = await api.post(`/customers/${customerId}/restore/`);
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error restoring customer ${customerId}:`, error);
       this.handleError(error);
     }
   }
 
-  /**
-   * Get deleted customers (for admin to view soft-deleted customers)
-   * @param {Object} params - Query parameters
-   * @returns {Promise<Object>} Deleted customers data
-   */
-  async getDeletedCustomers(params = {}) {
+  // Permanently delete — requires ?confirm=yes
+  async hardDeleteCustomer(customerId) {
     try {
-      const response = await api.get('/customers/deleted/', { params });
+      const response = await api.delete(`/customers/${customerId}/hard-delete/?confirm=yes`);
       return this.handleResponse(response);
     } catch (error) {
-      console.error('Error fetching deleted customers:', error);
       this.handleError(error);
     }
   }
 
-  // SEARCH AND FILTERING
+  // ==================== AUTH ====================
 
-  /**
-   * Search customers by query
-   * @param {string} query - Search query
-   * @returns {Promise<Array>} Filtered customers
-   */
+  async registerCustomer(customerData) {
+    try {
+      const response = await api.post('/customers/register/', customerData);
+      return this.handleResponse(response);
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  async loginCustomer(email, password) {
+    try {
+      const response = await api.post('/customers/login/', { email, password });
+      return this.handleResponse(response);
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  async getCurrentCustomer() {
+    try {
+      const response = await api.get('/customers/me/');
+      return this.handleResponse(response);
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  // ==================== SEARCH & LOOKUP ====================
+
+  // Search by name, email, username, or phone — param must be 'q'
   async searchCustomers(query) {
     try {
-      const response = await api.get('/customers/search/', {
-        params: { search: query }
-      });
+      const response = await api.get('/customers/search/', { params: { q: query } });
       return this.handleResponse(response);
     } catch (error) {
-      console.error('Error searching customers:', error);
       this.handleError(error);
     }
   }
 
-  /**
-   * Get customers by status
-   * @param {string} status - Customer status (active, inactive)
-   * @returns {Promise<Object>} Customers with specified status
-   */
+  async getCustomerByEmail(email) {
+    try {
+      const response = await api.get('/customers/by-email/', { params: { email } });
+      return this.handleResponse(response);
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
   async getCustomersByStatus(status) {
     try {
-      const response = await api.get('/customers/', {
-        params: { status }
-      });
+      const response = await api.get('/customers/', { params: { status } });
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error fetching customers by status ${status}:`, error);
       this.handleError(error);
     }
   }
 
-  // LOYALTY POINTS MANAGEMENT
+  // ==================== LOYALTY ====================
 
-  /**
-   * Update customer loyalty points
-   * @param {string} customerId - Customer ID
-   * @param {number} points - Points to add
-   * @param {string} reason - Reason for point addition
-   * @returns {Promise<Object>} Updated customer
-   */
+  // Add loyalty points — payload key must be 'points'
   async updateLoyaltyPoints(customerId, points, reason = 'Manual adjustment') {
     try {
-      const response = await api.patch(`/customers/${customerId}/loyalty/`, {
-        points_to_add: points,
-        reason: reason
-      });
+      const response = await api.post(`/customers/${customerId}/loyalty/`, { points, reason });
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error updating loyalty points for customer ${customerId}:`, error);
       this.handleError(error);
     }
   }
 
-  // CUSTOMER ANALYTICS
+  // ==================== EXPORT / IMPORT ====================
 
-  /**
-   * Get customer statistics
-   * @returns {Promise<Object>} Customer statistics
-   */
+  // Download all customers as a CSV file (triggers browser download)
+  async exportCustomers(params = {}) {
+    try {
+      const response = await api.get('/customers/export/', {
+        params,
+        responseType: 'blob',
+      });
+      const url = URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
+      const link = document.createElement('a');
+      link.href = url;
+      const date = new Date().toISOString().slice(0, 10);
+      link.download = `customers_export_${date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  // Import customers from a CSV File object (multipart/form-data)
+  async importCustomers(file) {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await api.post('/customers/import/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return this.handleResponse(response);
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  // ==================== STATISTICS ====================
+
   async getCustomerStatistics() {
     try {
       const response = await api.get('/customers/statistics/');
       return this.handleResponse(response);
     } catch (error) {
-      console.error('Error fetching customer statistics:', error);
       this.handleError(error);
     }
   }
 
-  // RESTORE AND HARD DELETE (for admin functions)
+  // ==================== QR CODE ====================
 
-  /**
-   * Restore deleted customer
-   * @param {string} customerId - Customer ID
-   * @returns {Promise<Object>} Restored customer
-   */
-  async restoreCustomer(customerId) {
+  // Generate a QR token for a customer (default 720h / 30 days)
+  async generateQRToken(customerId, expiryHours = 720) {
     try {
-      const response = await api.patch(`/customers/${customerId}/restore/`);
-      return this.handleResponse(response);
-    } catch (error) {
-      console.error(`Error restoring customer ${customerId}:`, error);
-      this.handleError(error);
-    }
-  }
-
-  /**
-   * Permanently delete customer
-   * @param {string} customerId - Customer ID
-   * @param {string} confirmationToken - Confirmation token
-   * @returns {Promise<Object>} Deletion confirmation
-   */
-  async hardDeleteCustomer(customerId, confirmationToken) {
-    try {
-      const response = await api.delete(`/customers/${customerId}/hard/`, {
-        data: { confirmation_token: confirmationToken }
+      const response = await api.get(`/customers/${customerId}/qr/`, {
+        params: { expiry_hours: expiryHours }
       });
       return this.handleResponse(response);
     } catch (error) {
-      console.error(`Error permanently deleting customer ${customerId}:`, error);
       this.handleError(error);
     }
   }
 
-  // BULK OPERATIONS
-
-  /**
-   * Delete multiple customers
-   * @param {Array} customerIds - Array of customer IDs
-   * @returns {Promise<Object>} Deletion results
-   */
-  async deleteMultipleCustomers(customerIds) {
+  // Verify a scanned QR token and return customer data
+  async verifyQRToken(token) {
     try {
-      const response = await api.delete('/customers/bulk/', {
-        data: { customer_ids: customerIds }
-      });
+      const response = await api.post('/qr/verify/', { token });
       return this.handleResponse(response);
     } catch (error) {
-      console.error('Error deleting multiple customers:', error);
-      this.handleError(error);
-    }
-  }
-
-
-  /**
-   * Export customers as a CSV file
-   * @param {boolean} includeDeleted - Whether to include deleted customers
-   * @returns {Promise<Blob>} CSV file blob
-   */
-  async exportCustomers(includeDeleted = false) {
-    try {
-      const response = await api.get('/customers/import-export/', {
-        params: { include_deleted: includeDeleted },
-        responseType: 'blob', // important for file downloads
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error exporting customers:', error);
-      this.handleError(error);
-    }
-  }
-
-  /**
-   * Import customers from a CSV file
-   * @param {File} file - CSV file to upload
-   * @returns {Promise<Object>} Import summary
-   */
-  async importCustomers(file) {
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await api.post('/customers/import-export/', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-
-      return this.handleResponse(response);
-    } catch (error) {
-      console.error('Error importing customers:', error);
       this.handleError(error);
     }
   }
 }
 
-// Create and export singleton instance
 const customerApiService = new CustomerApiService();
-
 export default customerApiService;

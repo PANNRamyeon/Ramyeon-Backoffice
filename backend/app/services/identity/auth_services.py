@@ -5,6 +5,7 @@ from decouple import config
 from django.conf import settings
 from models.Users import User
 from models.TokenBlacklist import TokenBlacklist
+from notifications.services import notification_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,16 @@ class AuthService:
             
             if not user:
                 logger.warning(f"Login attempt with non-existent email: {email}")
+                try:
+                    notification_service.create_notification(
+                        title="Failed Login Attempt",
+                        message=f"Login attempt with unrecognized email: {email}",
+                        priority="high",
+                        notification_type="security",
+                        metadata={"event_type": "unknown_email", "email": email}
+                    )
+                except Exception:
+                    pass
                 raise Exception("Invalid email or password")
             
             # Password verification
@@ -97,6 +108,16 @@ class AuthService:
             
             if not password_valid:
                 logger.warning(f"Invalid password for user: {email}")
+                try:
+                    notification_service.create_notification(
+                        title="Failed Login Attempt",
+                        message=f"Invalid password entered for account: {email}",
+                        priority="high",
+                        notification_type="security",
+                        metadata={"event_type": "invalid_password", "email": email}
+                    )
+                except Exception:
+                    pass
                 raise Exception("Invalid email or password")
             
             # Status checks
@@ -108,6 +129,16 @@ class AuthService:
             user_role = user.role.lower() if user.role else ""
             if user_role != "admin":
                 logger.warning(f"Non-admin login attempt: {email} (role: {user_role})")
+                try:
+                    notification_service.create_notification(
+                        title="Unauthorized Admin Access Attempt",
+                        message=f"Non-admin user '{email}' (role: {user_role}) attempted to access the admin system",
+                        priority="high",
+                        notification_type="security",
+                        metadata={"event_type": "non_admin_access", "email": email, "role": user_role}
+                    )
+                except Exception:
+                    pass
                 raise Exception("Access denied. This system is restricted to administrators only.")
             
             # Deleted check
@@ -176,12 +207,13 @@ class AuthService:
                 current_user = self.get_current_user(clean_token)
                 if current_user and current_user.get('user_id'):
                     user_id = current_user.get('user_id')
-                    
-                    # Log session logout
+
+                    # Log session logout — v5 service expects username, not user_id
                     try:
                         from .session_services import SessionLogService
                         session_service = SessionLogService()
-                        session_service.log_logout(user_id)
+                        username = current_user.get('username') or current_user.get('email')
+                        session_service.log_logout(username)
                     except Exception as session_error:
                         logger.error(f"Session logout failed: {session_error}")
                         
