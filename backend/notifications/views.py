@@ -65,6 +65,7 @@ def create_inventory_alert(request):
         product_id = request.data.get('product_id')
         current_stock = request.data.get('current_stock')
         product_name = request.data.get('product_name', 'Product')
+        threshold = safe_int(request.data.get('threshold', 0), 0)
         if not all([product_id, current_stock is not None]):
             return Response({'success': False, 'message': 'product_id and current_stock are required'},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -72,7 +73,8 @@ def create_inventory_alert(request):
         notification = notification_service.create_inventory_alert(
             product_id=product_id,
             current_stock=current_stock,
-            product_name=product_name
+            product_name=product_name,
+            threshold=threshold
         )
         return Response({'success': True, 'message': 'Inventory alert created', 'data': notification},
                         status=status.HTTP_201_CREATED)
@@ -168,13 +170,11 @@ def all_notifications(request):
     """Get all notifications (scan) with pagination"""
     try:
         limit = safe_int(request.query_params.get('limit', 50), 50)
-        last_key = request.query_params.get('last_key')
-        if last_key:
-            last_key = json.loads(last_key)
+        include_archived = request.query_params.get('include_archived', 'false').lower() == 'true'
 
         items, new_last_key = notification_service.get_all_notifications(
             limit=limit,
-            start_key=last_key
+            include_archived=include_archived
         )
         return Response({
             'success': True,
@@ -210,7 +210,7 @@ def mark_notification_read(request, notification_id):
         validate_notification_id(notification_id)
         success = notification_service.mark_as_read(notification_id)
         if not success:
-            return Response({'success': False, 'message': 'Notification not found or already read'},
+            return Response({'success': False, 'message': 'Notification not found'},
                             status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'message': 'Notification marked as read'})
     except ValueError as e:
@@ -228,7 +228,7 @@ def mark_notification_unread(request, notification_id):
         validate_notification_id(notification_id)
         success = notification_service.mark_as_unread(notification_id)
         if not success:
-            return Response({'success': False, 'message': 'Notification not found or already unread'},
+            return Response({'success': False, 'message': 'Notification not found'},
                             status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'message': 'Notification marked as unread'})
     except ValueError as e:

@@ -29,25 +29,27 @@ class NotificationService:
                 metadata=metadata
             )
             return notification.to_dict()
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Error creating notification: {e}")
             raise Exception(f"Error creating notification: {str(e)}")
 
     def create_inventory_alert(self, product_id: str,
                                product_name: str,
-                               current_stock: int) -> Dict:
-        return self.create_notification(
-            title=f"Low Stock Alert: {product_name}",
-            message=f"Inventory for {product_name} is low. Current: {current_stock}",
-            notification_type='inventory',
-            priority='high',
-            action_type='update_inventory',
-            metadata={
-                "event": "inventory_low",
-                "product_id": product_id,
-                "current_stock": current_stock
-            }
-        )
+                               current_stock: int,
+                               threshold: int = 0) -> Dict:
+        try:
+            notification = Notification.notify_inventory_low(
+                product_id=product_id,
+                product_name=product_name,
+                current_quantity=current_stock,
+                threshold=threshold
+            )
+            return notification.to_dict()
+        except Exception as e:
+            logger.error(f"Error creating inventory alert: {e}")
+            raise Exception(f"Error creating inventory alert: {str(e)}")
 
     # ------------------------------------------------------------------
     # RETRIEVAL
@@ -129,15 +131,10 @@ class NotificationService:
             return []
 
     def get_all_notifications(self, limit: int = 50,
-                              start_key: Optional[Dict] = None) -> Tuple[List[Dict], Optional[Dict]]:
+                              include_archived: bool = False) -> Tuple[List[Dict], Optional[Dict]]:
         try:
-            scan_kwargs = {'limit': limit}
-            if start_key:
-                scan_kwargs['exclusive_start_key'] = start_key
-            results = list(Notification.scan(**scan_kwargs))
-            active = [n for n in results if not n.archived]
-            last_key = results.last_evaluated_key if hasattr(results, 'last_evaluated_key') else None
-            return [n.to_dict() for n in active], last_key
+            items = Notification._scan_partitions(limit=limit, include_archived=include_archived)
+            return [n.to_dict() for n in items], None
         except Exception as e:
             logger.error(f"Error scanning notifications: {e}")
             return [], None
@@ -154,7 +151,7 @@ class NotificationService:
     # ------------------------------------------------------------------
     def mark_as_read(self, notification_id: str) -> bool:
         try:
-            notification = Notification.get_by_id(notification_id)
+            notification = Notification.get_by_id(notification_id, include_archived=True)
             if notification:
                 notification.mark_as_read()
                 return True
@@ -165,7 +162,7 @@ class NotificationService:
 
     def mark_as_unread(self, notification_id: str) -> bool:
         try:
-            notification = Notification.get_by_id(notification_id)
+            notification = Notification.get_by_id(notification_id, include_archived=True)
             if notification:
                 notification.mark_as_unread()
                 return True

@@ -195,38 +195,23 @@ class CustomerService:
                 for condition in scan_conditions[1:]:
                     final_condition &= condition
 
-            # Perform paginated scan
-            scan_kwargs = {}
+            # Query only the customers partition — avoids a full table scan
+            query_kwargs = {'page_size': limit}
             if final_condition is not None:
-                scan_kwargs['filter_condition'] = final_condition
+                query_kwargs['filter_condition'] = final_condition
             if exclusive_start_key:
-                scan_kwargs['last_evaluated_key'] = exclusive_start_key
-            scan_kwargs['limit'] = limit
+                query_kwargs['last_evaluated_key'] = exclusive_start_key
 
-            results = list(Customer.scan(**scan_kwargs))
-            # PynamoDB's scan does not directly expose last_evaluated_key; we work around by scanning in pages.
-            # We'll implement manual paging using page_size=limit and collecting until we have enough.
-            # For simplicity, we'll use the internal `_last_evaluated_key` attribute after scanning.
-            # This may need adjustment based on PynamoDB version.
-            # Let's do a proper paginated approach:
             customers = []
             last_evaluated_key = None
-            # Use page_size to limit each request
-            page_iterator = Customer.scan(
-                filter_condition=final_condition,
-                page_size=limit,
-                last_evaluated_key=exclusive_start_key
-            )
+            page_iterator = Customer.query("customers", **query_kwargs)
             for customer in page_iterator:
                 customers.append(customer)
                 if len(customers) >= limit:
                     break
-            # Get the last evaluated key from the iterator
-            # PynamoDB's ResultIterator has a `last_evaluated_key` property
             try:
                 last_evaluated_key = page_iterator.last_evaluated_key
             except AttributeError:
-                # fallback: if we broke early, we need to track the last key manually
                 pass
 
             # If we have less than limit, no more pages
@@ -244,11 +229,8 @@ class CustomerService:
 
     def get_customer_by_id(self, customer_id, include_deleted=False):
         try:
-            customer = Customer.get_by_id(customer_id)
-            if customer:
-                if include_deleted or not customer.isDeleted:
-                    return customer.to_dict()
-            return None
+            customer = Customer.get_by_id(customer_id, include_deleted=include_deleted)
+            return customer.to_dict() if customer else None
         except PynamoDBException as e:
             raise Exception(f"Error getting customer: {str(e)}")
 
@@ -311,7 +293,7 @@ class CustomerService:
 
     def restore_customer(self, customer_id, current_user=None):
         try:
-            customer = Customer.get_by_id(customer_id)
+            customer = Customer.get_by_id(customer_id, include_deleted=True)
             if not customer or not customer.isDeleted:
                 return False
             old_data = customer.to_dict()
@@ -340,7 +322,7 @@ class CustomerService:
 
     def hard_delete_customer(self, customer_id, current_user=None, confirmation_token=None):
         try:
-            customer = Customer.get_by_id(customer_id)
+            customer = Customer.get_by_id(customer_id, include_deleted=True)
             if not customer:
                 return False
             customer_data = customer.to_dict()
@@ -451,7 +433,7 @@ class CustomerService:
 
     # Stubbed methods
     def get_customer_by_qr_code(self, qr_code, include_deleted=False):
-        raise NotImplementedError("get_customer_by_qr_code is not implemented for DynamoDB")
+        return self.verify_qr_token(qr_code)
 
     def add_order_to_history(self, customer_id, order_data):
         raise NotImplementedError("add_order_to_history is not implemented for DynamoDB")
@@ -460,10 +442,112 @@ class CustomerService:
         raise NotImplementedError("get_customer_order_history is not implemented for DynamoDB")
 
     def export_customers_to_csv(self, include_deleted=False):
-        raise NotImplementedError("export_customers_to_csv is not implemented for DynamoDB")
+        """
+        Query all customers and serialize to CSV.
+        Returns a StringIO buffer ready to read.
+        """
+        try:
+            all_customers = []
+            last_evaluated_key = None
+
+            while True:
+                query_kwargs = {'page_size': 100}
+                if not include_deleted:
+                    query_kwargs['filter_condition'] = Customer.isDeleted == False
+                if last_evaluated_key:
+                    query_kwargs['last_evaluated_key'] = last_evaluated_key
+
+                page_iterator = Customer.query("customers", **query_kwargs)
+                page_customers = list(page_iterator)
+                all_customers.extend(page_customers)
+
+                try:
+                    last_evaluated_key = page_iterator.last_evaluated_key
+                except AttributeError:
+                    last_evaluated_key = None
+
+                if not last_evaluated_key:
+                    break
+
+            fieldnames = [
+                'customer_id', 'username', 'full_name', 'email',
+                'phone_number', 'loyalty_points', 'status', 'auth_mode', 'date_created',
+            ]
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+
+            for customer in all_customers:
+                d = customer.to_dict()
+                writer.writerow({
+                    'customer_id': d.get('customer_id', ''),
+                    'username': d.get('username', ''),
+                    'full_name': d.get('full_name', ''),
+                    'email': d.get('email', ''),
+                    'phone_number': d.get('phone_number', ''),
+                    'loyalty_points': d.get('loyalty_points', 0),
+                    'status': d.get('status', 'active'),
+                    'auth_mode': d.get('auth_mode', 'email_password'),
+                    'date_created': d.get('date_created', ''),
+                })
+
+            output.seek(0)
+            return output
+        except Exception as e:
+            logger.error(f"Error exporting customers: {e}")
+            raise
 
     def import_customers_from_csv(self, file_path, current_user=None):
-        raise NotImplementedError("import_customers_from_csv is not implemented for DynamoDB")
+        """
+        Import customers from a CSV file.
+        Expected columns: username, full_name, email, phone_number, loyalty_points, status
+        A temporary password is auto-generated for each imported customer.
+        Returns a summary dict: created, skipped, errors, total.
+        """
+        import secrets
+        results = {'created': 0, 'skipped': 0, 'errors': [], 'total': 0}
+
+        try:
+            with open(file_path, 'r', newline='', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            results['total'] = len(rows)
+
+            for i, row in enumerate(rows, start=1):
+                try:
+                    email = (row.get('email') or '').strip().lower()
+                    if not email:
+                        results['errors'].append(f"Row {i}: email is required")
+                        results['skipped'] += 1
+                        continue
+
+                    if Customer.get_by_email(email):
+                        results['errors'].append(f"Row {i}: {email} already exists")
+                        results['skipped'] += 1
+                        continue
+
+                    customer_data = {
+                        'email': email,
+                        'username': (row.get('username') or '').strip() or email.split('@')[0],
+                        'full_name': (row.get('full_name') or '').strip(),
+                        'phone_number': (row.get('phone_number') or row.get('phone') or '').strip(),
+                        'loyalty_points': int(row.get('loyalty_points') or 0),
+                        'status': (row.get('status') or 'active').strip(),
+                        'password': secrets.token_urlsafe(12),
+                        'auth_mode': 'email_password',
+                    }
+
+                    self.create_customer_with_password(customer_data, current_user=current_user)
+                    results['created'] += 1
+                except Exception as e:
+                    results['errors'].append(f"Row {i}: {str(e)}")
+                    results['skipped'] += 1
+
+            return results
+        except Exception as e:
+            logger.error(f"Error importing customers: {e}")
+            raise
 
     # ==================== QR Code Methods ====================
     def generate_qr_token_for_customer(self, customer_id: str, expiry_hours: int = 24) -> Optional[str]:

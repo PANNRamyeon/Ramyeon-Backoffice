@@ -231,10 +231,10 @@ const filters = computed(() => [
     value: roleFilter.value,
     options: [
       { value: 'all', label: 'All Roles' },
-      { value: 'user', label: 'User' },
       { value: 'admin', label: 'Admin' },
+      { value: 'manager', label: 'Manager' },
       { value: 'staff', label: 'Staff' },
-      { value: 'cashier', label: 'Cashier' }
+      
     ]
   },
   {

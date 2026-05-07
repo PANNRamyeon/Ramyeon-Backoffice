@@ -284,7 +284,7 @@ class User(Model):
             
             if 'role' in kwargs:
                 new_role = kwargs['role']
-                valid_roles = ['user', 'admin', 'manager', 'staff', 'cashier']
+                valid_roles = ['admin', 'manager', 'staff']
                 if new_role not in valid_roles:
                     raise ValueError(f"Role must be one of: {valid_roles}")
                 self.role = new_role

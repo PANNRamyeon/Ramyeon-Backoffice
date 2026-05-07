@@ -206,8 +206,23 @@ class CategoryService:
                     'priority': "low"
                 },
                 'subcategory_removed': {
-                    'title': "Subcategory Removed", 
+                    'title': "Subcategory Removed",
                     'message': f"Subcategory removed from category '{category_name}'",
+                    'priority': "low"
+                },
+                'product_added_to_subcategory': {
+                    'title': "Product Assigned to Subcategory",
+                    'message': f"A product has been assigned to a subcategory in '{category_name}'",
+                    'priority': "low"
+                },
+                'product_removed_from_subcategory': {
+                    'title': "Product Removed from Subcategory",
+                    'message': f"A product has been removed from a subcategory in '{category_name}'",
+                    'priority': "low"
+                },
+                'product_moved_to_default': {
+                    'title': "Product Moved to Default Subcategory",
+                    'message': f"A product has been moved to the default subcategory in '{category_name}'",
                     'priority': "low"
                 }
             }
@@ -503,11 +518,8 @@ class CategoryService:
             # Audit logging
             if current_user and self.audit_service:
                 try:
-                    self.audit_service.log_action(
-                        current_user, 
-                        category_id, 
-                        old_values=old_data, 
-                        new_values=updated_category
+                    self.audit_service.log_category_update(
+                        current_user, category_id, old_data, updated_category
                     )
                     logger.debug("Audit log created for category update")
                 except Exception as audit_error:
@@ -548,8 +560,8 @@ class CategoryService:
                 try:
                     category_for_audit = category_data.copy()
                     category_for_audit['deletion_type'] = 'soft_delete'
-                    
-                    self.audit_service.log_action(current_user, category_for_audit)
+
+                    self.audit_service.log_category_delete(current_user, category_for_audit)
                     logger.info("Audit log created for category soft deletion")
                 except Exception as audit_error:
                     logger.error(f"Audit logging failed: {audit_error}")
@@ -617,8 +629,8 @@ class CategoryService:
                 try:
                     category_for_audit = category_data.copy()
                     category_for_audit['deletion_type'] = 'hard_delete'
-                    
-                    self.audit_service.log_action(current_user, category_for_audit)
+
+                    self.audit_service.log_category_delete(current_user, category_for_audit)
                     logger.info("Audit log created for PERMANENT category deletion")
                 except Exception as audit_error:
                     logger.error(f"Audit logging failed: {audit_error}")
@@ -731,6 +743,10 @@ class CategoryService:
                     subcategory_name=subcategory_name
                 )
                 
+            self._send_category_notification(
+                'product_added_to_subcategory', category.category_name, category_id,
+                {'product_id': product_id, 'product_name': product_name, 'subcategory_name': subcategory_name}
+            )
             return {
                 'success': True,
                 'action': 'added',
@@ -740,7 +756,7 @@ class CategoryService:
                 'subcategory_name': subcategory_name,
                 'message': f"Product '{product_name}' added to subcategory '{subcategory_name}'"
             }
-            
+
         except Exception as e:
             logger.error(f"Error adding product to subcategory: {e}")
             raise Exception(f"Error adding product to subcategory: {str(e)}")
@@ -777,6 +793,10 @@ class CategoryService:
                     subcategory_name="General"
                 )
                 
+            self._send_category_notification(
+                'product_removed_from_subcategory', category.category_name, category_id,
+                {'product_id': product_id, 'product_name': product_name, 'subcategory_name': subcategory_name}
+            )
             return {
                 'success': True,
                 'action': 'removed',
@@ -786,7 +806,7 @@ class CategoryService:
                 'subcategory_name': subcategory_name,
                 'message': f"Product '{product_name}' removed from subcategory '{subcategory_name}'"
             }
-            
+
         except Exception as e:
             logger.error(f"Error removing product from subcategory: {e}")
             raise Exception(f"Error removing product from subcategory: {str(e)}")
@@ -1055,13 +1075,17 @@ class CategoryService:
                 category_id=category_id,
                 subcategory_name=self.DEFAULT_SUBCATEGORY_NAME
             )
-            
+            self._send_category_notification(
+                'product_moved_to_default', category_id, category_id,
+                {'product_id': product_id, 'product_name': product.product_name,
+                 'subcategory_name': self.DEFAULT_SUBCATEGORY_NAME}
+            )
             return {
                 'success': True,
                 'action': 'moved_to_default',
                 'message': f"Product '{product.product_name}' moved to '{self.DEFAULT_SUBCATEGORY_NAME}' subcategory"
             }
-            
+
         except Exception as e:
             logger.error(f"Error moving product to None subcategory: {e}")
             raise Exception(f"Error moving product to None subcategory: {str(e)}")
@@ -1133,10 +1157,10 @@ class CategoryService:
                 if current_user and self.audit_service:
                     try:
                         self.audit_service.log_action(
-                            action='bulk_move',
+                            current_user,
+                            'bulk_move',
                             resource_type='products',
                             resource_id=f"{moved_count}_products",
-                            user_id=current_user.get('user_id') or current_user.get('username', 'unknown'),
                             changes={
                                 'target_category': new_category_id,
                                 'target_subcategory': new_subcategory_name,

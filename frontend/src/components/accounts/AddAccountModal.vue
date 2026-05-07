@@ -167,11 +167,9 @@
               @change="validateField('role')"
             >
               <option value="">Select Role</option>
-              <option value="user">User</option>
               <option value="admin">Admin</option>
               <option value="manager">Manager</option>
               <option value="staff">Staff</option>
-              <option value="cashier">Cashier</option>
             </select>
             <div v-if="validationErrors.role" class="invalid-feedback">
               {{ validationErrors.role }}

@@ -10,7 +10,6 @@ from pynamodb.attributes import (
     UnicodeAttribute, BooleanAttribute, NumberAttribute,
     UTCDateTimeAttribute, JSONAttribute
 )
-from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
 from app.utils import generate_sk, DYNAMO_TABLE_NAME, AWS_REGION, DYNAMODB_LOCAL, DYNAMODB_LOCAL_HOST
 from datetime import datetime, timedelta, timezone, date
 import logging
@@ -18,43 +17,6 @@ from typing import Optional, List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-
-# ============= GLOBAL SECONDARY INDEXES =============
-class NotificationTypeIndex(GlobalSecondaryIndex):
-    class Meta:
-        index_name = 'notification-type-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    notification_type = UnicodeAttribute(hash_key=True)
-    created_at = UTCDateTimeAttribute(range_key=True)
-
-class PriorityIndex(GlobalSecondaryIndex):
-    class Meta:
-        index_name = 'notification-priority-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    priority = UnicodeAttribute(hash_key=True)
-    created_at = UTCDateTimeAttribute(range_key=True)
-
-class IsReadIndex(GlobalSecondaryIndex):
-    class Meta:
-        index_name = 'notification-is-read-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    is_read = BooleanAttribute(hash_key=True)
-    created_at = UTCDateTimeAttribute(range_key=True)
-
-class ActionTypeIndex(GlobalSecondaryIndex):
-    class Meta:
-        index_name = 'notification-action-type-index'
-        projection = AllProjection()
-        read_capacity_units = 5
-        write_capacity_units = 5
-    action_type = UnicodeAttribute(hash_key=True)
-    created_at = UTCDateTimeAttribute(range_key=True)
 
 
 # ============= MAIN NOTIFICATION MODEL =============
@@ -84,12 +46,6 @@ class Notification(Model):
     pk = UnicodeAttribute(hash_key=True, attr_name="PK")
     sk = UnicodeAttribute(range_key=True, attr_name="SK")
 
-    # GSIs
-    type_index = NotificationTypeIndex()
-    priority_index = PriorityIndex()
-    is_read_index = IsReadIndex()
-    action_type_index = ActionTypeIndex()
-
     # Content
     title = UnicodeAttribute()
     message = UnicodeAttribute()
@@ -113,9 +69,15 @@ class Notification(Model):
     metadata = JSONAttribute(null=True)
 
     # ------------------------------------------------------------------
-    # Helpers
+    # Universal template — every notification shares this exact structure
     # ------------------------------------------------------------------
-    VALID_PRIORITIES = {"low", "medium", "high", "critical"}
+    # Priority levels (use these constants, not raw strings)
+    PRIORITY_CRITICAL = "critical"   # system errors, security events, zero-stock alerts
+    PRIORITY_HIGH     = "high"       # low stock, order failures, time-sensitive actions
+    PRIORITY_MEDIUM   = "medium"     # order updates, general inventory changes
+    PRIORITY_LOW      = "low"        # informational, routine status changes
+
+    VALID_PRIORITIES = {PRIORITY_CRITICAL, PRIORITY_HIGH, PRIORITY_MEDIUM, PRIORITY_LOW}
     VALID_TYPES = {
         "system", "user", "order", "inventory", "promotion",
         "alert", "reminder", "security", "maintenance", "update"
@@ -173,9 +135,10 @@ class Notification(Model):
             ttl=expiry
         )
         notification.save()
+        cls._write_lookup(sk, partition)
         # Optional stats update (best‑effort)
         cls._increment_stats(total=1, unread=1,
-                             urgent=1 if priority in ('high','critical') else 0)
+                             urgent=1 if priority in (cls.PRIORITY_HIGH, cls.PRIORITY_CRITICAL) else 0)
         logger.info(f"Notification created: {sk} - Type: {notification_type}, Priority: {priority}")
         return notification
 
@@ -207,6 +170,21 @@ class Notification(Model):
         if not notification_id.startswith('NOTIF-'):
             notification_id = f"NOTIF-{notification_id}"
 
+        # Fast path: lookup record resolves partition in O(1), avoids scanning all date partitions
+        lookup_partition = cls._get_partition_from_lookup(notification_id)
+        if lookup_partition:
+            try:
+                result = cls.query(lookup_partition, cls.sk == notification_id, limit=1)
+                for item in result:
+                    if item.archived and not include_archived:
+                        return None
+                    if not include_archived:
+                        item._auto_archive_if_needed()
+                    return item
+            except Exception as e:
+                logger.warning(f"Error querying lookup partition {lookup_partition}: {e}")
+
+        # Fallback: scan partitions (covers notifications created before lookup records existed)
         today = date.today()
         max_days = cls.DELETE_AFTER_DAYS + 1
 
@@ -219,7 +197,6 @@ class Notification(Model):
                 for item in result:
                     if item.archived and not include_archived:
                         return None
-                    # If not including archived, auto‑archive if old (but item is not archived yet)
                     if not include_archived:
                         item._auto_archive_if_needed()
                     return item
@@ -229,12 +206,12 @@ class Notification(Model):
         return None
 
     @classmethod
-    def get_by_id_including_archived(cls, notification_id: str) -> 'Notification | None':
+    def get_by_id_including_archived(cls, notification_id: str) -> Optional['Notification']:
         """Shortcut to retrieve a notification even if it's archived."""
         return cls.get_by_id(notification_id, include_archived=True)
 
     # ------------------------------------------------------------------
-    #  GSI‑backed queries (with pagination, server‑side filtering, and include_archived)
+    #  Partition-scan queries (no GSIs — filter applied server-side per partition)
     # ------------------------------------------------------------------
     @classmethod
     def _archive_batch(cls, items: List['Notification']) -> None:
@@ -244,54 +221,64 @@ class Notification(Model):
                 item._auto_archive_if_needed()
 
     @classmethod
+    def _scan_partitions(cls, limit: int, filter_condition=None,
+                         include_archived: bool = False,
+                         days: int = None) -> List['Notification']:
+        """Scan date partitions newest-first with an optional server-side filter condition."""
+        max_days = days if days is not None else cls.DELETE_AFTER_DAYS
+        today = date.today()
+        items = []
+        for days_ago in range(max_days + 1):
+            if len(items) >= limit:
+                break
+            d = today - timedelta(days=days_ago)
+            partition = cls._date_partition(datetime(d.year, d.month, d.day, tzinfo=timezone.utc))
+            try:
+                for item in cls.query(partition, scan_index_forward=False,
+                                      filter_condition=filter_condition,
+                                      limit=limit - len(items)):
+                    if not include_archived and item.archived:
+                        continue
+                    items.append(item)
+                    if len(items) >= limit:
+                        break
+            except Exception as e:
+                logger.debug(f"Error querying partition {partition}: {e}")
+        if not include_archived:
+            cls._archive_batch(items)
+        return items
+
+    @classmethod
     def get_by_type(cls, notification_type: str,
                     limit: int = 50, last_key: dict = None,
                     include_archived: bool = False) -> Tuple[List['Notification'], Optional[dict]]:
-        filter_condition = None if include_archived else (cls.archived == False)
-        result = cls.type_index.query(
-            notification_type,
-            scan_index_forward=False,
-            filter_condition=filter_condition,
+        items = cls._scan_partitions(
             limit=limit,
-            last_evaluated_key=last_key
+            filter_condition=(cls.notification_type == notification_type),
+            include_archived=include_archived
         )
-        items = list(result)
-        if not include_archived:
-            cls._archive_batch(items)
-        return items, result.last_evaluated_key
+        return items, None
 
     @classmethod
     def get_by_priority(cls, priority: str,
                         limit: int = 50, last_key: dict = None,
                         include_archived: bool = False) -> Tuple[List['Notification'], Optional[dict]]:
-        filter_condition = None if include_archived else (cls.archived == False)
-        result = cls.priority_index.query(
-            priority,
-            scan_index_forward=False,
-            filter_condition=filter_condition,
+        items = cls._scan_partitions(
             limit=limit,
-            last_evaluated_key=last_key
+            filter_condition=(cls.priority == priority),
+            include_archived=include_archived
         )
-        items = list(result)
-        if not include_archived:
-            cls._archive_batch(items)
-        return items, result.last_evaluated_key
+        return items, None
 
     @classmethod
     def get_unread_notifications(cls, limit: int = 100, last_key: dict = None,
                                  include_archived: bool = False) -> Tuple[List['Notification'], Optional[dict]]:
-        filter_condition = None if include_archived else (cls.archived == False)
-        result = cls.is_read_index.query(
-            False,
-            scan_index_forward=False,
-            filter_condition=filter_condition,
+        items = cls._scan_partitions(
             limit=limit,
-            last_evaluated_key=last_key
+            filter_condition=(cls.is_read == False),
+            include_archived=include_archived
         )
-        items = list(result)
-        if not include_archived:
-            cls._archive_batch(items)
-        return items, result.last_evaluated_key
+        return items, None
 
     @classmethod
     def get_by_action_type(cls, action_type: str,
@@ -299,18 +286,12 @@ class Notification(Model):
                            include_archived: bool = False) -> Tuple[List['Notification'], Optional[dict]]:
         if not action_type:
             return [], None
-        filter_condition = None if include_archived else (cls.archived == False)
-        result = cls.action_type_index.query(
-            action_type,
-            scan_index_forward=False,
-            filter_condition=filter_condition,
+        items = cls._scan_partitions(
             limit=limit,
-            last_evaluated_key=last_key
+            filter_condition=(cls.action_type == action_type),
+            include_archived=include_archived
         )
-        items = list(result)
-        if not include_archived:
-            cls._archive_batch(items)
-        return items, result.last_evaluated_key
+        return items, None
 
     @classmethod
     def get_recent_notifications(cls, hours: int = 24,
@@ -323,8 +304,8 @@ class Notification(Model):
         start = now - timedelta(hours=hours)
         items = []
 
-        d = start.date()
-        while d <= now.date():
+        d = now.date()
+        while d >= start.date():
             partition = cls._date_partition(
                 datetime(d.year, d.month, d.day, tzinfo=timezone.utc))
             try:
@@ -337,11 +318,11 @@ class Notification(Model):
                         items.append(item)
                         if len(items) >= limit:
                             break
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error querying partition {partition}: {e}")
             if len(items) >= limit:
                 break
-            d += timedelta(days=1)
+            d -= timedelta(days=1)
 
         if not include_archived:
             cls._archive_batch(items)
@@ -353,7 +334,7 @@ class Notification(Model):
     @classmethod
     def _update_stats(cls, **increments):
         try:
-            update_expr = ""
+            parts = []
             expr_attr_names = {}
             expr_attr_vals = {}
             for i, (field, delta) in enumerate(increments.items()):
@@ -363,16 +344,15 @@ class Notification(Model):
                 expr_attr_names[place] = field
                 val_place = f":v{i}"
                 expr_attr_vals[val_place] = delta
-                update_expr += f" ADD {place} {val_place}"
-            if not update_expr:
+                parts.append(f"{place} {val_place}")
+            if not parts:
                 return
 
             conn = cls._get_connection()
-            # Pass table_name (positional) and key (positional) correctly:
             conn.update_item(
-                cls.Meta.table_name,                    # 1st positional
-                {"PK": "NOTIF_STATS", "SK": "COUNTS"},  # 2nd positional (key)
-                update_expression=update_expr.strip(),
+                cls.Meta.table_name,
+                {"PK": "NOTIF_STATS", "SK": "COUNTS"},
+                update_expression=f"ADD {', '.join(parts)}",
                 expression_attribute_names=expr_attr_names,
                 expression_attribute_values=expr_attr_vals
             )
@@ -388,6 +368,37 @@ class Notification(Model):
         cls._update_stats(total=-total, unread=-unread, urgent=-urgent)
 
     @classmethod
+    def _write_lookup(cls, notification_id: str, date_partition: str) -> None:
+        """Write a reverse-lookup record so get_by_id avoids full partition scanning."""
+        try:
+            conn = cls._get_connection()
+            conn.update_item(
+                cls.Meta.table_name,
+                {"PK": "NOTIF_LOOKUP", "SK": notification_id},
+                update_expression="SET date_pk = :v",
+                expression_attribute_values={":v": date_partition}
+            )
+        except Exception as e:
+            logger.warning(f"Failed to write notification lookup: {e}")
+
+    @classmethod
+    def _get_partition_from_lookup(cls, notification_id: str) -> Optional[str]:
+        """Retrieve the stored date partition for a notification ID (O(1) lookup)."""
+        try:
+            conn = cls._get_connection()
+            response = conn.get_item(
+                table_name=cls.Meta.table_name,
+                key={"PK": "NOTIF_LOOKUP", "SK": notification_id},
+                consistent_read=False
+            )
+            item = response.get("Item")
+            if item:
+                return item.get("date_pk")
+        except Exception:
+            pass
+        return None
+
+    @classmethod
     def get_unread_count(cls) -> int:
         try:
             conn = cls._get_connection()
@@ -401,24 +412,19 @@ class Notification(Model):
                 return int(item.get("unread", 0))
         except Exception:
             pass
-        # Fallback (slow) – count via GSI
-        count = 0
-        for item in cls.is_read_index.query(False, scan_index_forward=False, limit=1000):
-            if not item.archived:
-                count += 1
-        return count
+        # Fallback: count via partition scan
+        return len(cls._scan_partitions(limit=1000, filter_condition=(cls.is_read == False)))
 
     @classmethod
     def mark_all_as_read(cls) -> int:
         count = 0
-        last_key = None
         while True:
-            items, last_key = cls.get_unread_notifications(limit=500, last_key=last_key)
+            items, _ = cls.get_unread_notifications(limit=500)
+            if not items:
+                break
             for notif in items:
                 notif.mark_as_read()
                 count += 1
-            if not last_key:
-                break
         return count
 
     # ------------------------------------------------------------------
@@ -447,11 +453,11 @@ class Notification(Model):
             self.archived = True
             self.updated_at = datetime.now(timezone.utc)
             self.save()
-            self._decrement_stats(total=1)
-            if not self.is_read:
-                self._decrement_stats(unread=1)
-            if self.priority in ('high', 'critical'):
-                self._decrement_stats(urgent=1)
+            self._decrement_stats(
+                total=1,
+                unread=0 if self.is_read else 1,
+                urgent=1 if self.priority in (self.PRIORITY_HIGH, self.PRIORITY_CRITICAL) else 0
+            )
             logger.info(f"Notification {self.sk} archived")
         return self
 
@@ -460,16 +466,16 @@ class Notification(Model):
             self.archived = False
             self.updated_at = datetime.now(timezone.utc)
             self.save()
-            self._increment_stats(total=1)
-            if not self.is_read:
-                self._increment_stats(unread=1)
-            if self.priority in ('high', 'critical'):
-                self._increment_stats(urgent=1)
+            self._increment_stats(
+                total=1,
+                unread=0 if self.is_read else 1,
+                urgent=1 if self.priority in (self.PRIORITY_HIGH, self.PRIORITY_CRITICAL) else 0
+            )
             logger.info(f"Notification {self.sk} unarchived")
         return self
 
     def is_urgent(self) -> bool:
-        return self.priority in ("high", "critical")
+        return self.priority in (self.PRIORITY_HIGH, self.PRIORITY_CRITICAL)
 
     def get_age_days(self) -> float:
         if not self.created_at:
@@ -517,7 +523,7 @@ class Notification(Model):
         return super().save(condition=condition, **kwargs)
 
 
-# ============= Convenience factories =============
+    # ============= Convenience factories =============
     @classmethod
     def create_system_notification(cls, title: str, message: str,
                                    priority: str = "medium",

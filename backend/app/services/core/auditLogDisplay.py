@@ -1,9 +1,10 @@
 # app/display/audit_display.py
 from datetime import datetime
 from typing import List, Dict, Any
+import re
 
 from models.Audit import AuditLog
-from models.Sessions import SessionLog  
+from models.Sessions import SessionLog
 import logging
 
 logger = logging.getLogger(__name__)
@@ -116,24 +117,35 @@ class AuditLogDisplay:
         }
 
     def _format_amount_qty(self, data: Dict[str, Any]) -> str:
-        """Format amount/quantity based on audit event type."""
+        """Format amount/quantity based on audit event type.
+
+        Parses values from the description field since the AuditLog model
+        stores metadata as a serialized string, not a separate attribute.
+        """
         event = data.get('action', '')
-        metadata = data.get('metadata', {})
+        description = data.get('description', '') or ''
         if 'stock_update' in event:
-            diff = metadata.get('difference', 0)
-            return f"{'+' if diff > 0 else ''}{diff} units"
+            match = re.search(r'difference=(-?\d+)', description)
+            if match:
+                diff = int(match.group(1))
+                return f"{'+' if diff > 0 else ''}{diff} units"
+            return "N/A"
+        elif 'bulk_delete' in event:
+            match = re.search(r'count=(\d+)', description)
+            return f"{match.group(1)} records" if match else "N/A"
         elif 'delete' in event:
-            count = metadata.get('count', 1)
-            return f"{count} record{'s' if count != 1 else ''}"
+            return "1 record"
         elif 'create' in event:
             return "1 record"
         elif 'export' in event:
-            count = metadata.get('record_count', 0)
-            return f"{count} records"
+            match = re.search(r'record_count=(\d+)', description)
+            return f"{match.group(1)} records" if match else "N/A"
         elif 'import' in event:
-            success = metadata.get('success_count', 0)
-            total = metadata.get('total_count', 0)
-            return f"{success}/{total} records"
+            s_match = re.search(r'success_count=(\d+)', description)
+            t_match = re.search(r'total_count=(\d+)', description)
+            if s_match and t_match:
+                return f"{s_match.group(1)}/{t_match.group(1)} records"
+            return "N/A"
         return "N/A"
 
     def _format_remarks(self, data: Dict[str, Any]) -> str:
@@ -143,6 +155,7 @@ class AuditLogDisplay:
         if target_type and target_name and target_name != 'N/A':
             return f"{target_type.title()}: {target_name}"
         if data.get('action') == 'login_failed':
-            reason = data.get('metadata', {}).get('reason', 'Unknown')
-            return f"Failed: {reason}"
+            description = data.get('description', '') or ''
+            match = re.search(r'reason=(\w+)', description)
+            return f"Failed: {match.group(1) if match else 'Unknown'}"
         return f"Branch {data.get('branch_id', 'N/A')}"

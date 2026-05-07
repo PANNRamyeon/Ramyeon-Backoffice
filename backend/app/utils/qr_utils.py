@@ -10,7 +10,7 @@ if not QR_SECRET:
     raise ValueError("SECRET_KEY environment variable is required for QR functionality")
 
 QR_ALGORITHM = "HS256"
-DEFAULT_QR_EXPIRY_HOURS = 24
+DEFAULT_QR_EXPIRY_HOURS = 720  # 30 days
 
 
 def generate_customer_qr_token(customer_id: str, expiry_hours: int = DEFAULT_QR_EXPIRY_HOURS) -> str:

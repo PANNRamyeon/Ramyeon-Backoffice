@@ -25,6 +25,7 @@ class AuditLogService:
             "category_create": self._template_category_create,
             "category_update": self._template_category_update,
             "category_delete": self._template_category_delete,
+            "category_restore": self._template_category_restore,
 
             # ========== PRODUCT ==========
             "product_create": self._template_product_create,
@@ -124,6 +125,9 @@ class AuditLogService:
 
     def log_category_delete(self, user_data, category_data):
         return self._log_event("category_delete", user_data, category_data=category_data)
+
+    def log_category_restore(self, user_data, category_data):
+        return self._log_event("category_restore", user_data, category_data=category_data)
 
     # ----- PRODUCT -----
     def log_product_create(self, user_data, product_data):
@@ -269,6 +273,17 @@ class AuditLogService:
             },
             "old_values": category_data,
             "metadata": {"action": "delete"}
+        }
+
+    def _template_category_restore(self, category_data):
+        return {
+            "target_data": {
+                "type": "category",
+                "id": category_data.get("_id", category_data.get("category_id", "")),
+                "name": category_data.get("category_name", category_data.get("name", "Unknown"))
+            },
+            "new_values": {"is_active": True},
+            "metadata": {"action": "restore"}
         }
 
     # ----- PRODUCT -----
@@ -451,9 +466,9 @@ class AuditLogService:
             logger.error(f"Error fetching audit logs for target {target_type}:{target_id}: {e}")
             return {'success': False, 'error': str(e), 'data': []}
 
-    def get_audit_statistics(self):
+    def get_audit_statistics(self, limit: int = 10000):
         try:
-            logs = list(AuditLog.scan())
+            logs = list(AuditLog.scan(limit=limit))
             total_logs = len(logs)
             stats = {}
             for log in logs:
