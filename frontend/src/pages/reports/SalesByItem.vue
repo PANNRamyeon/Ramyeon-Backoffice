@@ -412,12 +412,20 @@
 
 <script>
 import BarChart from '@/components/BarChart.vue';
-import salesDisplayService from '@/services/apiSalesByItem';
+import axios from 'axios';
+import { Eye } from 'lucide-vue-next';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+function authHeaders() {
+  const token = localStorage.getItem('token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export default {
   name: 'SalesByItem',
   components: {
-    BarChart
+    BarChart,
+    Eye,
   },
   
   data() {
@@ -530,185 +538,68 @@ export default {
   
   methods: {
     // ================================================================
-    // CORE DATA LOADING METHODS
+    // CORE DATA LOADING METHOD
     // ================================================================
-    
+
     async loadAllData() {
+      const dateRange = this.calculateDateRange(this.selectedFrequency);
+      this.currentDateRange = dateRange;
+      this.loadingTopItems = true;
+      this.loadingChart = true;
+      this.salesByItemLoading = true;
+      this.salesByItemError = null;
+
       try {
-        await Promise.all([
-          this.getTopItems(),
-          this.getTopChartItems(),
-          this.loadSalesByItemTable()
-        ]);
-      } catch (error) {
-        console.error('Error loading all data:', error);
-      }
-    },
-
-    async getTopItems() {
-      try {
-        this.loadingTopItems = true;
-        
-        const dateRange = this.calculateDateRange(this.selectedFrequency);
-        
-        const response = await salesDisplayService.getSalesByItem(
-          dateRange.start_date, 
-          dateRange.end_date
-        );
-
-        let items = [];
-        
-        if (Array.isArray(response)) {
-          items = response;
-        } else if (response?.data && Array.isArray(response.data)) {
-          items = response.data;
-        }
-
-        if (items && items.length > 0) {
-          const sortedItems = items
-            .sort((a, b) => (b.total_sales || 0) - (a.total_sales || 0))
-            .slice(0, 5);
-
-          this.topItems = sortedItems.map((item) => ({
-            name: item.product_name || 'Unknown Product',
-            price: this.formatCurrency(item.total_sales || 0)
-          }));
-        } else {
-          this.topItems = [
-            { name: 'No data available', price: '₱0.00' }
-          ];
-        }
-        
-        this.connectionLost = false;
-        this.consecutiveErrors = 0;
-        this.lastSuccessfulLoad = Date.now();
-        this.error = null;
-        
-      } catch (error) {
-        console.error("❌ Error loading top items:", error);
-        
-        this.consecutiveErrors++;
-        this.error = `Failed to load top items: ${error.message}`;
-
-        if (this.consecutiveErrors >= 3) {
-          this.connectionLost = true;
-        }
-
-        this.topItems = [{ name: 'Error loading data', price: '₱0.00' }];
-      } finally {
-        this.loadingTopItems = false;
-      }
-    },
-
-    async getTopChartItems() {
-      try {
-        this.loadingChart = true;
-        const dateRange = this.calculateDateRange(this.selectedFrequency);
-        
-        const response = await salesDisplayService.getSalesByItem(
-          dateRange.start_date, 
-          dateRange.end_date
-        );
-
-        let items = [];
-        
-        if (Array.isArray(response)) {
-          items = response;
-        } else if (response?.data && Array.isArray(response.data)) {
-          items = response.data;
-        }
-
-        if (items && items.length > 0) {
-          const sortedItems = items
-            .sort((a, b) => (b.total_sales || 0) - (a.total_sales || 0))
-            .slice(0, 10);
-
-          const chartItems = sortedItems.map(item => ({
-            item_name: item.product_name || 'Unknown Product',
-            total_amount: item.total_sales || 0
-          }));
-
-          this.updateChartData(chartItems);
-
-          this.connectionLost = false;
-          this.consecutiveErrors = 0;
-          this.lastSuccessfulLoad = Date.now();
-          this.error = null;
-
-        } else {
-          this.setDefaultChartData();
-        }
-        
-      } catch (error) {
-        console.error("❌ Error in getTopChartItems:", error);
-        
-        this.consecutiveErrors++;
-        this.error = `Failed to load chart data: ${error.message}`;
-
-        if (this.consecutiveErrors >= 3) {
-          this.connectionLost = true;
-        }
-
-        this.setDefaultChartData();
-      } finally {
-        this.loadingChart = false;
-      }
-    },
-
-    async loadSalesByItemTable() {
-      try {
-        this.salesByItemLoading = true;
-        this.salesByItemError = null;
-        
-        const dateRange = this.calculateDateRange(this.selectedFrequency);
-        this.currentDateRange = dateRange;
-        
         if (!this.validateDateRange(dateRange.start_date, dateRange.end_date)) {
           this.salesByItemError = 'Invalid date range: start date cannot be after end date';
           this.allSalesByItemRows = [];
           this.salesByItemRows = [];
+          this.topItems = [];
+          this.setDefaultChartData();
           return;
         }
-        
-        const response = await salesDisplayService.getSalesByItem(
-          dateRange.start_date, 
-          dateRange.end_date,
-          false
-        );
 
-        let data = [];
-        
-        if (Array.isArray(response)) {
-          data = response;
-        } else if (response?.data && Array.isArray(response.data)) {
-          data = response.data;
-        } else if (response?.results && Array.isArray(response.results)) {
-          data = response.results;
-        } else {
-          console.warn('⚠️ Unexpected API response format:', response);
-          data = [];
+        const { data } = await axios.get(`${API_BASE}/admin/reports/sales-by-item/`, {
+          headers: authHeaders(),
+          params: { start_date: dateRange.start_date, end_date: dateRange.end_date, include_voided: false },
+        });
+
+        const items = Array.isArray(data) ? data : [];
+
+        // Top 5 items list (API already returns sorted by total_sales desc)
+        this.topItems = items.slice(0, 5).map(item => ({
+          name: item.product_name || 'Unknown Product',
+          price: this.formatCurrency(item.total_sales || 0),
+        }));
+        if (this.topItems.length === 0) {
+          this.topItems = [{ name: 'No data available', price: '₱0.00' }];
         }
 
-        this.allSalesByItemRows = data
+        // Chart — top 10 by revenue
+        if (items.length > 0) {
+          this.updateChartData(items.slice(0, 10).map(item => ({
+            item_name: item.product_name || 'Unknown Product',
+            total_amount: item.total_sales || 0,
+          })));
+        } else {
+          this.setDefaultChartData();
+        }
+
+        // Table — all items
+        this.allSalesByItemRows = items
           .filter(item => item && typeof item === 'object')
-          .sort((a, b) => {
-            const salesA = parseFloat(a.total_sales) || 0;
-            const salesB = parseFloat(b.total_sales) || 0;
-            return salesB - salesA;
-          })
           .map(item => ({
-            id: item.product_id || item.id || 'N/A',
-            product: item.product_name || item.name || item.product || 'Unknown Product',
-            category: item.category_name || item.category || 'Uncategorized',
+            id: item.product_id || 'N/A',
+            product: item.product_name || 'Unknown Product',
+            category: item.category_name || 'Uncategorized',
             stock: parseInt(item.stock) || 0,
             items_sold: parseInt(item.items_sold) || 0,
             total_sales: parseFloat(item.total_sales) || 0,
             selling_price: parseFloat(item.selling_price) || 0,
             unit: item.unit || 'unit',
             sku: item.sku || 'N/A',
-            is_taxable: Boolean(item.is_taxable)
+            is_taxable: Boolean(item.is_taxable),
           }));
-
         this.salesByItemPagination.current_page = 1;
         this.updateSalesByItemPageData();
 
@@ -718,21 +609,21 @@ export default {
         this.error = null;
 
       } catch (error) {
-        console.error('❌ loadSalesByItemTable error:', error);
-        
+        console.error('❌ loadAllData error:', error);
         this.consecutiveErrors++;
-        this.salesByItemError = this.getErrorMessage(error);
+        this.error = this.getErrorMessage(error);
+        this.salesByItemError = this.error;
+        if (this.consecutiveErrors >= 3) this.connectionLost = true;
 
-        if (this.consecutiveErrors >= 3) {
-          this.connectionLost = true;
-        }
-
+        this.topItems = [{ name: 'Error loading data', price: '₱0.00' }];
+        this.setDefaultChartData();
         this.allSalesByItemRows = [];
         this.salesByItemRows = [];
         this.salesByItemPagination.current_page = 1;
         this.updateSalesByItemPageData();
-        
       } finally {
+        this.loadingTopItems = false;
+        this.loadingChart = false;
         this.salesByItemLoading = false;
       }
     },

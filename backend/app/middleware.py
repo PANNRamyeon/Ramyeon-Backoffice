@@ -14,7 +14,8 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
             '/api/v1/auth/logout/',
             '/api/v1/users/',  # Protect user management
             '/api/v1/session-logs/', # Protect session logs
-            '/api/v1/category/',  
+            '/api/v1/category/',
+            '/api/v1/notifications/',
         ]
         
         # Define public paths (allowed without authentication)

@@ -37,6 +37,29 @@ class AuditLogService:
             "user_create": self._template_user_create,
             "user_update": self._template_user_update,
             "user_delete": self._template_user_delete,
+            "user_restore": self._template_user_restore,
+            "user_hard_delete": self._template_user_hard_delete,
+
+            # ========== BATCH ==========
+            "batch_create": self._template_batch_create,
+            "batch_update": self._template_batch_update,
+            "batch_deduct": self._template_batch_deduct,
+            "batch_expired": self._template_batch_expired,
+            "batch_shipment_activated": self._template_batch_shipment_activated,
+            "batch_shipment_cancelled": self._template_batch_shipment_cancelled,
+
+            # ========== SHIPMENT ==========
+            "shipment_create": self._template_shipment_create,
+            "shipment_update": self._template_shipment_update,
+
+            # ========== PROMOTION ==========
+            "promotion_create": self._template_promotion_create,
+            "promotion_update": self._template_promotion_update,
+            "promotion_soft_delete": self._template_promotion_soft_delete,
+            "promotion_hard_delete": self._template_promotion_hard_delete,
+            "promotion_activate": self._template_promotion_activate,
+            "promotion_deactivate": self._template_promotion_deactivate,
+            "promotion_restore": self._template_promotion_restore,
 
             # ========== SYSTEM ==========
             "data_export": self._template_data_export,
@@ -155,6 +178,70 @@ class AuditLogService:
 
     def log_user_delete(self, admin_user, deleted_user_data):
         return self._log_event("user_delete", admin_user, deleted_user_data=deleted_user_data)
+
+    def log_user_restore(self, admin_user, restored_user_data):
+        return self._log_event("user_restore", admin_user, restored_user_data=restored_user_data)
+
+    def log_user_hard_delete(self, admin_user, deleted_user_data):
+        return self._log_event("user_hard_delete", admin_user, deleted_user_data=deleted_user_data)
+
+    # ----- BATCH -----
+    def log_batch_create(self, user_data, batch_data):
+        return self._log_event("batch_create", user_data, batch_data=batch_data)
+
+    def log_batch_update(self, user_data, batch_id, old_values, new_values):
+        return self._log_event("batch_update", user_data,
+                               batch_id=batch_id, old_values=old_values, new_values=new_values)
+
+    def log_batch_deduct(self, user_data, batch_id, product_name, quantity_deducted, reason):
+        return self._log_event("batch_deduct", user_data,
+                               batch_id=batch_id, product_name=product_name,
+                               quantity_deducted=quantity_deducted, reason=reason)
+
+    def log_batch_expired(self, user_data, batch_id, product_name):
+        return self._log_event("batch_expired", user_data,
+                               batch_id=batch_id, product_name=product_name)
+
+    def log_batch_shipment_activated(self, user_data, shipment_id, product_count, batch_count):
+        return self._log_event("batch_shipment_activated", user_data,
+                               shipment_id=shipment_id, product_count=product_count, batch_count=batch_count)
+
+    def log_batch_shipment_cancelled(self, user_data, shipment_id, product_count, batch_count):
+        return self._log_event("batch_shipment_cancelled", user_data,
+                               shipment_id=shipment_id, product_count=product_count, batch_count=batch_count)
+
+    # ----- SHIPMENT -----
+    def log_shipment_create(self, user_data, shipment_data):
+        return self._log_event("shipment_create", user_data, shipment_data=shipment_data)
+
+    def log_shipment_update(self, user_data, shipment_id, old_values, new_values):
+        return self._log_event("shipment_update", user_data,
+                               shipment_id=shipment_id, old_values=old_values, new_values=new_values)
+
+    # ----- PROMOTION -----
+    def log_promotion_create(self, user_data, promotion_data):
+        return self._log_event("promotion_create", user_data, promotion_data=promotion_data)
+
+    def log_promotion_update(self, user_data, promotion_id, old_values, new_values):
+        return self._log_event("promotion_update", user_data,
+                               promotion_id=promotion_id, old_values=old_values, new_values=new_values)
+
+    def log_promotion_soft_delete(self, user_data, promotion_data):
+        return self._log_event("promotion_soft_delete", user_data, promotion_data=promotion_data)
+
+    def log_promotion_hard_delete(self, user_data, promotion_data):
+        return self._log_event("promotion_hard_delete", user_data, promotion_data=promotion_data)
+
+    def log_promotion_activate(self, user_data, promotion_id, promotion_name):
+        return self._log_event("promotion_activate", user_data,
+                               promotion_id=promotion_id, promotion_name=promotion_name)
+
+    def log_promotion_deactivate(self, user_data, promotion_id, promotion_name):
+        return self._log_event("promotion_deactivate", user_data,
+                               promotion_id=promotion_id, promotion_name=promotion_name)
+
+    def log_promotion_restore(self, user_data, promotion_data):
+        return self._log_event("promotion_restore", user_data, promotion_data=promotion_data)
 
     # ----- SYSTEM -----
     def log_data_export(self, user_data, export_type, record_count=0, filename=None):
@@ -381,6 +468,200 @@ class AuditLogService:
             },
             "old_values": deleted_user_data,
             "metadata": {"action": "delete"}
+        }
+
+    def _template_user_restore(self, restored_user_data):
+        return {
+            "target_data": {
+                "type": "user",
+                "id": restored_user_data.get("_id", restored_user_data.get("user_id", "")),
+                "name": restored_user_data.get("username", restored_user_data.get("email", "Unknown"))
+            },
+            "new_values": {"isDeleted": False, "status": "active"},
+            "metadata": {"action": "restore"}
+        }
+
+    def _template_user_hard_delete(self, deleted_user_data):
+        return {
+            "target_data": {
+                "type": "user",
+                "id": deleted_user_data.get("_id", deleted_user_data.get("user_id", "")),
+                "name": deleted_user_data.get("username", deleted_user_data.get("email", "Unknown"))
+            },
+            "old_values": deleted_user_data,
+            "metadata": {"action": "hard_delete", "permanent": True}
+        }
+
+    # ----- BATCH -----
+    def _template_batch_create(self, batch_data):
+        return {
+            "target_data": {
+                "type": "batch",
+                "id": batch_data.get("batch_id", batch_data.get("sk", "")),
+                "name": f"Batch for {batch_data.get('product_id', 'Unknown')}"
+            },
+            "new_values": {
+                "product_id": batch_data.get("product_id"),
+                "quantity_received": batch_data.get("quantity_received"),
+                "status": batch_data.get("status"),
+                "expiry_date": str(batch_data.get("expiry_date", "")),
+                "supplier_id": batch_data.get("supplier_id"),
+            },
+            "metadata": {"action": "create", "shipment_id": batch_data.get("shipment_id", "")}
+        }
+
+    def _template_batch_update(self, batch_id, old_values, new_values):
+        return {
+            "target_data": {"type": "batch", "id": batch_id, "name": f"Batch {batch_id}"},
+            "old_values": old_values,
+            "new_values": new_values,
+            "metadata": {"action": "update"}
+        }
+
+    def _template_batch_deduct(self, batch_id, product_name, quantity_deducted, reason):
+        return {
+            "target_data": {"type": "batch", "id": batch_id, "name": f"{product_name} — {batch_id}"},
+            "new_values": {"quantity_deducted": quantity_deducted},
+            "metadata": {"action": "deduct", "product_name": product_name,
+                         "quantity": quantity_deducted, "reason": reason}
+        }
+
+    def _template_batch_expired(self, batch_id, product_name):
+        return {
+            "target_data": {"type": "batch", "id": batch_id, "name": f"{product_name} — {batch_id}"},
+            "metadata": {"action": "expired", "product_name": product_name}
+        }
+
+    def _template_batch_shipment_activated(self, shipment_id, product_count, batch_count):
+        return {
+            "target_data": {
+                "type": "batch",
+                "id": shipment_id,
+                "name": f"Shipment {shipment_id} — stock activated"
+            },
+            "metadata": {"action": "shipment_activated", "shipment_id": shipment_id,
+                         "product_count": product_count, "batch_count": batch_count}
+        }
+
+    def _template_batch_shipment_cancelled(self, shipment_id, product_count, batch_count):
+        return {
+            "target_data": {
+                "type": "batch",
+                "id": shipment_id,
+                "name": f"Shipment {shipment_id} — batches cancelled"
+            },
+            "metadata": {"action": "shipment_cancelled", "shipment_id": shipment_id,
+                         "product_count": product_count, "batch_count": batch_count}
+        }
+
+    # ----- SHIPMENT -----
+    def _template_shipment_create(self, shipment_data):
+        return {
+            "target_data": {
+                "type": "shipment",
+                "id": shipment_data.get("shipment_id", shipment_data.get("sk", "")),
+                "name": f"Shipment {shipment_data.get('batch_number', '')} from {shipment_data.get('supplier_id', '')}"
+            },
+            "new_values": {
+                "supplier_id": shipment_data.get("supplier_id"),
+                "batch_number": shipment_data.get("batch_number"),
+                "status": shipment_data.get("status"),
+                "invoice_number": shipment_data.get("invoice_number"),
+                "freight_cost": shipment_data.get("freight_cost"),
+            },
+            "metadata": {"action": "create"}
+        }
+
+    def _template_shipment_update(self, shipment_id, old_values, new_values):
+        return {
+            "target_data": {
+                "type": "shipment",
+                "id": shipment_id,
+                "name": f"Shipment {shipment_id}"
+            },
+            "old_values": old_values,
+            "new_values": new_values,
+            "metadata": {"action": "update", "status_changed": old_values.get("status") != new_values.get("status")}
+        }
+
+    # ----- PROMOTION -----
+    def _template_promotion_create(self, promotion_data):
+        return {
+            "target_data": {
+                "type": "promotion",
+                "id": promotion_data.get("promotion_id", promotion_data.get("sk", "")),
+                "name": promotion_data.get("name", "Unknown Promotion")
+            },
+            "new_values": {
+                "name": promotion_data.get("name"),
+                "type": promotion_data.get("type"),
+                "discount_value": promotion_data.get("discount_value"),
+                "status": promotion_data.get("status"),
+                "start_date": str(promotion_data.get("start_date", "")),
+                "end_date": str(promotion_data.get("end_date", "")),
+            },
+            "metadata": {"action": "create"}
+        }
+
+    def _template_promotion_update(self, promotion_id, old_values, new_values):
+        return {
+            "target_data": {
+                "type": "promotion",
+                "id": promotion_id,
+                "name": old_values.get("name", "Unknown Promotion")
+            },
+            "old_values": old_values,
+            "new_values": new_values,
+            "metadata": {"action": "update"}
+        }
+
+    def _template_promotion_soft_delete(self, promotion_data):
+        return {
+            "target_data": {
+                "type": "promotion",
+                "id": promotion_data.get("promotion_id", promotion_data.get("sk", "")),
+                "name": promotion_data.get("name", "Unknown Promotion")
+            },
+            "old_values": promotion_data,
+            "metadata": {"action": "soft_delete"}
+        }
+
+    def _template_promotion_hard_delete(self, promotion_data):
+        return {
+            "target_data": {
+                "type": "promotion",
+                "id": promotion_data.get("promotion_id", promotion_data.get("sk", "")),
+                "name": promotion_data.get("name", "Unknown Promotion")
+            },
+            "old_values": promotion_data,
+            "metadata": {"action": "hard_delete", "permanent": True}
+        }
+
+    def _template_promotion_activate(self, promotion_id, promotion_name):
+        return {
+            "target_data": {"type": "promotion", "id": promotion_id, "name": promotion_name},
+            "old_values": {"status": "inactive"},
+            "new_values": {"status": "active"},
+            "metadata": {"action": "activate"}
+        }
+
+    def _template_promotion_deactivate(self, promotion_id, promotion_name):
+        return {
+            "target_data": {"type": "promotion", "id": promotion_id, "name": promotion_name},
+            "old_values": {"status": "active"},
+            "new_values": {"status": "inactive"},
+            "metadata": {"action": "deactivate"}
+        }
+
+    def _template_promotion_restore(self, promotion_data):
+        return {
+            "target_data": {
+                "type": "promotion",
+                "id": promotion_data.get("promotion_id", promotion_data.get("sk", "")),
+                "name": promotion_data.get("name", "Unknown Promotion")
+            },
+            "new_values": {"isDeleted": False, "status": "inactive"},
+            "metadata": {"action": "restore"}
         }
 
     # ----- SYSTEM -----

@@ -82,7 +82,9 @@ class UserService:
             user = User.get_by_id(user_id)
             if not user or user.isDeleted:
                 return None
-            
+
+            old_dict = user.to_dict()
+
             # Determine allowed fields based on role context
             allowed_fields = {}
             if role_context == 'self_service':
@@ -124,7 +126,7 @@ class UserService:
             # Audit logging
             if current_user and self.audit_service:
                 try:
-                    self.audit_service.log_user_update(current_user, user_dict)
+                    self.audit_service.log_user_update(current_user, user_id, old_dict, user_dict)
                 except Exception as audit_error:
                     logger.error(f"Audit logging failed: {audit_error}")
             
@@ -385,7 +387,7 @@ class UserService:
             # Audit logging
             if current_user and self.audit_service:
                 try:
-                    self.audit_service.log_user_delete(current_user, user_dict, deletion_type="soft_delete")
+                    self.audit_service.log_user_delete(current_user, user_dict)
                     logger.info("Audit log created for user soft deletion")
                 except Exception as audit_error:
                     logger.error(f"Audit logging failed: {audit_error}")

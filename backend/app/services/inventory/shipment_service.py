@@ -7,12 +7,15 @@ from typing import List, Dict, Any, Optional
 
 from app.utils.singleton import get_singleton
 from app.services.inventory.batch_service import BatchService
+from app.services.core.audit_service import AuditLogService
 from models.Shipment import Shipment
 from models.Batches import Batch
 from models.Product import Product
 import logging
 
 logger = logging.getLogger(__name__)
+
+_SYSTEM_USER = {'user_id': 'system', 'username': 'system', 'branch_id': None, 'source': 'service'}
 
 
 class ShipmentService:
@@ -24,6 +27,7 @@ class ShipmentService:
     def __init__(self):
         logger.info("Initializing ShipmentService singleton instance")
         self._supplier_name_cache = {}
+        self.audit_service = AuditLogService()
 
     def _get_supplier_name(self, supplier_id: str) -> str:
         """Resolve supplier_id to name with simple cache. Returns 'Unknown Supplier' if not found."""
@@ -45,7 +49,7 @@ class ShipmentService:
             logger.warning(f"Failed to fetch supplier name for {supplier_id}: {e}")
         return "Unknown Supplier"
 
-    def create_shipment(self, shipment_data: Dict[str, Any]) -> Dict[str, Any]:
+    def create_shipment(self, shipment_data: Dict[str, Any], current_user=None) -> Dict[str, Any]:
         """
         Create a new shipment. Required: supplier_id, batch_number.
         Optional: shipment_date, invoice_number, status, freight_cost, notes, received_by.
@@ -76,10 +80,19 @@ class ShipmentService:
             logger.info(f"Shipment created: {shipment.sk}")
             if getattr(shipment, "status", None) == "received":
                 try:
-                    get_singleton(BatchService).activate_batches_for_shipment(shipment.sk)
+                    get_singleton(BatchService).activate_batches_for_shipment(
+                        shipment.sk, current_user=current_user
+                    )
                 except Exception as act_err:
                     logger.warning("Activate batches for new shipment %s: %s", shipment.sk, act_err)
-            return shipment.to_dict()
+
+            shipment_dict = shipment.to_dict()
+            try:
+                self.audit_service.log_shipment_create(current_user or _SYSTEM_USER, shipment_dict)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for shipment create: {ae}")
+
+            return shipment_dict
         except ValueError as e:
             logger.error(f"Validation error creating shipment: {e}")
             raise
@@ -159,7 +172,7 @@ class ShipmentService:
             logger.error(f"Error getting shipment with batches {shipment_id}: {e}")
             raise Exception(f"Error getting shipment with batches: {str(e)}") from e
 
-    def update_shipment(self, shipment_id: str, update_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def update_shipment(self, shipment_id: str, update_data: Dict[str, Any], current_user=None) -> Optional[Dict[str, Any]]:
         """
         Update shipment fields. Read-only: pk, sk.
         Allowed: status, invoice_number, freight_cost, notes, received_by, total_products.
@@ -168,6 +181,8 @@ class ShipmentService:
             shipment = Shipment.get_by_id(shipment_id)
             if not shipment:
                 return None
+
+            old_dict = shipment.to_dict()
 
             read_only = {"pk", "sk", "shipment_id"}
             for key, value in update_data.items():
@@ -178,12 +193,40 @@ class ShipmentService:
 
             shipment.updated_at = datetime.utcnow()
             shipment.save()
+<<<<<<< Updated upstream
             if getattr(shipment, "status", None) == "received":
+=======
+            new_dict = shipment.to_dict()
+
+            new_status = getattr(shipment, "status", None)
+            if new_status == "received":
+>>>>>>> Stashed changes
                 try:
-                    get_singleton(BatchService).activate_batches_for_shipment(shipment_id)
+                    get_singleton(BatchService).activate_batches_for_shipment(
+                        shipment_id, current_user=current_user
+                    )
                 except Exception as act_err:
                     logger.warning("Activate batches for shipment %s: %s", shipment_id, act_err)
+<<<<<<< Updated upstream
             return shipment.to_dict()
+=======
+            elif new_status == "cancelled":
+                try:
+                    get_singleton(BatchService).cancel_batches_for_shipment(
+                        shipment_id, current_user=current_user
+                    )
+                except Exception as cancel_err:
+                    logger.warning("Cancel batches for shipment %s: %s", shipment_id, cancel_err)
+
+            try:
+                self.audit_service.log_shipment_update(
+                    current_user or _SYSTEM_USER, shipment_id, old_dict, new_dict
+                )
+            except Exception as ae:
+                logger.error(f"Audit logging failed for shipment update: {ae}")
+
+            return new_dict
+>>>>>>> Stashed changes
         except Exception as e:
             logger.error(f"Error updating shipment {shipment_id}: {e}")
             raise Exception(f"Error updating shipment: {str(e)}") from e

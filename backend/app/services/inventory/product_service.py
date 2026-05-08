@@ -3,12 +3,18 @@ from models.Batches import Batch
 from models.Categories import Category
 from pynamodb.exceptions import DoesNotExist, PutError, DeleteError, UpdateError
 from app.utils.singleton import get_singleton
+from app.services.core.audit_service import AuditLogService
 from notifications.services import notification_service
 import base64
 import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+_SYSTEM_USER = {'user_id': 'system', 'username': 'system', 'branch_id': None, 'source': 'service'}
+
+def _audit():
+    return get_singleton(AuditLogService)
 
 
 def _send_product_notification(action_type: str, product_name: str, product_id: str = None, metadata: dict = None):
@@ -63,18 +69,19 @@ class ProductService:
     """
 
     @staticmethod
-    def create_product(data: dict):
+    def create_product(data: dict, current_user=None):
         """
         Creates a new product.
-        
+
         Args:
-            data (dict): A dictionary containing product attributes. 
+            data (dict): A dictionary containing product attributes.
                          Must match the arguments for Product.create_product.
                          Required keys: product_name, sku, category_id, cost_price, selling_price, unit.
-        
+            current_user (dict, optional): The acting user for audit logging.
+
         Returns:
             Product: The created product object.
-        
+
         Raises:
             ValueError: If required data is missing or if creation fails.
         """
@@ -84,6 +91,10 @@ class ProductService:
             logger.info(f"Successfully created product {product.sk}")
             Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
             _send_product_notification('created', product.product_name, product.sk)
+            try:
+                _audit().log_product_create(current_user or _SYSTEM_USER, product.to_dict())
+            except Exception as ae:
+                logger.error(f"Audit logging failed for product create: {ae}")
             return product
         except (PutError, ValueError) as e:
             logger.error(f"Error creating product: {str(e)}")
@@ -234,13 +245,14 @@ class ProductService:
             return False
 
     @staticmethod
-    def update_product(product_id: str, data: dict):
+    def update_product(product_id: str, data: dict, current_user=None):
         """
         Updates an existing product.
 
         Args:
             product_id (str): The ID of the product to update.
             data (dict): A dictionary with the fields to update.
+            current_user (dict, optional): The acting user for audit logging.
 
         Returns:
             Product: The updated product object.
@@ -252,6 +264,7 @@ class ProductService:
         if not product:
             raise ValueError(f"Product with ID {product_id} not found.")
 
+        old_dict = product.to_dict()
         old_category_id = product.category_id
         old_subcategory_name = product.subcategory_name
 
@@ -267,8 +280,15 @@ class ProductService:
                 Category.adjust_subcategory_count(new_category_id, new_subcategory_name, +1)
 
             _send_product_notification('updated', product.product_name, product_id)
-            # Re-fetch the instance to ensure the returned object is up-to-date
-            return ProductService.get_product_by_id(product_id)
+            updated = ProductService.get_product_by_id(product_id)
+            try:
+                _audit().log_product_update(
+                    current_user or _SYSTEM_USER,
+                    product_id, old_dict, updated.to_dict() if updated else data
+                )
+            except Exception as ae:
+                logger.error(f"Audit logging failed for product update: {ae}")
+            return updated
         except UpdateError as e:
             logger.error(f"Error updating product {product_id}: {str(e)}")
             raise ValueError(f"Could not update product: {str(e)}") from e
@@ -364,21 +384,22 @@ class ProductService:
             return 0
 
     @staticmethod
-    def delete_product(product_id: str, hard_delete: bool = False, deleted_by: str = "system", reason: str = "Deleted via service"):
+    def delete_product(product_id: str, hard_delete: bool = False, deleted_by: str = "system",
+                       reason: str = "Deleted via service", current_user=None):
         """
         Deletes a product, either by soft-deleting or permanently removing it.
 
         Args:
             product_id (str): The ID of the product to delete.
-            hard_delete (bool): If True, permanently delete the product. 
+            hard_delete (bool): If True, permanently delete the product.
                                 If False (default), soft-delete the product.
             deleted_by (str): Identifier for who performed the deletion (for soft-delete).
             reason (str): Reason for the deletion (for soft-delete).
-
+            current_user (dict, optional): The acting user for audit logging.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
-        
+
         Raises:
             ValueError: If the product is not found.
         """
@@ -386,6 +407,7 @@ class ProductService:
         if not product:
             raise ValueError(f"Product with ID {product_id} not found.")
 
+        product_dict = product.to_dict()
         category_id = product.category_id
         subcategory_name = product.subcategory_name
 
@@ -399,11 +421,52 @@ class ProductService:
                 logger.info(f"Successfully soft-deleted product {product_id}")
                 _send_product_notification('soft_deleted', product.product_name, product_id)
             Category.adjust_subcategory_count(category_id, subcategory_name, -1)
+            try:
+                _audit().log_product_delete(current_user or _SYSTEM_USER, product_dict)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for product delete: {ae}")
             return True
         except (DeleteError, UpdateError, ValueError) as e:
             logger.error(f"Error deleting product {product_id}: {str(e)}")
             return False
 
+<<<<<<< Updated upstream
+=======
+    @staticmethod
+    def bulk_delete_products(product_ids: list, hard_delete: bool = False, deleted_by: str = "system",
+                             reason: str = "Bulk deleted via service", current_user=None) -> dict:
+        """
+        Delete multiple products in one call.
+
+        Returns:
+            dict: { success, deleted_count, failed_count, failed_ids }
+        """
+        deleted, failed = 0, []
+        for product_id in product_ids:
+            try:
+                ok = ProductService.delete_product(
+                    product_id,
+                    hard_delete=hard_delete,
+                    deleted_by=deleted_by,
+                    reason=reason,
+                    current_user=current_user,
+                )
+                if ok:
+                    deleted += 1
+                else:
+                    failed.append(product_id)
+            except Exception as e:
+                logger.error(f"bulk_delete_products: failed for {product_id}: {e}")
+                failed.append(product_id)
+
+        return {
+            "success": len(failed) == 0,
+            "deleted_count": deleted,
+            "failed_count": len(failed),
+            "failed_ids": failed,
+        }
+
+>>>>>>> Stashed changes
     # ========== STOCK & METADATA HELPERS ==========
 
     @staticmethod

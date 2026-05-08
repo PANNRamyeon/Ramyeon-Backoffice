@@ -6,11 +6,14 @@ from models.Batches import Batch, BatchManager
 from models.Product import Product
 from models.Shipment import Shipment
 from notifications.services import notification_service
+from app.services.core.audit_service import AuditLogService
 from app.utils import DYNAMO_TABLE_NAME, AWS_REGION
 import logging
 import boto3
 
 logger = logging.getLogger(__name__)
+
+_SYSTEM_USER = {'user_id': 'system', 'username': 'system', 'branch_id': None, 'source': 'service'}
 
 
 def _canonical_product_id(product_id: str) -> str:
@@ -40,6 +43,7 @@ class BatchService:
         """Initialize BatchService - called once per application lifecycle via singleton"""
         logger.info("Initializing BatchService singleton instance")
         self._product_name_cache = {}  # Simple cache for product names
+        self.audit_service = AuditLogService()
 
     def _get_product_name(self, product_id: str) -> str:
         """
@@ -80,9 +84,11 @@ class BatchService:
                 'activated': "Stock Activated",
                 'expiry_warning': "Expiry Warning",
                 'batch_expired': "Batch Expired",
-                'batch_depleted': "Batch Depleted"
+                'batch_depleted': "Batch Depleted",
+                'shipment_activated': "Shipment Stock Activated",
+                'shipment_cancelled': "Shipment Batches Cancelled",
             }
-            
+
             messages = {
                 'created': f"New batch created for '{product_name}'",
                 'stock_received': f"Stock received for '{product_name}'",
@@ -90,7 +96,9 @@ class BatchService:
                 'activated': f"Stock activated for '{product_name}'",
                 'expiry_warning': f"Batch expiring soon for '{product_name}'",
                 'batch_expired': f"Batch expired for '{product_name}'",
-                'batch_depleted': f"Batch depleted for '{product_name}'"
+                'batch_depleted': f"Batch depleted for '{product_name}'",
+                'shipment_activated': f"Shipment received — stock for '{product_name}' is now available",
+                'shipment_cancelled': f"Shipment cancelled — pending stock for '{product_name}' removed",
             }
             
             # Set priority based on action type
@@ -100,8 +108,11 @@ class BatchService:
             elif action_type == 'batch_depleted':
                 priority = "medium"
                 notification_type = "alert"
-            elif action_type in ['stock_ordered', 'activated']:
+            elif action_type in ['stock_ordered', 'activated', 'shipment_activated']:
                 priority = "low"
+                notification_type = "inventory"
+            elif action_type == 'shipment_cancelled':
+                priority = "medium"
                 notification_type = "inventory"
             else:
                 priority = "low"
@@ -299,7 +310,7 @@ class BatchService:
         ]
         return sum(int(b.quantity_remaining) for b in valid)
 
-    def create_batch(self, batch_data: Dict[str, Any]) -> Dict[str, Any]:
+    def create_batch(self, batch_data: Dict[str, Any], current_user=None) -> Dict[str, Any]:
         """
         Create a new batch using the Batch model.
 
@@ -354,7 +365,13 @@ class BatchService:
                 }
             )
 
-            return new_batch.to_dict()
+            batch_dict = new_batch.to_dict()
+            try:
+                self.audit_service.log_batch_create(current_user or _SYSTEM_USER, batch_dict)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for batch create: {ae}")
+
+            return batch_dict
 
         except Exception as e:
             logger.error(f"Error creating batch: {str(e)}")
@@ -526,7 +543,9 @@ class BatchService:
             logger.error(f"Error getting products with expiry summary: {str(e)}")
             return []
 
-    def update_batch_quantity(self, batch_id: str, quantity_used: int, adjustment_type: str = "correction", adjusted_by: Optional[str] = None, notes: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def update_batch_quantity(self, batch_id: str, quantity_used: int, adjustment_type: str = "correction",
+                              adjusted_by: Optional[str] = None, notes: Optional[str] = None,
+                              current_user=None) -> Optional[Dict[str, Any]]:
         """Update batch quantity when stock is used/sold. Rejects updates on expired batches."""
         try:
             batch = Batch.get_by_id(batch_id)
@@ -538,6 +557,8 @@ class BatchService:
                     "Cannot apply quantity update to an expired batch. "
                     "Sales and adjustments must use non-expired batches only."
                 )
+
+            product_name = self._get_product_name(batch.product_id)
 
             # Use the consume_quantity method for deductions
             updated_batch = batch.consume_quantity(
@@ -557,7 +578,6 @@ class BatchService:
 
             # Send notification if batch is depleted
             if updated_batch.status == 'exhausted':
-                product_name = self._get_product_name(batch.product_id)
                 self._send_batch_notification(
                     'batch_depleted',
                     product_name,
@@ -566,19 +586,32 @@ class BatchService:
                         'batch_number': batch.batch_number
                     }
                 )
-            
+
+            audit_user = current_user or (
+                {'user_id': adjusted_by, 'username': adjusted_by, 'source': 'service'}
+                if adjusted_by else _SYSTEM_USER
+            )
+            try:
+                self.audit_service.log_batch_deduct(
+                    audit_user, batch_id, product_name, quantity_used, adjustment_type
+                )
+            except Exception as ae:
+                logger.error(f"Audit logging failed for batch quantity update: {ae}")
+
             return updated_batch.to_dict()
 
         except Exception as e:
             logger.error(f"Error updating batch quantity for {batch_id}: {str(e)}")
             raise Exception(f"Error updating batch quantity: {str(e)}")
 
-    def update_batch(self, batch_id: str, update_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def update_batch(self, batch_id: str, update_data: Dict[str, Any], current_user=None) -> Optional[Dict[str, Any]]:
         """Update batch details (quantity, price, expiry, status, shipment_id, etc.). pk/sk are read-only."""
         try:
             batch = Batch.get_by_id(batch_id)
             if not batch:
                 raise Exception(f"Batch with ID {batch_id} not found")
+
+            old_dict = batch.to_dict()
 
             read_only = {'pk', 'sk'}
             for key, value in update_data.items():
@@ -588,7 +621,16 @@ class BatchService:
                     setattr(batch, key, value)
             batch.updated_at = datetime.utcnow()
             batch.save()
-            return batch.to_dict()
+
+            new_dict = batch.to_dict()
+            try:
+                self.audit_service.log_batch_update(
+                    current_user or _SYSTEM_USER, batch_id, old_dict, new_dict
+                )
+            except Exception as ae:
+                logger.error(f"Audit logging failed for batch update: {ae}")
+
+            return new_dict
 
         except Exception as e:
             logger.error(f"Error updating batch {batch_id}: {str(e)}")
@@ -598,7 +640,9 @@ class BatchService:
     # INTEGRATION WITH SALES
     # ================================================================
     
-    def deduct_stock_fifo(self, product_id: str, quantity_needed: int, reason: str, adjusted_by: Optional[str] = None, notes: Optional[str] = None) -> List[Dict[str, Any]]:
+    def deduct_stock_fifo(self, product_id: str, quantity_needed: int, reason: str,
+                          adjusted_by: Optional[str] = None, notes: Optional[str] = None,
+                          current_user=None) -> List[Dict[str, Any]]:
         """
         Deduct stock from batches using FIFO logic.
         This method replaces process_sale_fifo and process_batch_adjustment.
@@ -644,6 +688,19 @@ class BatchService:
                 reason=reason or "FIFO deduction",
                 include_batches=updated_batches,
             )
+
+            audit_user = current_user or (
+                {'user_id': adjusted_by, 'username': adjusted_by, 'source': 'service'}
+                if adjusted_by else _SYSTEM_USER
+            )
+            product_name = self._get_product_name(product_id)
+            batch_ids = ', '.join(d['batch_id'] for d in deductions)
+            try:
+                self.audit_service.log_batch_deduct(
+                    audit_user, batch_ids, product_name, quantity_needed, reason
+                )
+            except Exception as ae:
+                logger.error(f"Audit logging failed for FIFO deduction: {ae}")
 
             return deductions
 
@@ -753,12 +810,28 @@ class BatchService:
             logger.info("Marking expired batches...")
             updated_batches = BatchManager.update_expired_batches()
             logger.info(f"Marked {len(updated_batches)} batches as expired.")
+            for batch in updated_batches:
+                try:
+                    product_id = batch.get('product_id') if isinstance(batch, dict) else getattr(batch, 'product_id', None)
+                    batch_id = batch.get('batch_id') if isinstance(batch, dict) else getattr(batch, 'sk', None)
+                    product_name = self._get_product_name(product_id) if product_id else "Unknown Product"
+                    self._send_batch_notification(
+                        'batch_expired',
+                        product_name,
+                        {'batch_id': batch_id, 'product_id': product_id}
+                    )
+                    try:
+                        self.audit_service.log_batch_expired(_SYSTEM_USER, batch_id or '', product_name)
+                    except Exception as ae:
+                        logger.error(f"Audit logging failed for batch expired: {ae}")
+                except Exception:
+                    pass
             return updated_batches
         except Exception as e:
             logger.error(f"Error marking expired batches: {str(e)}")
             raise Exception(f"Error marking expired batches: {str(e)}")
 
-    def activate_batches_for_shipment(self, shipment_id: str) -> List[Dict[str, Any]]:
+    def activate_batches_for_shipment(self, shipment_id: str, current_user=None) -> List[Dict[str, Any]]:
         """
         Activate all pending batches for a shipment (set status to 'active').
         Called when a shipment is set as received so its batches become usable.
@@ -789,7 +862,81 @@ class BatchService:
                     logger.warning("Sync total_stock after activate_batches_for_shipment %s: %s", pid, sync_err)
             if activated:
                 logger.info("Activated %d batch(es) for shipment %s", len(activated), shipment_id)
+                for pid in product_ids:
+                    try:
+                        product_name = self._get_product_name(pid)
+                        self._send_batch_notification(
+                            'shipment_activated',
+                            product_name,
+                            {'shipment_id': shipment_id, 'product_id': pid}
+                        )
+                    except Exception:
+                        pass
+                try:
+                    self.audit_service.log_batch_shipment_activated(
+                        current_user or _SYSTEM_USER, shipment_id, len(product_ids), len(activated)
+                    )
+                except Exception as ae:
+                    logger.error(f"Audit logging failed for shipment activation: {ae}")
             return activated
         except Exception as e:
             logger.error("Error activating batches for shipment %s: %s", shipment_id, e)
+<<<<<<< Updated upstream
             raise Exception(f"Error activating batches for shipment: {str(e)}") from e
+=======
+            raise Exception(f"Error activating batches for shipment: {str(e)}") from e
+
+    def cancel_batches_for_shipment(self, shipment_id: str, current_user=None) -> List[Dict[str, Any]]:
+        """
+        Cancel all pending batches for a shipment (set status to 'cancelled').
+        Called when a shipment is cancelled so its unreceived batches are excluded
+        from total_stock. Only pending batches are affected; active batches (already
+        received and in use) are left untouched.
+        Returns list of cancelled batch dicts; syncs product total_stock for affected products.
+        """
+        if not shipment_id or not str(shipment_id).strip():
+            return []
+        try:
+            batches = Batch.get_by_shipment_id(shipment_id)
+            cancelled = []
+            product_ids = set()
+            for batch in batches:
+                if getattr(batch, "status", None) != "pending":
+                    continue
+                batch.status = "cancelled"
+                batch.updated_at = datetime.utcnow()
+                batch.save()
+                cancelled.append(batch.to_dict())
+                product_ids.add(batch.product_id)
+            for pid in product_ids:
+                try:
+                    self._sync_product_totals_from_batches(
+                        pid,
+                        source="shipment_cancelled",
+                        reason=f"Batches cancelled for shipment {shipment_id}",
+                    )
+                except Exception as sync_err:
+                    logger.warning("Sync total_stock after cancel_batches_for_shipment %s: %s", pid, sync_err)
+            if cancelled:
+                logger.info("Cancelled %d batch(es) for shipment %s", len(cancelled), shipment_id)
+                for pid in product_ids:
+                    try:
+                        product_name = self._get_product_name(pid)
+                        self._send_batch_notification(
+                            'shipment_cancelled',
+                            product_name,
+                            {'shipment_id': shipment_id, 'product_id': pid}
+                        )
+                    except Exception:
+                        pass
+                try:
+                    self.audit_service.log_batch_shipment_cancelled(
+                        current_user or _SYSTEM_USER, shipment_id, len(product_ids), len(cancelled)
+                    )
+                except Exception as ae:
+                    logger.error(f"Audit logging failed for shipment cancellation: {ae}")
+            return cancelled
+        except Exception as e:
+            logger.error("Error cancelling batches for shipment %s: %s", shipment_id, e)
+            raise Exception(f"Error cancelling batches for shipment: {str(e)}") from e
+>>>>>>> Stashed changes

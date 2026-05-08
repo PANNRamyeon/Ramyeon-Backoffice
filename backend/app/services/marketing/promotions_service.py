@@ -7,6 +7,7 @@ from pynamodb.expressions.condition import Condition
 
 from models.Promotions import Promotion, PromotionManager, UsageHistoryItem
 from notifications.services import notification_service
+from app.services.core.audit_service import AuditLogService
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,10 @@ logger = logging.getLogger(__name__)
 class PromotionService:
     def __init__(self, current_user: str = "system"):
         self.current_user = current_user
+        self.audit_service = AuditLogService()
+
+    def _audit_user(self):
+        return {'user_id': self.current_user, 'username': self.current_user, 'source': 'service'}
 
     def _send_promotion_notification(self, action_type: str, promotion_name: str,
                                      promotion_id: str = None, metadata: dict = None):
@@ -236,8 +241,13 @@ class PromotionService:
             if "min_purchase_amount" not in promo_data or promo_data["min_purchase_amount"] is None:
                 promo_data["min_purchase_amount"] = 100
             promo = Promotion.create_promotion(**promo_data)
+            promo_dict = promo.to_dict()
             self._send_promotion_notification('created', getattr(promo, 'name', promo.sk), promo.sk)
-            return {"success": True, "promotion": promo.to_dict()}
+            try:
+                self.audit_service.log_promotion_create(self._audit_user(), promo_dict)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for promotion create: {ae}")
+            return {"success": True, "promotion": promo_dict}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
         except PynamoDBException as e:
@@ -248,9 +258,15 @@ class PromotionService:
             promo = Promotion.get_by_id(promotion_id)
             if not promo:
                 return {"success": False, "error": "Promotion not found"}
+            old_dict = promo.to_dict()
             promo.update_promotion(updated_by=self.current_user, **promo_data)
+            new_dict = promo.to_dict()
             self._send_promotion_notification('updated', getattr(promo, 'name', promo.sk), promotion_id)
-            return {"success": True, "promotion": promo.to_dict()}
+            try:
+                self.audit_service.log_promotion_update(self._audit_user(), promotion_id, old_dict, new_dict)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for promotion update: {ae}")
+            return {"success": True, "promotion": new_dict}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
         except PynamoDBException as e:
@@ -261,9 +277,14 @@ class PromotionService:
             promo = Promotion.get_by_id(promotion_id)
             if not promo or promo.isDeleted:
                 return {"success": False, "error": "Promotion not found or already deleted"}
+            promo_dict = promo.to_dict()
             promo_name = getattr(promo, 'name', promo.sk)
             promo.soft_delete(deleted_by=self.current_user, reason=reason)
             self._send_promotion_notification('soft_deleted', promo_name, promotion_id)
+            try:
+                self.audit_service.log_promotion_soft_delete(self._audit_user(), promo_dict)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for promotion soft delete: {ae}")
             return {"success": True, "message": "Promotion soft‑deleted"}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
@@ -275,8 +296,13 @@ class PromotionService:
             promo = Promotion.get_by_id(promotion_id)
             if not promo:
                 return {"success": False, "error": "Promotion not found"}
+            promo_name = getattr(promo, 'name', promo.sk)
             promo.activate(self.current_user, reason)
-            self._send_promotion_notification('activated', getattr(promo, 'name', promo.sk), promotion_id)
+            self._send_promotion_notification('activated', promo_name, promotion_id)
+            try:
+                self.audit_service.log_promotion_activate(self._audit_user(), promotion_id, promo_name)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for promotion activate: {ae}")
             return {"success": True, "promotion": promo.to_dict()}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
@@ -288,8 +314,13 @@ class PromotionService:
             promo = Promotion.get_by_id(promotion_id)
             if not promo:
                 return {"success": False, "error": "Promotion not found"}
+            promo_name = getattr(promo, 'name', promo.sk)
             promo.deactivate(self.current_user, reason)
-            self._send_promotion_notification('deactivated', getattr(promo, 'name', promo.sk), promotion_id)
+            self._send_promotion_notification('deactivated', promo_name, promotion_id)
+            try:
+                self.audit_service.log_promotion_deactivate(self._audit_user(), promotion_id, promo_name)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for promotion deactivate: {ae}")
             return {"success": True, "promotion": promo.to_dict()}
         except ValueError as ve:
             return {"success": False, "error": str(ve)}
@@ -490,8 +521,13 @@ class PromotionService:
         if not promo:
             return {"success": False, "error": "Promotion not found"}
         try:
+            promo_dict = promo.to_dict()
             promo.restore(self.current_user)
             self._send_promotion_notification('restored', getattr(promo, 'name', promo.sk), promotion_id)
+            try:
+                self.audit_service.log_promotion_restore(self._audit_user(), promo_dict)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for promotion restore: {ae}")
             return {"success": True, "promotion": promo.to_dict()}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -503,9 +539,14 @@ class PromotionService:
         if not promo:
             return {"success": False, "error": "Promotion not found"}
         try:
+            promo_dict = promo.to_dict()
             promo_name = getattr(promo, 'name', promo.sk)
             promo.delete()
             self._send_promotion_notification('hard_deleted', promo_name, promotion_id)
+            try:
+                self.audit_service.log_promotion_hard_delete(self._audit_user(), promo_dict)
+            except Exception as ae:
+                logger.error(f"Audit logging failed for promotion hard delete: {ae}")
             return {"success": True, "message": "Promotion permanently deleted"}
         except Exception as e:
             return {"success": False, "error": str(e)}

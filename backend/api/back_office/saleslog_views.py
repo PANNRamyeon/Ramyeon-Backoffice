@@ -107,8 +107,8 @@ class SalesLogView(APIView):
                 sales_type = request.GET.get('sales_type')
                 status_filter = request.GET.get('status')
                 
-                # Get invoices
-                invoices = self.sales_service.get_all_invoices(limit=limit, skip=skip)
+                # get_all_invoices returns (items, last_evaluated_key)
+                invoices, _ = self.sales_service.get_all_invoices(limit=limit)
                 
                 # Apply filters if provided (basic filtering)
                 if customer_id:
@@ -251,8 +251,8 @@ class SalesLogStatsView(APIView):
                 'sales_by_payment_method': {}
             }
             
-            # Get all invoices for stats calculation
-            all_invoices = self.sales_service.get_all_invoices(limit=1000)  # Adjust as needed
+            # get_all_invoices returns (items, last_evaluated_key)
+            all_invoices, _ = self.sales_service.get_all_invoices(limit=1000)
             
             if all_invoices:
                 # Calculate basic statistics

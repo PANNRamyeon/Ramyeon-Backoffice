@@ -15,7 +15,7 @@ from . import (
     promotion_views,
     session_views,
     saleslog_views,
-    sales_by_category_views,
+    sales_analytics_views,
 )
 
 app_name = 'office'
@@ -183,8 +183,12 @@ urlpatterns = [
     path('sales-logs/', saleslog_views.SalesLogView.as_view(), name='sales-logs-list'),
     path('sales-logs/statistics/', saleslog_views.SalesLogStatsView.as_view(), name='sales-logs-stats'),
     
-    # ==================== SALES BY CATEGORY ====================
-    path('reports/sales-by-category/', sales_by_category_views.SalesByCategoryView.as_view(), name='sales-by-category'),
-    path('reports/top-categories/', sales_by_category_views.TopCategoriesView.as_view(), name='top-categories'),
-    path('reports/category-performance/<str:category_id>/', sales_by_category_views.CategoryPerformanceDetailView.as_view(), name='category-performance'),
+    # ==================== SALES REPORTS (v5 DynamoDB) ====================
+    path('reports/sales-summary/', sales_analytics_views.SalesSummaryView.as_view(), name='sales-summary'),
+    path('reports/sales-by-item/', sales_analytics_views.SalesByItemView.as_view(), name='sales-by-item'),
+    path('reports/top-items/', sales_analytics_views.TopItemsView.as_view(), name='top-items'),
+    path('reports/sales-by-category/', sales_analytics_views.SalesByCategoryView.as_view(), name='sales-by-category'),
+    path('reports/top-categories/', sales_analytics_views.TopCategoriesView.as_view(), name='top-categories'),
+    path('reports/category-performance/<str:category_id>/', sales_analytics_views.CategoryPerformanceDetailView.as_view(), name='category-performance'),
+    path('reports/sales-by-period/', sales_analytics_views.SalesByPeriodView.as_view(), name='sales-by-period'),
 ]

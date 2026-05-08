@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 // Notifications are mounted at /api/v1/notifications/, not under /admin/
-const NOTIF_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin')
-  .replace(/\/admin\/?$/, '/notifications');
+const NOTIF_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1')
+  .replace(/\/admin\/?$/, '') + '/notifications';
 
 const notifApi = axios.create({
   baseURL: NOTIF_BASE,

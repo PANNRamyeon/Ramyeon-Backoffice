@@ -197,7 +197,13 @@
 
 <script>
 import PieChartView from '@/components/PieChartView.vue';
-import categoryDisplayService from '@/services/apiSalesByCategory';
+import axios from 'axios';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+function authHeaders() {
+  const token = localStorage.getItem('token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export default {
   name: 'SalesByCategory',
@@ -278,19 +284,21 @@ export default {
         this.currentDateRange = range;
 
         // 1️⃣ Fetch all category data (table + chart)
-        const allCategories = await categoryDisplayService.getSalesByCategory(
-          range.start_date, 
-          range.end_date,
-          false, // include_voided
-          this.showTrends // include_trends
-        );
+        const { data: allCategories } = await axios.get(`${API_BASE}/admin/reports/sales-by-category/`, {
+          headers: authHeaders(),
+          params: {
+            start_date: range.start_date,
+            end_date: range.end_date,
+            include_voided: false,
+            include_trends: this.showTrends,
+          },
+        });
 
         // 2️⃣ Fetch top categories (top list + chart)
-        const topCategories = await categoryDisplayService.getTopCategories(
-          range.start_date, 
-          range.end_date, 
-          5
-        );
+        const { data: topCategories } = await axios.get(`${API_BASE}/admin/reports/top-categories/`, {
+          headers: authHeaders(),
+          params: { start_date: range.start_date, end_date: range.end_date, limit: 5 },
+        });
 
         // 3️⃣ Process data
         this.processCategoryData(allCategories);
@@ -302,9 +310,13 @@ export default {
         this.consecutiveErrors = 0;
         this.lastSuccessfulLoad = Date.now();
       } catch (error) {
+        console.error('❌ loadAllCategoryData error:', error);
         this.consecutiveErrors++;
         if (this.consecutiveErrors >= 3) this.connectionLost = true;
-        this.setFallbackData();
+        this.error = error.response?.data?.error || error.message || 'Failed to load category data.';
+        this.topItems = [];
+        this.categories = [];
+        this.setDefaultChartData();
       } finally {
         this.loading = this.loadingTopItems = this.loadingChart = false;
       }
@@ -319,25 +331,31 @@ export default {
         this.currentDateRange = range;
         
         // Fetch all category data for the new date range
-        const allCategories = await categoryDisplayService.getSalesByCategory(
-          range.start_date, 
-          range.end_date,
-          false, // include_voided
-          this.showTrends // include_trends
-        );
-        
+        const { data: allCategories } = await axios.get(`${API_BASE}/admin/reports/sales-by-category/`, {
+          headers: authHeaders(),
+          params: {
+            start_date: range.start_date,
+            end_date: range.end_date,
+            include_voided: false,
+            include_trends: this.showTrends,
+          },
+        });
+
         // Fetch top categories for chart and top list
-        const topCategories = await categoryDisplayService.getTopCategories(
-          range.start_date, 
-          range.end_date, 
-          6
-        );
+        const { data: topCategories } = await axios.get(`${API_BASE}/admin/reports/top-categories/`, {
+          headers: authHeaders(),
+          params: { start_date: range.start_date, end_date: range.end_date, limit: 6 },
+        });
         
         // Update all data
         this.processCategoryData(allCategories);
         this.updateChartData(topCategories);
         this.updateTopItems(topCategories);
       } catch (error) {
+        console.error('❌ onFrequencyChange error:', error);
+        this.error = error.response?.data?.error || error.message || 'Failed to load category data.';
+        this.topItems = [];
+        this.categories = [];
         this.setDefaultChartData();
       } finally {
         this.loadingChart = false;
@@ -422,47 +440,14 @@ export default {
       }
     },
 
-    setFallbackData() {
-      this.topItems = [
-        { name: 'Noodles', price: '₱15,234.21', trend: 'up', sales_growth_percent: 12.5 },
-        { name: 'Drinks', price: '₱5,789.50', trend: 'down', sales_growth_percent: -3.2 },
-        { name: 'Snacks', price: '₱3,821.25', trend: 'up', sales_growth_percent: 5.7 }
-      ];
-      this.setDefaultChartData();
-      this.categories = [
-        { 
-          id: 1, 
-          name: 'Noodles', 
-          total_items_sold: 450, 
-          total_sales: 15234.21, 
-          product_count: 12,
-          transaction_count: 89,
-          avg_sale_per_transaction: 171.17,
-          trend: 'up',
-          sales_growth_percent: 12.5
-        },
-        { 
-          id: 2, 
-          name: 'Drinks', 
-          total_items_sold: 320, 
-          total_sales: 5789.50, 
-          product_count: 8,
-          transaction_count: 156,
-          avg_sale_per_transaction: 37.11,
-          trend: 'down',
-          sales_growth_percent: -3.2
-        }
-      ];
-    },
-
     setDefaultChartData() {
       this.chartData = {
-        labels: ['Noodles', 'Drinks', 'Snacks'],
+        labels: ['No Data'],
         datasets: [{
           label: `Category Sales (${this.selectedFrequency})`,
-          data: [15234.21, 5789.50, 3821.25],
-          backgroundColor: ['#ef4444', '#3b82f6', '#22c55e'],
-          borderColor: ['#dc2626', '#2563eb', '#16a34a'],
+          data: [0],
+          backgroundColor: ['#e5e7eb'],
+          borderColor: ['#d1d5db'],
           borderWidth: 1
         }]
       };
