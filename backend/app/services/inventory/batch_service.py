@@ -881,9 +881,6 @@ class BatchService:
             return activated
         except Exception as e:
             logger.error("Error activating batches for shipment %s: %s", shipment_id, e)
-<<<<<<< Updated upstream
-            raise Exception(f"Error activating batches for shipment: {str(e)}") from e
-=======
             raise Exception(f"Error activating batches for shipment: {str(e)}") from e
 
     def cancel_batches_for_shipment(self, shipment_id: str, current_user=None) -> List[Dict[str, Any]]:
@@ -939,4 +936,3 @@ class BatchService:
         except Exception as e:
             logger.error("Error cancelling batches for shipment %s: %s", shipment_id, e)
             raise Exception(f"Error cancelling batches for shipment: {str(e)}") from e
->>>>>>> Stashed changes

@@ -253,24 +253,27 @@ class Category(Model):
     @classmethod
     def get_by_status(cls, status: str, include_deleted: bool = False) -> list:
         """
-        Get categories by status using GSI
-        
+        Get categories by status.
+        Uses Python-side filtering so legacy records without isDeleted stored
+        are not silently excluded by a DynamoDB equality condition.
+
         Args:
-            status: Status to filter by (active, inactive, archived)
+            status: Status to filter by (active, inactive, archived, deleted)
             include_deleted: Include soft-deleted categories
-        
+
         Returns:
             list: List of categories with given status
         """
         try:
-            categories = []
-            condition = cls.status == status
-            if not include_deleted:
-                condition = condition & (cls.isDeleted == False)
-            
-            for category in cls.query("category", filter_condition=condition):
-                categories.append(category)
-            return categories
+            all_cats = list(cls.query("category"))
+            result = []
+            for c in all_cats:
+                if c.status != status:
+                    continue
+                if not include_deleted and c.isDeleted:
+                    continue
+                result.append(c)
+            return result
         except Exception as e:
             logger.error(f"Error getting categories by status {status}: {str(e)}")
             return []
@@ -297,9 +300,13 @@ class Category(Model):
             list: List of all categories
         """
         try:
+            all_cats = list(cls.query("category"))
             if include_deleted:
-                return list(cls.query("category"))
-            return list(cls.query("category", filter_condition=(cls.isDeleted == False)))
+                return all_cats
+            # Filter in Python so records missing the isDeleted attribute (None)
+            # are treated as not-deleted rather than being excluded by DynamoDB's
+            # strict equality filter.
+            return [c for c in all_cats if not c.isDeleted]
         except Exception as e:
             logger.error(f"Error getting all categories: {str(e)}")
             return []
@@ -359,31 +366,30 @@ class Category(Model):
     @classmethod
     def search_categories(cls, search_term: str, limit: int = 10) -> list:
         """
-        Search categories by name (partial, case-insensitive)
-        
+        Search categories by name or description (partial, case-insensitive).
+        Uses Python-side filtering so legacy records without isDeleted stored
+        are not silently excluded.
+
         Args:
             search_term: Search term
             limit: Maximum number of categories to return
-        
+
         Returns:
             list: List of matching categories
         """
         try:
-            categories = []
-            search_term_lower = search_term.lower()
-            
-            # Scan all active categories
-            for category in cls.query("categories", limit=1000):
-                if category.isDeleted:
+            search_lower = search_term.lower()
+            results = []
+            for c in cls.query("category"):
+                if c.isDeleted:
                     continue
-                
-                if (search_term_lower in category.category_name.lower() or 
-                    (category.description and search_term_lower in category.description.lower())):
-                    categories.append(category)
-                    if len(categories) >= limit:
+                name_match = c.category_name and search_lower in c.category_name.lower()
+                desc_match = c.description and search_lower in c.description.lower()
+                if name_match or desc_match:
+                    results.append(c)
+                    if len(results) >= limit:
                         break
-            
-            return categories
+            return results
         except Exception as e:
             logger.error(f"Error searching categories: {str(e)}")
             return []
@@ -435,12 +441,11 @@ class Category(Model):
                     "subcategories": []
                 }
                 
-                # Sort subcategories by sort_order, then name
                 sorted_subcategories = sorted(
                     category.sub_categories,
-                    key=lambda x: (x.sort_order, x.name)
+                    key=lambda x: (x.sort_order if x.sort_order is not None else 0, x.name or '')
                 )
-                
+
                 for subcategory in sorted_subcategories:
                     if subcategory.status == "active":
                         category_data["subcategories"].append({
@@ -777,10 +782,11 @@ class Category(Model):
             }
             
             if include_subcategories:
-                # Sort subcategories by sort_order, then name
+                # Sort subcategories by sort_order, then name.
+                # Guard against None sort_order (attribute absent in old DynamoDB records).
                 sorted_subcategories = sorted(
                     self.sub_categories,
-                    key=lambda x: (x.sort_order, x.name)
+                    key=lambda x: (x.sort_order if x.sort_order is not None else 0, x.name or '')
                 )
                 
                 category_dict["sub_categories"] = [
@@ -883,15 +889,14 @@ class CategoryManager:
             # Sort categories by sort_order, then name
             sorted_categories = sorted(
                 categories,
-                key=lambda x: (x.sort_order, x.category_name)
+                key=lambda x: (x.sort_order if x.sort_order is not None else 0, x.category_name or '')
             )
             
             tree = []
             for category in sorted_categories:
-                # Sort subcategories by sort_order, then name
                 sorted_subcategories = sorted(
                     category.get_active_subcategories(),
-                    key=lambda x: (x.sort_order, x.name)
+                    key=lambda x: (x.sort_order if x.sort_order is not None else 0, x.name or '')
                 )
                 
                 tree.append({

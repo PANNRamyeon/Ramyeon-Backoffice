@@ -365,7 +365,9 @@ class CategoryService:
                 categories = categories[skip:]
             if limit:
                 categories = categories[:limit]
-            return [cat.to_dict() for cat in categories]
+            # Filter out empty dicts — to_dict() swallows exceptions and returns {}
+            # for records it cannot serialize; exclude those from the response.
+            return [d for d in (cat.to_dict() for cat in categories) if d]
         except Exception as e:
             logger.error(f"Error getting categories: {e}")
             raise Exception(f"Error getting categories: {str(e)}")
@@ -644,14 +646,13 @@ class CategoryService:
     def get_deleted_categories(self, include_product_counts=False):
         """Get all soft-deleted categories, optionally with product counts"""
         try:
-            categories = Category.get_by_status('deleted', include_deleted=True)
-            # Or use get_all_categories and filter
-            # categories = [c for c in Category.get_all_categories(include_deleted=True) if c.isDeleted]
+            categories = [c for c in Category.get_all_categories(include_deleted=True) if c.isDeleted]
 
             result = []
-            # Add product counts only if requested
             for category in categories:
                 cat_dict = category.to_dict()
+                if not cat_dict:
+                    continue
                 if include_product_counts:
                     for subcategory in cat_dict.get('sub_categories', []):
                         subcategory['product_count'] = self.get_subcategory_product_count(
@@ -814,7 +815,7 @@ class CategoryService:
     def get_active_categories(self, include_deleted=False, include_product_counts=False):
         """Get only active categories. Product counts come from the stored subcategory field."""
         try:
-            return [cat.to_dict() for cat in Category.get_active_categories()]
+            return [d for d in (cat.to_dict() for cat in Category.get_active_categories()) if d]
         except Exception as e:
             logger.error(f"Error getting active categories: {e}")
             raise Exception(f"Error getting active categories: {str(e)}")
@@ -824,7 +825,7 @@ class CategoryService:
         try:
             if not search_term or not search_term.strip():
                 return []
-            return [cat.to_dict() for cat in Category.search_categories(search_term.strip(), limit=limit)]
+            return [d for d in (cat.to_dict() for cat in Category.search_categories(search_term.strip(), limit=limit)) if d]
         except Exception as e:
             logger.error(f"Error searching categories: {e}")
             raise Exception(f"Error searching categories: {str(e)}")

@@ -193,23 +193,16 @@ class ShipmentService:
 
             shipment.updated_at = datetime.utcnow()
             shipment.save()
-<<<<<<< Updated upstream
-            if getattr(shipment, "status", None) == "received":
-=======
             new_dict = shipment.to_dict()
 
             new_status = getattr(shipment, "status", None)
             if new_status == "received":
->>>>>>> Stashed changes
                 try:
                     get_singleton(BatchService).activate_batches_for_shipment(
                         shipment_id, current_user=current_user
                     )
                 except Exception as act_err:
                     logger.warning("Activate batches for shipment %s: %s", shipment_id, act_err)
-<<<<<<< Updated upstream
-            return shipment.to_dict()
-=======
             elif new_status == "cancelled":
                 try:
                     get_singleton(BatchService).cancel_batches_for_shipment(
@@ -226,7 +219,6 @@ class ShipmentService:
                 logger.error(f"Audit logging failed for shipment update: {ae}")
 
             return new_dict
->>>>>>> Stashed changes
         except Exception as e:
             logger.error(f"Error updating shipment {shipment_id}: {e}")
             raise Exception(f"Error updating shipment: {str(e)}") from e

@@ -430,8 +430,6 @@ class ProductService:
             logger.error(f"Error deleting product {product_id}: {str(e)}")
             return False
 
-<<<<<<< Updated upstream
-=======
     @staticmethod
     def bulk_delete_products(product_ids: list, hard_delete: bool = False, deleted_by: str = "system",
                              reason: str = "Bulk deleted via service", current_user=None) -> dict:
@@ -465,8 +463,6 @@ class ProductService:
             "failed_count": len(failed),
             "failed_ids": failed,
         }
-
->>>>>>> Stashed changes
     # ========== STOCK & METADATA HELPERS ==========
 
     @staticmethod

@@ -7,8 +7,9 @@ import os
 from pynamodb.models import Model
 from pynamodb.attributes import (
     UnicodeAttribute, NumberAttribute, BooleanAttribute,
-    ListAttribute, MapAttribute, UTCDateTimeAttribute
+    ListAttribute, MapAttribute
 )
+from app.custom_attributes import FixedUTCDateTimeAttribute
 from pynamodb.indexes import GlobalSecondaryIndex, AllProjection
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
@@ -27,7 +28,7 @@ class BatchUsedItem(MapAttribute):
     batch_id = UnicodeAttribute()
     batch_number = UnicodeAttribute()
     quantity_deducted = NumberAttribute()
-    expiry_date = UTCDateTimeAttribute()
+    expiry_date = FixedUTCDateTimeAttribute()
     cost_price = NumberAttribute()
 
 
@@ -57,7 +58,7 @@ class PaymentDetail(MapAttribute):
     change = NumberAttribute(default=0.0)
     status = UnicodeAttribute()  # e.g., 'completed', 'pending', 'failed'
     transaction_id = UnicodeAttribute(null=True)
-    timestamp = UTCDateTimeAttribute()
+    timestamp = FixedUTCDateTimeAttribute()
 
 
 # ============= SALE MODEL =============
@@ -108,7 +109,7 @@ class Sale(Model):
     sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "SALE-00001" (5-digit)
     
     # ============= TRANSACTION INFORMATION =============
-    transaction_date = UTCDateTimeAttribute()
+    transaction_date = FixedUTCDateTimeAttribute()
     cashier_id = UnicodeAttribute()
     shift_id = UnicodeAttribute()
     shift_seq = NumberAttribute()
@@ -140,8 +141,8 @@ class Sale(Model):
     # ============= STATUS AND METADATA =============
     status = UnicodeAttribute(default="completed")  # e.g., 'completed', 'pending', 'cancelled', 'refunded'
     source = UnicodeAttribute(default="pos")  # e.g., 'pos', 'online', 'mobile'
-    created_at = UTCDateTimeAttribute(default=datetime.utcnow)
-    updated_at = UTCDateTimeAttribute(default=datetime.utcnow)
+    created_at = FixedUTCDateTimeAttribute(default=datetime.utcnow)
+    updated_at = FixedUTCDateTimeAttribute(default=datetime.utcnow)
     is_voided = BooleanAttribute(default=False)
     points_awarded = BooleanAttribute(default=False)
     
@@ -193,7 +194,7 @@ class Sale(Model):
             projection = AllProjection()
         
         pk = UnicodeAttribute(hash_key=True)  # Will be set to 'sales'
-        transaction_date = UTCDateTimeAttribute(range_key=True)
+        transaction_date = FixedUTCDateTimeAttribute(range_key=True)
     
     # Index instances
     shift_index = ShiftIndex()

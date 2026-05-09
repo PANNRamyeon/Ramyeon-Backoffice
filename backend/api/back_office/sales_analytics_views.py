@@ -35,7 +35,7 @@ def _parse_dates(query_params):
         if start_date:
             start_date = datetime.strptime(start_date, "%Y-%m-%d")
         if end_date:
-            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
     except ValueError:
         return None, None, Response(
             {"error": "Invalid date format, use YYYY-MM-DD."},
@@ -250,7 +250,7 @@ class SalesByPeriodView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             start_date = datetime.strptime(start_date, "%Y-%m-%d")
-            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
         except ValueError:
             return Response({"error": "Invalid date format, use YYYY-MM-DD."},
                             status=status.HTTP_400_BAD_REQUEST)

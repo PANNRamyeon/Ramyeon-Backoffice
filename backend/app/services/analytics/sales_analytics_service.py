@@ -24,25 +24,15 @@ class SalesAnalyticsService:
                    include_voided: bool = False) -> List:
         from models.Sales import Sale
         try:
+            all_sales = list(Sale.query("sales"))
             if start_date and end_date:
-                try:
-                    sales = []
-                    for sale in Sale.date_index.query(
-                        "sales",
-                        Sale.transaction_date >= start_date,
-                        filter_condition=Sale.transaction_date <= end_date,
-                    ):
-                        sales.append(sale)
-                except Exception as gsi_err:
-                    logger.warning("DateIndex GSI query failed (%s); falling back to full scan", gsi_err)
-                    all_sales = list(Sale.query("sales"))
-                    sales = [
-                        s for s in all_sales
-                        if hasattr(s, "transaction_date") and s.transaction_date
-                        and start_date <= s.transaction_date <= end_date
-                    ]
+                sales = [
+                    s for s in all_sales
+                    if getattr(s, "transaction_date", None)
+                    and start_date <= s.transaction_date <= end_date
+                ]
             else:
-                sales = list(Sale.query("sales"))
+                sales = all_sales
             if not include_voided:
                 sales = [
                     s for s in sales
@@ -58,7 +48,9 @@ class SalesAnalyticsService:
         from models.Product import Product
         try:
             product_map = {}
-            for p in Product.query("products", filter_condition=Product.isDeleted == False):
+            for p in Product.query("products"):
+                if p.isDeleted:
+                    continue
                 pid = p.sk
                 product_map[pid] = {
                     "product_id": pid,
@@ -82,8 +74,9 @@ class SalesAnalyticsService:
         from models.Categories import Category
         try:
             cat_map = {}
-            for c in Category.query("category", filter_condition=Category.isDeleted == False):
-                cat_map[c.sk] = c.category_name
+            for c in Category.query("category"):
+                if not c.isDeleted:
+                    cat_map[c.sk] = c.category_name
             return cat_map
         except Exception as e:
             logger.error("_get_category_map error: %s", e)
