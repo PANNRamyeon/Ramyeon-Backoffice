@@ -318,7 +318,7 @@ function getExpiryStatus(expiryDate) {
 
 .modal-header {
   padding: 1.5rem 1.75rem 0.9rem 1.75rem;
-  background: linear-gradient(135deg, var(--surface-tertiary), var(--surface-secondary));
+  background-color: var(--surface-secondary);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -331,7 +331,7 @@ function getExpiryStatus(expiryDate) {
 
 .modal-footer {
   padding: 1.25rem 1.75rem 1.75rem 1.75rem;
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   border-top: 1px solid var(--border-primary);
 }
 
@@ -404,7 +404,7 @@ code {
 }
 
 .card-header {
-  background-color: var(--surface-tertiary) !important;
+  background-color: var(--surface-secondary) !important;
   border-bottom: 1px solid var(--border-primary) !important;
   color: var(--text-primary);
 }
@@ -416,7 +416,7 @@ code {
 
 .bg-light,
 .table-light {
-  background-color: var(--surface-tertiary) !important;
+  background-color: var(--surface-secondary) !important;
   color: var(--text-primary) !important;
 }
 
@@ -427,7 +427,7 @@ code {
 .table thead th {
   font-weight: 600;
   font-size: 0.875rem;
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   color: var(--text-primary);
   border-bottom: 2px solid var(--border-primary);
   border-top: 1px solid var(--border-primary);
@@ -440,7 +440,7 @@ code {
 }
 
 .table tfoot td {
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   color: var(--text-primary);
   border-top: 1px solid var(--border-primary);
 }

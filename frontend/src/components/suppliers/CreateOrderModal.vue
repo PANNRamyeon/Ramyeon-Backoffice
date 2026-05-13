@@ -132,51 +132,43 @@
                   <!-- Filters -->
                   <div class="row g-2 mb-3">
                     <div class="col-12">
-                      <select class="form-select form-select-sm" v-model="filterCategoryId" @change="onFilterCategoryChange">
-                        <option value="">— Select Category —</option>
-                        <option v-for="cat in categories" :key="cat.category_id" :value="cat.category_id">
-                          {{ cat.category_name }}
-                        </option>
-                      </select>
-                    </div>
-                    <div class="col-12">
-                      <select
-                        class="form-select form-select-sm"
-                        v-model="filterSubcategoryId"
-                        @change="onFilterSubcategoryChange"
-                        :disabled="!filterCategoryId"
-                      >
-                        <option value="">— Select Subcategory —</option>
-                        <option v-for="sub in filterSubcategories" :key="sub.name" :value="sub.name">
-                          {{ sub.name }} ({{ sub.product_count }})
-                        </option>
-                      </select>
-                    </div>
-                    <div class="col-12">
                       <input
                         type="text"
                         class="form-control form-control-sm"
                         v-model="productSearchQuery"
                         placeholder="Search by name or SKU..."
-                        :disabled="!browseProducts.length"
                       >
+                    </div>
+                    <div class="col-6">
+                      <select class="form-select form-select-sm" v-model="filterCategoryId" @change="onFilterCategoryChange">
+                        <option value="">All Categories</option>
+                        <option v-for="cat in categories" :key="cat.category_id" :value="cat.category_id">
+                          {{ cat.category_name }}
+                        </option>
+                      </select>
+                    </div>
+                    <div class="col-6">
+                      <select
+                        class="form-select form-select-sm"
+                        v-model="filterSubcategoryId"
+                        :disabled="!filterCategoryId"
+                      >
+                        <option value="">All Subcategories</option>
+                        <option v-for="sub in filterSubcategories" :key="sub.name" :value="sub.name">
+                          {{ sub.name }} ({{ sub.product_count }})
+                        </option>
+                      </select>
                     </div>
                   </div>
 
                   <!-- Product List -->
                   <div class="product-browser-list">
-                    <div v-if="!filterCategoryId" class="browser-empty-state">
-                      <Package :size="32" class="mb-2" />
-                      <p class="mb-0 small">Select a category to browse</p>
-                    </div>
-                    <div v-else-if="!filterSubcategoryId" class="browser-empty-state">
-                      <p class="mb-0 small">Select a subcategory to see products</p>
-                    </div>
-                    <div v-else-if="isBrowseLoading" class="browser-empty-state">
+                    <div v-if="isBrowseLoading" class="browser-empty-state">
                       <div class="spinner-border spinner-border-sm text-accent"></div>
                       <p class="mb-0 small mt-2">Loading products...</p>
                     </div>
                     <div v-else-if="filteredBrowseProducts.length === 0" class="browser-empty-state">
+                      <Package :size="32" class="mb-2" />
                       <p class="mb-0 small">No products found</p>
                     </div>
                     <template v-else>
@@ -198,7 +190,7 @@
                           <div class="product-browser-name">{{ product.product_name }}</div>
                           <div class="product-browser-meta">
                             <span>{{ product.sku }}</span>
-                            <span class="ms-2">Stock: {{ product.total_stock || 0 }}</span>
+                            <span class="ms-2">Stock: {{ product.total_stock > 0 ? product.total_stock : '—' }}</span>
                           </div>
                         </div>
                       </div>
@@ -240,7 +232,7 @@
                       <div class="d-flex justify-content-between align-items-start mb-2">
                         <div>
                           <div class="fw-semibold item-product-name">{{ item.selectedProduct?.product_name }}</div>
-                          <small class="text-secondary">{{ item.selectedProduct?.sku }} · Stock: {{ item.selectedProduct?.total_stock || 0 }}</small>
+                          <small v-if="item.selectedProduct?.sku" class="text-secondary">{{ item.selectedProduct.sku }}</small>
                         </div>
                         <button class="btn btn-delete btn-sm ms-2 flex-shrink-0" @click="toggleProduct(item.selectedProduct)" title="Remove">
                           <Trash2 :size="13" />
@@ -388,10 +380,10 @@ import {
 } from 'lucide-vue-next'
 import CardTemplate from '@/components/common/CardTemplate.vue'
 import { useCategories } from '@/composables/api/useCategories'
-import { useProducts } from '@/composables/api/useProducts'
 import { useBatches } from '@/composables/api/useBatches'
 import { useShipments } from '@/composables/api/useShipments'
 import { useToast } from '@/composables/ui/useToast'
+import apiProductsService from '@/services/apiProducts'
 
 export default {
   name: 'CreateOrderModal',
@@ -414,20 +406,22 @@ export default {
       type: Object,
       required: false,
       default: null
+    },
+    prefillItems: {
+      type: Array,
+      default: () => []
     }
   },
   setup(props, { emit }) {
     const { success: showSuccess, error: showError } = useToast()
     const { categories, fetchCategories } = useCategories()
-    const { fetchProductsByCategory } = useProducts()
     const { createBatch } = useBatches()
     const { createShipment } = useShipments()
-    
+
     const saving = ref(false)
-    const productsByCategory = ref({})
     const formErrors = ref({})
 
-    // Browser state
+    // Browser state — all products loaded once, filtered client-side
     const filterCategoryId = ref('')
     const filterSubcategoryId = ref('')
     const productSearchQuery = ref('')
@@ -521,33 +515,28 @@ export default {
     })
 
     const filteredBrowseProducts = computed(() => {
-      if (!productSearchQuery.value) return browseProducts.value
-      const q = productSearchQuery.value.toLowerCase()
-      return browseProducts.value.filter(p =>
-        p.product_name?.toLowerCase().includes(q) ||
-        p.sku?.toLowerCase().includes(q)
-      )
+      let list = browseProducts.value
+
+      if (filterCategoryId.value) {
+        list = list.filter(p => p.category_id === filterCategoryId.value)
+      }
+      if (filterSubcategoryId.value) {
+        list = list.filter(p => p.subcategory_name === filterSubcategoryId.value)
+      }
+      if (productSearchQuery.value) {
+        const q = productSearchQuery.value.toLowerCase()
+        list = list.filter(p =>
+          p.product_name?.toLowerCase().includes(q) ||
+          p.sku?.toLowerCase().includes(q)
+        )
+      }
+      return list
     })
 
     // ================ PRODUCT BROWSER METHODS ================
 
     function onFilterCategoryChange() {
       filterSubcategoryId.value = ''
-      browseProducts.value = []
-    }
-
-    async function onFilterSubcategoryChange() {
-      browseProducts.value = []
-      if (!filterCategoryId.value || !filterSubcategoryId.value) return
-
-      isBrowseLoading.value = true
-      try {
-        await loadProductsForCategorySubcategory(filterCategoryId.value, filterSubcategoryId.value)
-        const key = `${filterCategoryId.value}-${filterSubcategoryId.value}`
-        browseProducts.value = productsByCategory.value[key] || []
-      } finally {
-        isBrowseLoading.value = false
-      }
     }
 
     function isProductSelected(productId) {
@@ -573,38 +562,38 @@ export default {
         if (formErrors.value.noItems) delete formErrors.value.noItems
       }
     }
-    
-    async function loadProductsForCategorySubcategory(categoryId, subcategoryName) {
-      const key = `${categoryId}-${subcategoryName}`
-      
-      // Skip if already loaded
-      if (productsByCategory.value[key]) {
-        return
-      }
-      
+
+    async function loadAllProducts() {
+      isBrowseLoading.value = true
       try {
-        const response = await fetchProductsByCategory(categoryId, subcategoryName)
-        
-        // ✅ HANDLE DIFFERENT RESPONSE FORMATS
-        let productsArray = []
-        
-        if (Array.isArray(response)) {
-          productsArray = response
-        } else if (response && Array.isArray(response.data)) {
-          productsArray = response.data
-        } else if (response && Array.isArray(response.products)) {
-          productsArray = response.products
-        } else {
-          console.warn('Unexpected response format:', response)
-          productsArray = []
-        }
-        
-        productsByCategory.value[key] = productsArray
-        
+        const products = await apiProductsService.getAllProductsAllPages({})
+        browseProducts.value = Array.isArray(products) ? products : []
       } catch (error) {
         console.error('Error loading products:', error)
-        productsByCategory.value[key] = []
+        browseProducts.value = []
+        showError('Failed to load product catalog')
+      } finally {
+        isBrowseLoading.value = false
       }
+    }
+
+    function applyPrefillItems() {
+      const prefill = props.prefillItems || []
+      if (!prefill.length) return
+
+      orderData.value.items = prefill.map(item => {
+        const newItem = createEmptyItem()
+        newItem.productId = item.productId
+        // Prefer the full catalog entry (current name, SKU, stock) over the
+        // partial product info passed in by the caller.
+        const catalogProduct = browseProducts.value.find(p => p.product_id === item.productId)
+        newItem.selectedProduct = catalogProduct || item.selectedProduct || null
+        newItem.quantity = item.quantity ?? null
+        newItem.estimatedCost = item.estimatedCost ?? null
+        // Expiry intentionally left blank — applies to a fresh delivery
+        newItem.totalCost = (newItem.quantity || 0) * (newItem.estimatedCost || 0)
+        return newItem
+      })
     }
     
     // ================ ITEM MANAGEMENT ================
@@ -751,32 +740,40 @@ export default {
         notes: '',
         items: []
       }
-      productsByCategory.value = {}
-      browseProducts.value = []
       filterCategoryId.value = ''
       filterSubcategoryId.value = ''
       productSearchQuery.value = ''
       formErrors.value = {}
       saving.value = false
     }
-    
+
     // ================ LIFECYCLE ================
-    
+
     onMounted(async () => {
+      // Component re-mounts each time the modal opens (v-if), so this also
+      // serves as the per-open initialization hook. Items are seeded by the
+      // prefillItems watcher below; here we just load the catalog so the
+      // selectedProduct on each item can be hydrated against fresh data.
       try {
-        await fetchCategories()
+        await Promise.all([fetchCategories(), loadAllProducts()])
       } catch (error) {
-        console.error('Error loading categories:', error)
-        showError('Failed to load categories')
+        console.error('Error loading initial data:', error)
+        showError('Failed to load catalog data')
       }
+      applyPrefillItems()
     })
-    
-    watch(() => props.show, (newVal) => {
-      if (newVal) {
-        resetForm()
-      }
-    })
-    
+
+    // Seed orderData from prefillItems on mount and whenever the prop changes.
+    // immediate:true handles the initial mount case (prop is set before setup
+    // returns, so onMounted alone could miss timing).
+    watch(
+      () => props.prefillItems,
+      (items) => {
+        if (items && items.length) applyPrefillItems()
+      },
+      { immediate: true, deep: true }
+    )
+
     return {
       // Data
       orderData,
@@ -805,7 +802,6 @@ export default {
       getSupplierTypeLabel,
       formatCurrency,
       onFilterCategoryChange,
-      onFilterSubcategoryChange,
       isProductSelected,
       toggleProduct,
       clearDeliveryError,

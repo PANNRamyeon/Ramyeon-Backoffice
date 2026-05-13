@@ -5,18 +5,13 @@ from ...database import db_manager
 
 class SalesByCategoryService:
     def __init__(self):
-        self.db = db_manager.get_database()
-        self.sales_collection = self.db.sales
-        self.sales_log_collection = self.db.sales_log  # ✅ Added missing collection
-        self.online_transactions_collection = self.db.online_transactions
-        self.products_collection = self.db.products
-        self.categories_collection = self.db.category
+        # Legacy MongoDB service — not yet migrated to DynamoDB/PynamoDB.
+        self._unavailable = True
 
     def get_sales_by_category_with_date_filter(self, start_date=None, end_date=None, include_voided=False):
-        """
-        Fetch total sales and quantities grouped by category
-        Includes both POS and online transactions with proper date filtering
-        """
+        if self._unavailable:
+            return []
+
         try:
             query_filter = {}
 
@@ -178,9 +173,9 @@ class SalesByCategoryService:
             raise e
 
     def get_top_categories(self, start_date=None, end_date=None, limit=5):
-        """
-        Return only the top N categories sorted by total sales
-        """
+        if self._unavailable:
+            return []
+
         try:
             all_categories = self.get_sales_by_category_with_date_filter(start_date, end_date)
             return all_categories[:limit]

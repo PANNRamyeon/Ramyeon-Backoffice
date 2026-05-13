@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import HttpResponse
 from django.views import View
+from django.core.cache import cache
 
 from datetime import datetime, timedelta
 
@@ -21,6 +22,19 @@ import logging
 import json
 
 logger = logging.getLogger(__name__)
+
+
+def _product_cache_version():
+    """Return current product cache version; increment on writes to bust all product list caches."""
+    return cache.get('products_cache_version', 0)
+
+
+def _invalidate_product_caches():
+    """Bust all product list pages and stock snapshot by incrementing the cache version."""
+    cache.delete('products_stock_snapshot')
+    v = cache.get('products_cache_version', 0)
+    cache.set('products_cache_version', v + 1, 86400)
+
 
 # ================ PRODUCT VIEWS ================
 
@@ -52,6 +66,12 @@ class ProductListView(APIView):
             except (TypeError, ValueError):
                 page_size = DEFAULT_PAGE_SIZE
 
+            v = _product_cache_version()
+            cache_key = f"products_list:{v}:{category_id}:{status_filter}:{search_term}:{subcategory_name}:{page_size}:{page_token}"
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return Response(cached, status=status.HTTP_200_OK)
+
             # All paths use server-side pagination: only one page is fetched from DynamoDB.
             if search_term:
                 products, next_page_token = ProductService.search_products_by_name_paginated(
@@ -81,6 +101,7 @@ class ProductListView(APIView):
             }
             if next_page_token:
                 payload['next_page_token'] = next_page_token
+            cache.set(cache_key, payload, 120)  # 2-minute cache per page
             return Response(payload, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in ProductListView.get: {e}")
@@ -97,8 +118,9 @@ class ProductListView(APIView):
             product_data = dict(request.data)
             new_product = ProductService.create_product(product_data)
 
+            _invalidate_product_caches()
             return Response({
-                'message': 'Product created successfully', 
+                'message': 'Product created successfully',
                 'data': new_product.to_dict()
             }, status=status.HTTP_201_CREATED)
         except ValueError as ve:
@@ -144,13 +166,14 @@ class ProductDetailView(APIView):
                     {"error": "Product not found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
+            _invalidate_product_caches()
             return Response({
-                'message': 'Product updated successfully', 
+                'message': 'Product updated successfully',
                 'data': updated_product.to_dict()
             }, status=status.HTTP_200_OK)
         except ValueError as ve:
             return Response(
-                {"error": str(ve)}, 
+                {"error": str(ve)},
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
@@ -172,9 +195,10 @@ class ProductDetailView(APIView):
                     {"error": "Product not found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
+            _invalidate_product_caches()
             delete_type = "permanently deleted" if hard_delete else "moved to trash"
             return Response(
-                {"message": f"Product {delete_type} successfully"}, 
+                {"message": f"Product {delete_type} successfully"},
                 status=status.HTTP_200_OK
             )
         except Exception as e:
@@ -195,13 +219,14 @@ class ProductDetailView(APIView):
                     {"error": "Product not found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
+            _invalidate_product_caches()
             return Response({
-                'message': 'Product updated successfully', 
+                'message': 'Product updated successfully',
                 'data': updated_product.to_dict()
             }, status=status.HTTP_200_OK)
         except ValueError as ve:
             return Response(
-                {"error": str(ve)}, 
+                {"error": str(ve)},
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
@@ -356,6 +381,7 @@ class ProductStockUpdateView(APIView):
                     batch_data["shipment_id"] = request.data.get("shipment_id")
                 created_batch = batch_svc.create_batch(batch_data)
                 updated_product = ProductService.get_product_by_id(effective_product_id)
+                _invalidate_product_caches()
                 return Response(
                     {
                         "message": "Stock added via new batch",
@@ -730,6 +756,43 @@ class ProductSyncView(APIView):
                 {"error": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+# ================ PRODUCT STOCK SNAPSHOT ================
+
+class ProductStockListView(APIView):
+    @require_authentication
+    def get(self, request):
+        """Lightweight stock snapshot: returns only product_id, total_stock, and status for all non-deleted products.
+        Used by the POS frontend for background stock polling without re-fetching full product data."""
+        try:
+            cache_key = 'products_stock_snapshot'
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return Response(cached, status=status.HTTP_200_OK)
+
+            all_products = []
+            last_key = None
+            while True:
+                page, last_key = Product.get_all_non_deleted_paginated(limit=200, last_evaluated_key=last_key)
+                all_products.extend(page)
+                if not last_key:
+                    break
+
+            data = [
+                {
+                    'product_id': p.sk,
+                    'total_stock': int(p.total_stock) if p.total_stock else 0,
+                    'status': p.status,
+                }
+                for p in all_products
+            ]
+            payload = {'data': data, 'count': len(data)}
+            cache.set(cache_key, payload, 60)  # 60-second cache
+            return Response(payload, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error in ProductStockListView.get: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 # ================ PRODUCT IMPORT/EXPORT VIEWS ================
 

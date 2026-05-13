@@ -165,7 +165,7 @@ class CreateSalesLog(APIView):
 
 class GetSaleID(APIView):
 
-    def get(self, sale_id, request):
+    def get(self, request, sale_id):
         try:
             #current_user = get_authenticated_user_from_jwt(request)
 
@@ -234,4 +234,62 @@ class FetchRecentSales(APIView):
             return Response(
                 {"error": f"Error Fetching recent sales: {str(e)}"},
                 status = status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class VoidSale(APIView):
+
+    def post(self, request, sale_id):
+        try:
+            if not sale_id:
+                return Response(
+                    {"error": "Sale ID is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            sales_service = SalesService()
+            result = sales_service.void_sale(sale_id)
+
+            if result:
+                return Response(result, status=status.HTTP_200_OK)
+            else:
+                return Response(
+                    {"error": f"Sale {sale_id} not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        except Exception as e:
+            logging.error(f"Error voiding sale {sale_id}: {str(e)}")
+            return Response(
+                {"error": f"Error voiding sale: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class GetSaleReceipt(APIView):
+
+    def get(self, request, sale_id):
+        try:
+            if not sale_id:
+                return Response(
+                    {"error": "Sale ID is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            sales_service = SalesService()
+            result = sales_service.get_sale_receipt(sale_id)
+
+            if result:
+                return Response(result, status=status.HTTP_200_OK)
+            else:
+                return Response(
+                    {"error": f"Sale {sale_id} not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        except Exception as e:
+            logging.error(f"Error fetching receipt for sale {sale_id}: {str(e)}")
+            return Response(
+                {"error": f"Error fetching receipt: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

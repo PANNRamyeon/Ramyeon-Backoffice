@@ -73,11 +73,9 @@
                 </div>
                 <div class="col-md-4">
                   <label class="form-label">Status</label>
-                  <select class="form-select" v-model="editForm.status" disabled>
-                    <option value="Pending Delivery">Pending Delivery</option>
-                    <option value="Partially Received">Partially Received</option>
-                    <option value="Received">Received</option>
-                  </select>
+                  <div class="form-control-plaintext fw-medium text-primary">
+                    {{ editForm.status || '—' }}
+                  </div>
                 </div>
               </div>
             </div>
@@ -339,6 +337,8 @@ import {
 import { useToast } from '@/composables/ui/useToast'
 import { useCategories } from '@/composables/api/useCategories'
 import { useProducts } from '@/composables/api/useProducts'
+import { useShipments } from '@/composables/api/useShipments'
+import apiProductsService from '@/services/apiProducts'
 import axios from 'axios'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
@@ -374,9 +374,13 @@ export default {
     const { success: showSuccess, error: showError } = useToast()
     const { categories, fetchCategories } = useCategories()
     const { fetchProductsByCategory } = useProducts()
-    
+    const { fetchShipmentWithBatches } = useShipments()
+
     const saving = ref(false)
+    const loadingItems = ref(false)
     const isEditingExpectedDate = ref(false)
+    // productCache stores only the products actually needed for the current order
+    const productCache = ref({})
     const expectedDateInput = ref(null)
     const productsByCategory = ref({})
     const editForm = ref({
@@ -435,11 +439,95 @@ export default {
       
     }
     
-    // Initialize form immediately if receipt is already available
-    if (props.receipt) {
-      initializeFormData(props.receipt)
+    // Resolve category display info from the per-order product cache.
+    function resolveProductInfo(productId) {
+      const product = productCache.value[productId]
+      if (!product) {
+        return { name: '', sku: '', categoryId: '', categoryName: '', subcategoryName: '' }
+      }
+      const category = categories.value.find(c => c.category_id === product.category_id)
+      return {
+        name: product.product_name || '',
+        sku: product.sku || '',
+        categoryId: product.category_id || '',
+        categoryName: category?.category_name || '',
+        subcategoryName: product.subcategory_name || ''
+      }
     }
-    
+
+    async function loadAndInitialize() {
+      if (!props.receipt?.id) return
+
+      if (Array.isArray(props.receipt.items) && props.receipt.items.length > 0) {
+        initializeFormData(props.receipt)
+        return
+      }
+
+      loadingItems.value = true
+      productCache.value = {}
+      try {
+        // Fetch the shipment and categories at the same time — both are fast.
+        const [shipment] = await Promise.all([
+          fetchShipmentWithBatches(props.receipt.id, true),
+          categories.value.length ? Promise.resolve() : fetchCategories()
+        ])
+
+        const batches = shipment?.batches || []
+
+        // Fetch only the products actually referenced by this order's batches,
+        // all in parallel. This replaces the previous full-catalog paginated load.
+        const uniqueProductIds = [...new Set(batches.map(b => b.product_id).filter(Boolean))]
+        if (uniqueProductIds.length) {
+          const results = await Promise.all(
+            uniqueProductIds.map(id =>
+              apiProductsService.getProductById(id).catch(() => null)
+            )
+          )
+          results.forEach((res, i) => {
+            const product = res?.data ?? res
+            if (product?.product_id) {
+              productCache.value[product.product_id] = product
+            } else if (product) {
+              productCache.value[uniqueProductIds[i]] = product
+            }
+          })
+        }
+
+        const items = batches.map(b => {
+          const info = resolveProductInfo(b.product_id)
+          return {
+            productId: b.product_id,
+            name: b.product_name || info.name || 'Unknown Product',
+            sku: info.sku,
+            batchNumber: b.batch_number || '',
+            batchId: b.batch_id || b._id || null,
+            quantity: Number(b.quantity_received) || 0,
+            unitPrice: Number(b.cost_price) || 0,
+            totalPrice: (Number(b.cost_price) || 0) * (Number(b.quantity_received) || 0),
+            expiryDate: b.expiry_date || '',
+            quantityRemaining: Number(b.quantity_remaining) || 0,
+            categoryId: info.categoryId,
+            categoryName: info.categoryName,
+            subcategoryName: info.subcategoryName
+          }
+        })
+        initializeFormData({ ...props.receipt, items })
+      } catch (err) {
+        console.error('Failed to load batch items for edit:', err)
+        showError('Failed to load order items')
+        initializeFormData(props.receipt)
+      } finally {
+        loadingItems.value = false
+      }
+    }
+
+    // Re-load items whenever the modal opens or the receipt changes
+    watch(
+      () => [props.show, props.receipt?.id],
+      ([show]) => { if (show) loadAndInitialize() },
+      { immediate: true }
+    )
+
     // Watch for editing state change to auto-focus input
     watch(isEditingExpectedDate, (newVal) => {
       if (newVal) {
@@ -499,15 +587,15 @@ export default {
     // Category/Product Selection Functions
     function getCategoryName(item) {
       if (!item.categoryId) return item.categoryName || 'N/A'
-      
-      const category = categories.value.find(c => c._id === item.categoryId)
+
+      const category = categories.value.find(c => c.category_id === item.categoryId)
       return category?.category_name || item.categoryName || 'N/A'
     }
-    
+
     function getSubcategoriesForItem(item) {
       if (!item.categoryId) return []
-      
-      const category = categories.value.find(c => c._id === item.categoryId)
+
+      const category = categories.value.find(c => c.category_id === item.categoryId)
       return category?.sub_categories || []
     }
     
@@ -871,7 +959,7 @@ export default {
 
 .modal-header {
   padding: 1.5rem 1.75rem 0.9rem 1.75rem;
-  background: linear-gradient(135deg, var(--surface-tertiary), var(--surface-secondary));
+  background-color: var(--surface-secondary);
   border-bottom: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
@@ -923,7 +1011,7 @@ export default {
 .edit-items-table th {
   font-weight: 600;
   font-size: 0.875rem;
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   color: var(--text-primary);
   padding: 0.75rem 0.5rem;
   border-bottom: 2px solid var(--border-primary);
@@ -966,19 +1054,19 @@ code {
 
 .modal-footer {
   padding: 1.25rem 1.75rem 1.75rem 1.75rem;
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   border-top: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
 
 .edit-items-table tfoot td {
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   color: var(--text-primary);
   border-top: 1px solid var(--border-primary);
 }
 
 .edit-items-table tfoot tr {
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
 }
 
 .table-summary-bar {
@@ -1042,7 +1130,7 @@ code {
 }
 
 .card-header {
-  background-color: var(--surface-tertiary) !important;
+  background-color: var(--surface-secondary) !important;
   border-bottom: 1px solid var(--border-primary) !important;
   color: var(--text-primary) !important;
 }
@@ -1059,7 +1147,7 @@ code {
 
 .bg-light,
 .table-light {
-  background-color: var(--surface-tertiary) !important;
+  background-color: var(--surface-secondary) !important;
   color: var(--text-primary) !important;
 }
 
