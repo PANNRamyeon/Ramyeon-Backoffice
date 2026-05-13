@@ -151,8 +151,9 @@ class Notification(Model):
     def validate_notification_type(notification_type: str) -> bool:
         """Validate notification type"""
         valid_types = {
-            "system", "user", "order", "inventory", "promotion", 
-            "alert", "reminder", "security", "maintenance", "update"
+            "system", "user", "order", "inventory", "promotion",
+            "alert", "reminder", "security", "maintenance", "update",
+            "pos",
         }
         return notification_type in valid_types
     

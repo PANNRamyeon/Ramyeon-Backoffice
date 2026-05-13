@@ -146,10 +146,10 @@ class AuthService:
                 logger.warning(f"Deleted user login attempt: {email}")
                 raise Exception("Account is not active")
             
-            # Update last login
-            user.last_login = datetime.utcnow()
-            user.save()
-            
+            # Update last login (targeted update — avoids full PUT corrupting other fields)
+            from models.Users import User as UserModel
+            user.update(actions=[UserModel.last_login.set(datetime.utcnow())])
+
             # Create tokens
             user_id = user.sk
             token_data = {"sub": user_id, "email": user.email, "role": user.role}
@@ -195,6 +195,93 @@ class AuthService:
             logger.error(f"Login failed for {email}: {str(e)}")
             raise e
     
+    def pos_login(self, email: str, password: str):
+        """
+        Authenticate a user for the POS terminal.
+        Accepts any active, non-deleted user regardless of role.
+        """
+        try:
+            user = User.get_by_email(email)
+
+            if not user:
+                logger.warning(f"POS login attempt with non-existent email: {email}")
+                try:
+                    notification_service.create_notification(
+                        title="Failed POS Login Attempt",
+                        message=f"POS login attempt with unrecognized email: {email}",
+                        priority="high",
+                        notification_type="security",
+                        metadata={"event_type": "unknown_email", "email": email, "source": "pos"}
+                    )
+                except Exception:
+                    pass
+                raise Exception("Invalid email or password")
+
+            if not self.verify_password(password, user.password):
+                logger.warning(f"POS invalid password for: {email}")
+                try:
+                    notification_service.create_notification(
+                        title="Failed POS Login Attempt",
+                        message=f"Invalid password entered for POS account: {email}",
+                        priority="high",
+                        notification_type="security",
+                        metadata={"event_type": "invalid_password", "email": email, "source": "pos"}
+                    )
+                except Exception:
+                    pass
+                raise Exception("Invalid email or password")
+
+            if user.status != "active":
+                raise Exception("Account is not active")
+
+            if user.isDeleted:
+                raise Exception("Account is not active")
+
+            # Update last login (targeted update — avoids full PUT corrupting other fields)
+            from models.Users import User as UserModel
+            user.update(actions=[UserModel.last_login.set(datetime.utcnow())])
+
+            user_id = user.sk
+            token_data = {"sub": user_id, "email": user.email, "role": user.role}
+            access_token = self.create_access_token(token_data)
+            refresh_token = self.create_refresh_token(token_data)
+
+            try:
+                from .session_services import SessionLogService
+                session_service = SessionLogService()
+                session_service.log_login({
+                    "user_id": user_id,
+                    "username": user.username or user.email,
+                    "email": user.email,
+                    "full_name": user.full_name or "",
+                    "role": user.role,
+                    "branch_id": "1",
+                    "source": "pos",
+                })
+            except Exception as session_error:
+                logger.debug(f"POS session logging failed: {session_error}")
+
+            logger.info(f"POS login successful: {email} (role: {user.role})")
+
+            return {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                "user": {
+                    "id": user_id,
+                    "email": user.email,
+                    "role": user.role,
+                    "name": user.full_name or "",
+                    "username": user.username or "",
+                    "status": user.status,
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"POS login failed for {email}: {e}")
+            raise
+
     def logout(self, token: str):
         """Logout user by blacklisting their token"""
         try:
@@ -224,7 +311,7 @@ class AuthService:
             try:
                 payload = jwt.decode(clean_token, SECRET_KEY, algorithms=[ALGORITHM])
                 expires_timestamp = payload.get('exp')
-                expires_at = datetime.fromtimestamp(expires_timestamp) if expires_timestamp else datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+                expires_at = datetime.utcfromtimestamp(expires_timestamp) if expires_timestamp else datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
             except:
                 # If we can't decode, use default expiration
                 expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)

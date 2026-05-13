@@ -35,7 +35,7 @@ class CounterService:
             ('online_transactions', 'ONLINE', 6),
             ('audit_logs', 'AUD', 6),
             ('session_logs', 'SESS', 5),
-            ('shifts', 'SHIFT', 4),
+            ('shifts', 'SHIFT', 5),
             ('suppliers', 'SUPP', 3),
             ('sales', 'SALE', 6),
             ('promotions', 'PROM', 4),

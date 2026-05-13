@@ -80,7 +80,8 @@ class Notification(Model):
     VALID_PRIORITIES = {PRIORITY_CRITICAL, PRIORITY_HIGH, PRIORITY_MEDIUM, PRIORITY_LOW}
     VALID_TYPES = {
         "system", "user", "order", "inventory", "promotion",
-        "alert", "reminder", "security", "maintenance", "update"
+        "alert", "reminder", "security", "maintenance", "update",
+        "pos",
     }
 
     @staticmethod

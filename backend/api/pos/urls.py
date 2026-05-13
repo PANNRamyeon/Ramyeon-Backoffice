@@ -8,11 +8,24 @@ from . import (
     salesReportView,
     salesServiceView,
     online_transaction_views,
+    shift_views,
+    pos_auth_views,
 )
 
 app_name = 'pos'
 
 urlpatterns = [
+    # ==================== POS AUTH ====================
+    path('auth/login/', pos_auth_views.PosLoginView.as_view(), name='pos-login'),
+    path('auth/logout/', pos_auth_views.PosLogoutView.as_view(), name='pos-logout'),
+
+    # ==================== SHIFTS ====================
+    path('shifts/active/', shift_views.ShiftActiveView.as_view(), name='shift-active'),
+    path('shifts/start/', shift_views.ShiftStartView.as_view(), name='shift-start'),
+    path('shifts/<str:shift_id>/close/', shift_views.ShiftCloseView.as_view(), name='shift-close'),
+    path('shifts/<str:shift_id>/', shift_views.ShiftDetailView.as_view(), name='shift-detail'),
+    path('shifts/', shift_views.ShiftListView.as_view(), name='shift-list'),
+
     # ==================== POS HEALTH & STATUS ====================
     path('health/', promotionConView.POSHealthCheckView.as_view(), name='pos-health'),
     

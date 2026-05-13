@@ -11,6 +11,7 @@ from typing import Optional, List, Dict, Any
 import logging
 
 from app.utils import DYNAMO_TABLE_NAME, AWS_REGION
+from app.custom_attributes import FixedUTCDateTimeAttribute
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class TokenExpirationGSI(GlobalSecondaryIndex):
         write_capacity_units = 1
     
     pk = UnicodeAttribute(hash_key=True)  # Will be set to 'token_blacklist'
-    expires_at = UTCDateTimeAttribute(range_key=True)
+    expires_at = FixedUTCDateTimeAttribute(range_key=True)
 
 
 # ============= TOKEN BLACKLIST MODEL =============
@@ -65,13 +66,13 @@ class TokenBlacklist(Model):
     sk = UnicodeAttribute(range_key=True, attr_name="SK")  # The actual JWT token
     
     # ============= GSI KEYS =============
-    expires_at = UTCDateTimeAttribute()  # For cleanup queries
-    
+    expires_at = FixedUTCDateTimeAttribute()  # For cleanup queries
+
     # ============= GSI REFERENCE =============
     expiration_gsi = TokenExpirationGSI()
-    
+
     # ============= TOKEN BLACKLIST DATA =============
-    blacklisted_at = UTCDateTimeAttribute(default_for_new=datetime.utcnow)
+    blacklisted_at = FixedUTCDateTimeAttribute(default_for_new=datetime.utcnow)
     reason = UnicodeAttribute(default="logout")  # logout, password_change, security_breach, admin_revoke
     user_id = UnicodeAttribute(null=True)  # User who owned the token (for audit)
     revoked_by = UnicodeAttribute(null=True)  # Who revoked it (for admin actions)
