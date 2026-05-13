@@ -620,7 +620,7 @@ function printOrder() { window.print() }
   justify-content: space-between;
   padding: 2rem 2rem 1rem 2rem;
   border-bottom: 1px solid var(--border-primary);
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   flex-shrink: 0;
 }
 
@@ -634,7 +634,7 @@ function printOrder() { window.print() }
 
 .modal-footer {
   padding: 1.5rem 2rem 2rem 2rem;
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   border-top: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
@@ -749,7 +749,7 @@ function printOrder() { window.print() }
 }
 
 .items-table th {
-  background: var(--surface-tertiary);
+  background: var(--surface-secondary);
   color: var(--text-primary);
   font-weight: 600;
   border: none;

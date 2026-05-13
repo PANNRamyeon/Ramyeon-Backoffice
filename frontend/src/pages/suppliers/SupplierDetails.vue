@@ -380,22 +380,31 @@
                     </td>
                     <td>
                       <div class="action-buttons">
-                        <button 
-                          class="btn btn-outline-primary btn-sm" 
-                          @click="viewReceipt(order)" 
+                        <button
+                          class="btn btn-outline-primary btn-sm"
+                          @click="viewReceipt(order)"
                           title="View Order Details"
                         >
                           <Eye :size="14" />
                         </button>
-                        <button 
-                          class="btn btn-outline-warning btn-sm" 
-                          @click="editBatchDetails(order)" 
-                          title="Edit Order Details"
+                        <button
+                          :class="['btn', 'btn-sm', (order.status === 'Received' || order.status === 'Depleted' || order.status === 'Cancelled' || cancelingOrderId === order.id) ? 'btn-outline-secondary' : 'btn-outline-warning']"
+                          @click="editBatchDetails(order)"
+                          :title="(order.status === 'Received' || order.status === 'Depleted' || order.status === 'Cancelled') ? 'Cannot edit — order is ' + order.status.toLowerCase() : 'Edit Order Details'"
                           :disabled="order.status === 'Received' || order.status === 'Depleted' || order.status === 'Cancelled' || cancelingOrderId === order.id"
                         >
                           <Edit :size="14" />
                         </button>
-                        <button 
+                        <button
+                          class="btn btn-outline-success btn-sm"
+                          @click="reorderOrder(order)"
+                          title="Reorder these items"
+                          :disabled="reorderingOrderId === order.id"
+                        >
+                          <span v-if="reorderingOrderId === order.id" class="spinner-border spinner-border-sm"></span>
+                          <Repeat v-else :size="14" />
+                        </button>
+                        <button
                           class="btn btn-outline-danger btn-sm"
                           @click="promptCancelOrder(order)"
                           title="Cancel Order"
@@ -483,6 +492,7 @@
       v-if="showCreateOrderModal && supplier"
       :show="showCreateOrderModal"
       :supplier="supplier"
+      :prefill-items="reorderPrefillItems"
       @close="closeCreateOrderModal"
       @saved="handleOrderSave"
     />
@@ -780,7 +790,8 @@ import {
   Activity,
   CreditCard,
   Info,
-  XCircle
+  XCircle,
+  Repeat
 } from 'lucide-vue-next'
 import CreateOrderModal from '@/components/suppliers/CreateOrderModal.vue'
 import ReceiveStockModal from '@/components/suppliers/ReceiveStockModal.vue'
@@ -826,6 +837,7 @@ export default {
     CreditCard,
     Info,
     XCircle,
+    Repeat,
     CreateOrderModal,
     ReceiveStockModal,
     BatchDetailsModal,
@@ -866,6 +878,8 @@ export default {
       selectedOrders: [],
       selectAllOrders: false,
       cancelingOrderId: null,
+      reorderingOrderId: null,
+      reorderPrefillItems: [],
 
       showCreateOrderModal: false,
       showReceiveStockModal: false,
@@ -1131,6 +1145,44 @@ export default {
 
     closeCreateOrderModal() {
       this.showCreateOrderModal = false
+      this.reorderPrefillItems = []
+    },
+
+    async reorderOrder(order) {
+      if (this.reorderingOrderId) return
+      this.reorderingOrderId = order.id
+
+      try {
+        const shipment = await this.fetchShipmentWithBatches(order.id, true)
+        const batches = shipment?.batches || []
+
+        if (!batches.length) {
+          this.showError('Could not load original order items to reorder')
+          return
+        }
+
+        // Map batches into the modal's prefill item shape.
+        // Expiry is intentionally omitted — it applies to a fresh delivery.
+        this.reorderPrefillItems = batches.map(b => ({
+          productId: b.product_id,
+          quantity: Number(b.quantity_received) || null,
+          estimatedCost: Number(b.cost_price) || null,
+          selectedProduct: {
+            product_id: b.product_id,
+            product_name: b.product_name || 'Unknown Product',
+            sku: b.sku || '',
+            total_stock: b.total_stock ?? 0,
+            cost_price: Number(b.cost_price) || 0
+          }
+        }))
+
+        this.showCreateOrderModal = true
+      } catch (err) {
+        console.error('Error preparing reorder:', err)
+        this.showError('Failed to load order items for reorder')
+      } finally {
+        this.reorderingOrderId = null
+      }
     },
 
     async handleOrderSave(result) {

@@ -152,23 +152,68 @@ class SalesService:
             print(f"Failed to create sale notification: {notification_error}")
 
     def get_pos_sale_by_id(self, sale_id):
-        """Get a POS sale by ID from sales collection only"""
+        """Get a POS sale by ID from the sales table"""
         try:
-            # Convert string to ObjectId
-            if isinstance(sale_id, str):
-                object_id = ObjectId(sale_id)
-            else:
-                object_id = sale_id
-            
-            # Correct MongoDB query syntax
-            sale = self.sales_collection.find_one({'_id': object_id})
-            
-            if sale:
-                return self.convert_object_id(sale)
+            response = self.sales_table.get_item(Key={'sale_id': sale_id})
+            item = response.get('Item')
+            if item:
+                return {k: (float(v) if hasattr(v, 'is_finite') else v) for k, v in item.items()}
             return None
-            
         except Exception as e:
             raise Exception(f"Error fetching POS sale by ID: {str(e)}")
+
+    def void_sale(self, sale_id):
+        """Mark a POS sale as voided"""
+        try:
+            response = self.sales_table.get_item(Key={'sale_id': sale_id})
+            item = response.get('Item')
+            if not item:
+                return None
+
+            self.sales_table.update_item(
+                Key={'sale_id': sale_id},
+                UpdateExpression='SET #s = :s',
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':s': 'voided'},
+            )
+            item['status'] = 'voided'
+            return {'success': True, 'message': f'Sale {sale_id} voided', 'data': item}
+        except Exception as e:
+            raise Exception(f"Error voiding sale: {str(e)}")
+
+    def get_sale_receipt(self, sale_id):
+        """Return receipt-formatted data for a completed POS sale"""
+        try:
+            response = self.sales_table.get_item(Key={'sale_id': sale_id})
+            item = response.get('Item')
+            if not item:
+                return None
+
+            items = item.get('items', [])
+            receipt_lines = []
+            for line in items:
+                receipt_lines.append({
+                    'product_id': line.get('product_id'),
+                    'product_name': line.get('product_name', ''),
+                    'sku': line.get('sku', ''),
+                    'quantity': line.get('quantity', 0),
+                    'unit_price': float(line.get('unit_price', 0)),
+                    'subtotal': float(line.get('subtotal', 0)),
+                })
+
+            return {
+                'sale_id': item.get('sale_id'),
+                'transaction_date': item.get('transaction_date'),
+                'cashier_id': item.get('cashier_id'),
+                'customer_id': item.get('customer_id'),
+                'payment_method': item.get('payment_method', 'cash'),
+                'total_amount': float(item.get('total_amount', 0)),
+                'final_amount': float(item.get('final_amount', item.get('total_amount', 0))),
+                'status': item.get('status'),
+                'items': receipt_lines,
+            }
+        except Exception as e:
+            raise Exception(f"Error fetching sale receipt: {str(e)}")
     
     def get_recent_sales(self, limit=10):
         """Get recent sales from both POS and sales_log - Fixed version"""

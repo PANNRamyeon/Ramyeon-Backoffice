@@ -227,16 +227,11 @@ const paginatedBatches = computed(() => {
   return sortedBatches.value.slice(start, start + itemsPerPage)
 })
 
-const totalActiveQuantity = computed(() => {
-  const now = new Date()
-  return batches.value
-    .filter(b => {
-      if (b.status !== 'active') return false
-      if (b.expiry_date && new Date(b.expiry_date) < now) return false
-      return true
-    })
+const totalActiveQuantity = computed(() =>
+  batches.value
+    .filter(b => ACTIVE_STATUSES.has(b.status))
     .reduce((sum, b) => sum + (b.quantity_remaining || 0), 0)
-})
+)
 
 const totalCost = computed(() =>
   batches.value.reduce((sum, b) => sum + ((b.cost_price || 0) * (b.quantity_received || 0)), 0)
