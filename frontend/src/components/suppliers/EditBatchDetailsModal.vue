@@ -46,7 +46,7 @@
                   >
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">Expected Delivery <span class="text-danger">*</span></label>
+                  <label class="form-label">Expected Delivery <span class="text-status-error">*</span></label>
                   <div v-if="!isEditingExpectedDate" 
                        class="form-control clickable-field" 
                        @click="isEditingExpectedDate = true"
@@ -54,10 +54,10 @@
                     <span v-if="editForm.expectedDate">
                       {{ formatDate(editForm.expectedDate) }}
                     </span>
-                    <span v-else class="text-muted">
+                    <span v-else class="text-secondary">
                       Click to set expected delivery date
                     </span>
-                    <small class="float-end text-primary">
+                    <small class="float-end text-accent">
                       <Edit :size="14" />
                     </small>
                   </div>
@@ -73,11 +73,9 @@
                 </div>
                 <div class="col-md-4">
                   <label class="form-label">Status</label>
-                  <select class="form-select" v-model="editForm.status" disabled>
-                    <option value="Pending Delivery">Pending Delivery</option>
-                    <option value="Partially Received">Partially Received</option>
-                    <option value="Received">Received</option>
-                  </select>
+                  <div class="form-control-plaintext fw-medium text-primary">
+                    {{ editForm.status || '—' }}
+                  </div>
                 </div>
               </div>
             </div>
@@ -89,11 +87,11 @@
               <h6 class="mb-0">
                 <Package :size="18" class="me-2" />
                 Order Items
-                <span class="badge bg-primary ms-2">{{ editForm.items.length }}</span>
+                <span class="badge ms-2">{{ editForm.items.length }}</span>
               </h6>
-              <button 
-                type="button" 
-                class="btn btn-sm btn-outline-primary"
+              <button
+                type="button"
+                class="btn btn-add btn-sm"
                 @click="addItem"
               >
                 <Plus :size="16" class="me-1" />
@@ -106,12 +104,12 @@
                   <thead class="table-light">
                     <tr>
                       <th style="width: 40px;">#</th>
-                      <th style="width: 160px;">Category <span class="text-danger">*</span></th>
-                      <th style="width: 160px;">Subcategory <span class="text-danger">*</span></th>
-                      <th style="width: 180px;">Product <span class="text-danger">*</span></th>
+                      <th style="width: 160px;">Category <span class="text-status-error">*</span></th>
+                      <th style="width: 160px;">Subcategory <span class="text-status-error">*</span></th>
+                      <th style="width: 180px;">Product <span class="text-status-error">*</span></th>
                       <th style="width: 120px;">Batch Number</th>
-                      <th style="width: 100px;">Quantity <span class="text-danger">*</span></th>
-                      <th style="width: 120px;">Unit Price (₱) <span class="text-danger">*</span></th>
+                      <th style="width: 100px;">Quantity <span class="text-status-error">*</span></th>
+                      <th style="width: 120px;">Unit Price (₱) <span class="text-status-error">*</span></th>
                       <th style="width: 120px;">Total Price</th>
                       <th style="width: 120px;">Expiry Date</th>
                       <th style="width: 60px;"></th>
@@ -139,7 +137,7 @@
                             {{ category.category_name }}
                           </option>
                         </select>
-                        <div v-else class="text-muted small">
+                        <div v-else class="text-secondary small">
                           {{ getCategoryName(item) || 'N/A' }}
                         </div>
                       </td>
@@ -163,7 +161,7 @@
                             {{ subcategory.name }} ({{ subcategory.product_count }})
                           </option>
                         </select>
-                        <div v-else class="text-muted small">
+                        <div v-else class="text-secondary small">
                           {{ item.subcategoryName || 'N/A' }}
                         </div>
                       </td>
@@ -190,7 +188,7 @@
                         <div v-else>
                           <strong>{{ item.name }}</strong>
                           <br>
-                          <small class="text-muted">{{ item.productId }}</small>
+                          <small class="text-secondary">{{ item.productId }}</small>
                         </div>
                       </td>
                       
@@ -225,7 +223,7 @@
                         >
                       </td>
                       <td>
-                        <div class="fw-bold text-primary">
+                        <div class="fw-bold text-accent">
                           ₱{{ formatCurrency(item.totalPrice) }}
                         </div>
                       </td>
@@ -238,9 +236,9 @@
                         >
                       </td>
                       <td>
-                        <button 
-                          type="button" 
-                          class="btn btn-sm btn-outline-danger"
+                        <button
+                          type="button"
+                          class="btn btn-delete btn-sm"
                           @click="removeItem(index)"
                           :disabled="editForm.items.length === 1"
                           title="Remove item"
@@ -293,22 +291,22 @@
         <!-- Modal Footer -->
         <div class="modal-footer border-0 pt-4">
           <div class="d-flex justify-content-between align-items-center w-100">
-            <div class="text-muted small">
+            <div class="text-secondary small">
               <AlertCircle :size="16" class="me-1" />
               Changes will update all related batches
             </div>
             <div class="d-flex gap-2">
-              <button 
-                type="button" 
-                class="btn btn-outline-secondary px-4"
+              <button
+                type="button"
+                class="btn btn-cancel px-4"
                 @click="handleClose"
                 :disabled="saving"
               >
                 Cancel
               </button>
-              <button 
-                type="button" 
-                class="btn btn-primary px-4"
+              <button
+                type="button"
+                class="btn btn-save px-4"
                 @click="saveChanges"
                 :disabled="saving || !isFormValid"
               >
@@ -339,6 +337,8 @@ import {
 import { useToast } from '@/composables/ui/useToast'
 import { useCategories } from '@/composables/api/useCategories'
 import { useProducts } from '@/composables/api/useProducts'
+import { useShipments } from '@/composables/api/useShipments'
+import apiProductsService from '@/services/apiProducts'
 import axios from 'axios'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
@@ -374,9 +374,13 @@ export default {
     const { success: showSuccess, error: showError } = useToast()
     const { categories, fetchCategories } = useCategories()
     const { fetchProductsByCategory } = useProducts()
-    
+    const { fetchShipmentWithBatches } = useShipments()
+
     const saving = ref(false)
+    const loadingItems = ref(false)
     const isEditingExpectedDate = ref(false)
+    // productCache stores only the products actually needed for the current order
+    const productCache = ref({})
     const expectedDateInput = ref(null)
     const productsByCategory = ref({})
     const editForm = ref({
@@ -435,11 +439,95 @@ export default {
       
     }
     
-    // Initialize form immediately if receipt is already available
-    if (props.receipt) {
-      initializeFormData(props.receipt)
+    // Resolve category display info from the per-order product cache.
+    function resolveProductInfo(productId) {
+      const product = productCache.value[productId]
+      if (!product) {
+        return { name: '', sku: '', categoryId: '', categoryName: '', subcategoryName: '' }
+      }
+      const category = categories.value.find(c => c.category_id === product.category_id)
+      return {
+        name: product.product_name || '',
+        sku: product.sku || '',
+        categoryId: product.category_id || '',
+        categoryName: category?.category_name || '',
+        subcategoryName: product.subcategory_name || ''
+      }
     }
-    
+
+    async function loadAndInitialize() {
+      if (!props.receipt?.id) return
+
+      if (Array.isArray(props.receipt.items) && props.receipt.items.length > 0) {
+        initializeFormData(props.receipt)
+        return
+      }
+
+      loadingItems.value = true
+      productCache.value = {}
+      try {
+        // Fetch the shipment and categories at the same time — both are fast.
+        const [shipment] = await Promise.all([
+          fetchShipmentWithBatches(props.receipt.id, true),
+          categories.value.length ? Promise.resolve() : fetchCategories()
+        ])
+
+        const batches = shipment?.batches || []
+
+        // Fetch only the products actually referenced by this order's batches,
+        // all in parallel. This replaces the previous full-catalog paginated load.
+        const uniqueProductIds = [...new Set(batches.map(b => b.product_id).filter(Boolean))]
+        if (uniqueProductIds.length) {
+          const results = await Promise.all(
+            uniqueProductIds.map(id =>
+              apiProductsService.getProductById(id).catch(() => null)
+            )
+          )
+          results.forEach((res, i) => {
+            const product = res?.data ?? res
+            if (product?.product_id) {
+              productCache.value[product.product_id] = product
+            } else if (product) {
+              productCache.value[uniqueProductIds[i]] = product
+            }
+          })
+        }
+
+        const items = batches.map(b => {
+          const info = resolveProductInfo(b.product_id)
+          return {
+            productId: b.product_id,
+            name: b.product_name || info.name || 'Unknown Product',
+            sku: info.sku,
+            batchNumber: b.batch_number || '',
+            batchId: b.batch_id || b._id || null,
+            quantity: Number(b.quantity_received) || 0,
+            unitPrice: Number(b.cost_price) || 0,
+            totalPrice: (Number(b.cost_price) || 0) * (Number(b.quantity_received) || 0),
+            expiryDate: b.expiry_date || '',
+            quantityRemaining: Number(b.quantity_remaining) || 0,
+            categoryId: info.categoryId,
+            categoryName: info.categoryName,
+            subcategoryName: info.subcategoryName
+          }
+        })
+        initializeFormData({ ...props.receipt, items })
+      } catch (err) {
+        console.error('Failed to load batch items for edit:', err)
+        showError('Failed to load order items')
+        initializeFormData(props.receipt)
+      } finally {
+        loadingItems.value = false
+      }
+    }
+
+    // Re-load items whenever the modal opens or the receipt changes
+    watch(
+      () => [props.show, props.receipt?.id],
+      ([show]) => { if (show) loadAndInitialize() },
+      { immediate: true }
+    )
+
     // Watch for editing state change to auto-focus input
     watch(isEditingExpectedDate, (newVal) => {
       if (newVal) {
@@ -499,15 +587,15 @@ export default {
     // Category/Product Selection Functions
     function getCategoryName(item) {
       if (!item.categoryId) return item.categoryName || 'N/A'
-      
-      const category = categories.value.find(c => c._id === item.categoryId)
+
+      const category = categories.value.find(c => c.category_id === item.categoryId)
       return category?.category_name || item.categoryName || 'N/A'
     }
-    
+
     function getSubcategoriesForItem(item) {
       if (!item.categoryId) return []
-      
-      const category = categories.value.find(c => c._id === item.categoryId)
+
+      const category = categories.value.find(c => c.category_id === item.categoryId)
       return category?.sub_categories || []
     }
     
@@ -687,7 +775,7 @@ export default {
                cost_price: item.unitPrice,
                expiry_date: item.expiryDate || null,
                expected_delivery_date: editForm.value.expectedDate,
-               supplier_id: props.supplier?._id || props.supplier?.id,
+               supplier_id: props.supplier?.supplier_id,
                status: 'pending',
                notes: editForm.value.notes
              }
@@ -854,25 +942,25 @@ export default {
 
 .clickable-field:hover {
   background-color: var(--surface-tertiary);
-  border-color: var(--primary);
+  border-color: var(--border-accent);
   box-shadow: 0 0 0 0.2rem rgba(115, 146, 226, 0.15);
 }
 
 .modal-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, var(--warning-light), var(--warning));
+  background-color: var(--status-warning-bg);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--warning-dark);
+  color: var(--status-warning);
 }
 
 .modal-header {
   padding: 1.5rem 1.75rem 0.9rem 1.75rem;
-  background: linear-gradient(135deg, var(--surface-tertiary), var(--surface-secondary));
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
 
@@ -923,11 +1011,11 @@ export default {
 .edit-items-table th {
   font-weight: 600;
   font-size: 0.875rem;
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   color: var(--text-primary);
   padding: 0.75rem 0.5rem;
-  border-bottom: 2px solid rgba(0, 0, 0, 0.18);
-  border-top: 1px solid rgba(0, 0, 0, 0.18);
+  border-bottom: 2px solid var(--border-primary);
+  border-top: 1px solid var(--border-primary);
 }
 
 .edit-items-table td {
@@ -955,10 +1043,6 @@ export default {
   margin-bottom: 0.5rem;
 }
 
-.text-danger {
-  color: var(--error) !important;
-}
-
 code {
   font-family: 'Monaco', 'Menlo', monospace;
   font-size: 0.875rem;
@@ -970,23 +1054,19 @@ code {
 
 .modal-footer {
   padding: 1.25rem 1.75rem 1.75rem 1.75rem;
-  background-color: var(--surface-tertiary);
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  background-color: var(--surface-secondary);
+  border-top: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
 
-.modal-footer .text-muted {
-  color: var(--text-secondary) !important;
-}
-
 .edit-items-table tfoot td {
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   color: var(--text-primary);
   border-top: 1px solid var(--border-primary);
 }
 
 .edit-items-table tfoot tr {
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
 }
 
 .table-summary-bar {
@@ -1016,7 +1096,7 @@ code {
 }
 
 .table-summary-item:last-child strong {
-  color: var(--primary);
+  color: var(--text-accent);
   font-weight: 600;
 }
 
@@ -1050,8 +1130,8 @@ code {
 }
 
 .card-header {
-  background-color: var(--surface-tertiary) !important;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.15) !important;
+  background-color: var(--surface-secondary) !important;
+  border-bottom: 1px solid var(--border-primary) !important;
   color: var(--text-primary) !important;
 }
 
@@ -1065,14 +1145,9 @@ code {
   color: var(--text-primary) !important;
 }
 
-.card .text-muted,
-.card-header .text-muted {
-  color: var(--text-secondary) !important;
-}
-
 .bg-light,
 .table-light {
-  background-color: var(--surface-tertiary) !important;
+  background-color: var(--surface-secondary) !important;
   color: var(--text-primary) !important;
 }
 

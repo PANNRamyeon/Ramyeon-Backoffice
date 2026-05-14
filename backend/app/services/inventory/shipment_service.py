@@ -67,10 +67,18 @@ class ShipmentService:
                 except ValueError:
                     shipment_date = None
 
+            expected_delivery_date = shipment_data.get("expected_delivery_date")
+            if isinstance(expected_delivery_date, str):
+                try:
+                    expected_delivery_date = datetime.fromisoformat(expected_delivery_date.replace("Z", "+00:00"))
+                except ValueError:
+                    expected_delivery_date = None
+
             shipment = Shipment.create_shipment(
                 supplier_id=supplier_id,
                 batch_number=batch_number,
                 shipment_date=shipment_date,
+                expected_delivery_date=expected_delivery_date,
                 invoice_number=shipment_data.get("invoice_number"),
                 status=shipment_data.get("status", "received"),
                 freight_cost=shipment_data.get("freight_cost"),

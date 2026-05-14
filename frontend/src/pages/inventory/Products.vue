@@ -211,26 +211,104 @@
         <template #header>
           <tr>
             <th style="width: 40px;">
-              <input 
-                type="checkbox" 
-                class="form-check-input" 
-                @change="handleSelectAll" 
+              <input
+                type="checkbox"
+                class="form-check-input"
+                @change="handleSelectAll"
                 :checked="allSelected"
                 :indeterminate.prop="someSelected"
               />
             </th>
-            <th>
-              Item name 
-              <ChevronUp :size="14" class="ms-1" />
+            <th class="sortable-header" @click="handleSort('name')">
+              <span class="header-content">
+                Item name
+                <span class="sort-icon" :class="getSortIconClass('name')">
+                  <span v-if="sortColumn === 'name' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'name' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
             </th>
-            <th v-if="isColumnVisible('sku')" style="width: 200px;">SKU</th>
-            <th v-if="isColumnVisible('category')" style="width: 160px;">Category</th>
-            <th v-if="isColumnVisible('sellingPrice')" style="width: 120px; text-align: right;">Selling Price</th>
-            <th v-if="isColumnVisible('costPrice')" style="width: 120px; text-align: right;">Cost Price</th>
-            <th style="width: 80px;">Margin</th>
-            <th v-if="isColumnVisible('stock')" style="width: 100px;">In stock</th>
-            <th v-if="isColumnVisible('status')" style="width: 100px;">Status</th>
-            <th v-if="isColumnVisible('expiryDate')" style="width: 130px;">Expiry Date</th>
+            <th v-if="isColumnVisible('sku')" style="width: 100px;" class="sortable-header" @click="handleSort('sku')">
+              <span class="header-content">
+                SKU
+                <span class="sort-icon" :class="getSortIconClass('sku')">
+                  <span v-if="sortColumn === 'sku' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'sku' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('category')" style="width: 100px;" class="sortable-header" @click="handleSort('category')">
+              <span class="header-content">
+                Category
+                <span class="sort-icon" :class="getSortIconClass('category')">
+                  <span v-if="sortColumn === 'category' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'category' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('sellingPrice')" style="width: 160px; text-align: right;" class="sortable-header" @click="handleSort('sellingPrice')">
+              <span class="header-content justify-content-end">
+                Selling Price
+                <span class="sort-icon" :class="getSortIconClass('sellingPrice')">
+                  <span v-if="sortColumn === 'sellingPrice' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'sellingPrice' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('costPrice')" style="width: 120px; text-align: right;" class="sortable-header" @click="handleSort('costPrice')">
+              <span class="header-content justify-content-end">
+                Cost Price
+                <span class="sort-icon" :class="getSortIconClass('costPrice')">
+                  <span v-if="sortColumn === 'costPrice' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'costPrice' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th style="width: 80px;" class="sortable-header" @click="handleSort('margin')">
+              <span class="header-content">
+                Margin
+                <span class="sort-icon" :class="getSortIconClass('margin')">
+                  <span v-if="sortColumn === 'margin' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'margin' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('stock')" style="width: 100px;" class="sortable-header" @click="handleSort('stock')">
+              <span class="header-content">
+                In stock
+                <span class="sort-icon" :class="getSortIconClass('stock')">
+                  <span v-if="sortColumn === 'stock' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'stock' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('status')" style="width: 100px;" class="sortable-header" @click="handleSort('status')">
+              <span class="header-content">
+                Status
+                <span class="sort-icon" :class="getSortIconClass('status')">
+                  <span v-if="sortColumn === 'status' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'status' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
+            <th v-if="isColumnVisible('expiryDate')" style="width: 130px;" class="sortable-header" @click="handleSort('expiryDate')">
+              <span class="header-content">
+                Expiry Date
+                <span class="sort-icon" :class="getSortIconClass('expiryDate')">
+                  <span v-if="sortColumn === 'expiryDate' && sortDirection === 'asc'">↑</span>
+                  <span v-else-if="sortColumn === 'expiryDate' && sortDirection === 'desc'">↓</span>
+                  <span v-else class="sort-idle">⇅</span>
+                </span>
+              </span>
+            </th>
             <th style="width: 160px;">Actions</th>
           </tr>
         </template>
@@ -389,6 +467,12 @@
       @close="showColumnFilter = false"
       @apply="handleColumnChanges"
     />
+
+    <DeleteConfirmationModal
+      ref="deleteConfirmationModal"
+      :is-loading="deleteLoading || bulkDeleteLoading"
+      @confirm="handleConfirmDelete"
+    />
   </div>
 </template>
 
@@ -403,6 +487,7 @@ import DataTable from '@/components/common/TableTemplate.vue'
 import CardTemplate from '@/components/common/CardTemplate.vue'
 import ImportModal from '@/components/products/ImportModal.vue'
 import ColumnFilterModal from '@/components/products/ColumnFilterModal.vue'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 
 export default {
   name: 'Products',
@@ -413,7 +498,8 @@ export default {
     ColumnFilterModal,
     ImportModal,
     DataTable,
-    CardTemplate
+    CardTemplate,
+    DeleteConfirmationModal
   },
   
   setup() {
@@ -440,6 +526,12 @@ export default {
       clearError
     } = useProducts()
 
+    // Clear all module-level state before the first render so navigating
+    // back never flashes stale search results or cached product data.
+    resetFilters()
+    products.value = []
+    loading.value = true
+
     // Use categories composable
     const {
       activeCategories,
@@ -453,11 +545,17 @@ export default {
     const showAddDropdown = ref(false)
     const showColumnFilter = ref(false)
     const selectedProductIds = ref([])
+    const deleteConfirmationModal = ref(null)
+    const productToDelete = ref(null)
     const currentPage = ref(1)
     const itemsPerPage = ref(20)
     const expiringCount = ref(0)
     const addDropdown = ref(null)
     const searchInput = ref(null)
+
+    // Sorting state — default: alphabetical by name
+    const sortColumn = ref('name')
+    const sortDirection = ref('asc')
 
     // Visible columns state
     const visibleColumns = ref({
@@ -470,11 +568,60 @@ export default {
       expiryDate: true
     })
 
+    // Sorted + filtered products
+    const sortedFilteredProducts = computed(() => {
+      if (!sortColumn.value || !sortDirection.value) return filteredProducts.value
+
+      const col = sortColumn.value
+      const dir = sortDirection.value
+
+      return [...filteredProducts.value].sort((a, b) => {
+        let aVal, bVal
+
+        if (col === 'name') {
+          aVal = (a.product_name || '').toLowerCase()
+          bVal = (b.product_name || '').toLowerCase()
+        } else if (col === 'sku') {
+          aVal = (a.SKU || '').toLowerCase()
+          bVal = (b.SKU || '').toLowerCase()
+        } else if (col === 'category') {
+          aVal = getCategoryName(a.category_id).toLowerCase()
+          bVal = getCategoryName(b.category_id).toLowerCase()
+        } else if (col === 'sellingPrice') {
+          aVal = parseFloat(a.selling_price || 0)
+          bVal = parseFloat(b.selling_price || 0)
+        } else if (col === 'costPrice') {
+          aVal = parseFloat(getProductCostPrice(a) || 0)
+          bVal = parseFloat(getProductCostPrice(b) || 0)
+        } else if (col === 'margin') {
+          aVal = calculateMargin(getProductCostPrice(a), a.selling_price)
+          bVal = calculateMargin(getProductCostPrice(b), b.selling_price)
+        } else if (col === 'stock') {
+          aVal = getProductStock(a) || 0
+          bVal = getProductStock(b) || 0
+        } else if (col === 'status') {
+          aVal = (a.status || '').toLowerCase()
+          bVal = (b.status || '').toLowerCase()
+        } else if (col === 'expiryDate') {
+          const dateA = getProductExpiryDate(a)
+          const dateB = getProductExpiryDate(b)
+          aVal = dateA ? new Date(dateA).getTime() : Infinity
+          bVal = dateB ? new Date(dateB).getTime() : Infinity
+        } else {
+          return 0
+        }
+
+        if (aVal < bVal) return dir === 'asc' ? -1 : 1
+        if (aVal > bVal) return dir === 'asc' ? 1 : -1
+        return 0
+      })
+    })
+
     // Computed properties for pagination and selection
     const paginatedProducts = computed(() => {
       const start = (currentPage.value - 1) * itemsPerPage.value
       const end = start + itemsPerPage.value
-      return filteredProducts.value.slice(start, end)
+      return sortedFilteredProducts.value.slice(start, end)
     })
 
     const allSelected = computed(() => {
@@ -569,25 +716,39 @@ export default {
       }
     }
 
-    const handleDeleteProduct = async (product) => {
-      if (confirm(`Are you sure you want to delete "${product.product_name}"?`)) {
-        try {
-          await deleteProduct(product.product_id)
-        } catch (error) {
-          console.error('Failed to delete product:', error)
+    const handleDeleteProduct = (product) => {
+      productToDelete.value = product
+      deleteConfirmationModal.value?.openModal({
+        title: 'Delete Product',
+        message: `Are you sure you want to delete <strong>${product.product_name}</strong>? This action cannot be undone.`,
+        confirmText: 'Delete',
+        confirmClass: 'btn-delete'
+      })
+    }
+
+    const handleConfirmDelete = async () => {
+      try {
+        if (productToDelete.value) {
+          await deleteProduct(productToDelete.value.product_id)
+          productToDelete.value = null
+        } else {
+          await bulkDeleteProducts(selectedProductIds.value)
+          selectedProductIds.value = []
         }
+        deleteConfirmationModal.value?.closeModal()
+      } catch (error) {
+        console.error('Failed to delete:', error)
       }
     }
 
-    const handleDeleteSelected = async () => {
-      if (confirm(`Are you sure you want to delete ${selectedProductIds.value.length} products?`)) {
-        try {
-          await bulkDeleteProducts(selectedProductIds.value)
-          selectedProductIds.value = []
-        } catch (error) {
-          console.error('Failed to delete products:', error)
-        }
-      }
+    const handleDeleteSelected = () => {
+      const count = selectedProductIds.value.length
+      deleteConfirmationModal.value?.openModal({
+        title: `Delete ${count} Product${count === 1 ? '' : 's'}`,
+        message: `Are you sure you want to delete <strong>${count} product${count === 1 ? '' : 's'}</strong>? This action cannot be undone.`,
+        confirmText: `Delete ${count}`,
+        confirmClass: 'btn-delete'
+      })
     }
 
     const handleExport = async () => {
@@ -724,6 +885,22 @@ export default {
       }
     }
 
+    // Sorting handlers
+    const handleSort = (column) => {
+      if (sortColumn.value === column) {
+        sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+      } else {
+        sortColumn.value = column
+        sortDirection.value = 'asc'
+      }
+      currentPage.value = 1
+    }
+
+    const getSortIconClass = (column) => {
+      if (sortColumn.value !== column) return 'sort-icon--idle'
+      return sortDirection.value === 'asc' ? 'sort-icon--asc' : 'sort-icon--desc'
+    }
+
     // Click outside handler
     const handleClickOutside = (event) => {
       if (addDropdown.value && !addDropdown.value.contains(event.target)) {
@@ -773,7 +950,9 @@ export default {
       visibleColumns,
       addDropdown,
       searchInput,
-      
+      sortColumn,
+      sortDirection,
+
       // Computed
       paginatedProducts,
       allSelected,
@@ -794,14 +973,18 @@ export default {
       handleSelectAll,
       handleProductSelect,
       handleDeleteProduct,
+      handleConfirmDelete,
       handleDeleteSelected,
+      deleteConfirmationModal,
       handleExport,
       handlePageChange,
       toggleSearchMode,
       toggleAddDropdown,
       closeAddDropdown,
       toggleColumnFilter,
-      
+      handleSort,
+      getSortIconClass,
+
       // Utility functions
       isColumnVisible,
       getRowClass,
@@ -882,7 +1065,7 @@ export default {
     },
 
     handleProductSuccess(result) {
-      // Item added successfully
+      this.handleRefresh()
     },
 
     handleStockUpdateSuccess(result) {
@@ -1047,6 +1230,38 @@ export default {
   .dropdown-item {
     padding: 0.875rem 1rem;
   }
+}
+
+/* Sortable column headers */
+.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sortable-header:hover {
+  background-color: var(--state-hover);
+}
+
+.header-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sort-icon {
+  font-size: 0.75rem;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.sort-icon--idle .sort-idle {
+  opacity: 0.3;
+}
+
+.sort-icon--asc,
+.sort-icon--desc {
+  color: var(--text-accent, #0d6efd);
 }
 
 /* Make search button + filters perfectly aligned */

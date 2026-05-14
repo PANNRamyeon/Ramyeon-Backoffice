@@ -77,7 +77,7 @@ class BatchService {
 
   async updateBatchQuantity(batchId, quantityUsed, adjustmentType = 'correction', adjustedBy = null, notes = null) {
     try {
-      const response = await api.put(`${this.baseEndpoint}/${batchId}/update-quantity/`, {
+      const response = await api.put(`${this.baseEndpoint}/${batchId}/quantity/`, {
         quantity_used: quantityUsed,
         adjustment_type: adjustmentType,
         adjusted_by: adjustedBy,
@@ -91,7 +91,7 @@ class BatchService {
 
   async processBatchAdjustment(productId, quantityUsed, adjustmentType = 'correction', adjustedBy = null, notes = null) {
     try {
-      const response = await api.post(`${this.baseEndpoint}/adjust/`, {
+      const response = await api.post(`${this.baseEndpoint}/process/adjustment/`, {
         product_id: productId,
         quantity_used: quantityUsed,
         adjustment_type: adjustmentType,
@@ -111,7 +111,7 @@ class BatchService {
   async getBatchesByProduct(productId, status = null) {
     try {
       const params = status ? { status } : {};
-      const response = await api.get(`/products/${productId}/batches/`, { params });
+      const response = await api.get(`${this.baseEndpoint}/product/${productId}/`, { params });
       return this.handleResponse(response);
     } catch (error) {
       this.handleError(error);

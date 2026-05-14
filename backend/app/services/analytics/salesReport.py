@@ -9,21 +9,15 @@ class SalesReport:
     Three core methods handle all reporting needs
     """
     def __init__(self):
-       # self.db = db_manager.get_database()
-        if db_manager.connect_to_cloud():
-            client = db_manager.current_client
-            self.db = client['pos_system']  # pos_system might be on cloud
-        else:
-            raise Exception("Could not connect to the database")
-        # 🐛 DEBUG: Check what database we're connected to
-        print(f"🔍 Connected to database: {self.db.name}")
-        print(f"🔍 Available collections: {self.db.list_collection_names()}")
-        
-        self.sales_collection = self.db.sales 
-        self.sales_log_collection = self.db.sales_log  
-        self.products_collection = self.db.products
-        self.promotions_collection = self.db.promotions
-        self.promo_connection = PromoConnection()
+        # Legacy MongoDB service — not yet migrated to DynamoDB/PynamoDB.
+        # Collections are unavailable; all methods return empty data gracefully.
+        self.db = None
+        self.sales_collection = None
+        self.sales_log_collection = None
+        self.products_collection = None
+        self.promotions_collection = None
+        self.promo_connection = None
+        self._unavailable = True
 
     def convert_object_id(self, document):
         """Convert ObjectId to string for JSON serialization"""
@@ -62,6 +56,9 @@ class SalesReport:
             # Only manual/CSV sales
             get_sales_summary(None, ['manual', 'csv'])
         """
+        if self._unavailable:
+            return self._empty_summary(date_range, include_source)
+
         try:
             # Build date filter
             date_filter = {}
@@ -182,23 +179,19 @@ class SalesReport:
         except Exception as e:
             raise Exception(f"Error getting sales summary: {str(e)}")
 
+    def _empty_summary(self, date_range=None, include_source=None):
+        empty_totals = {'total_transactions': 0, 'total_revenue': 0, 'gross_revenue': 0, 'total_discounts': 0, 'average_transaction': 0}
+        return {
+            'summary': empty_totals,
+            'source_breakdown': {'pos': {'count': 0, 'revenue': 0, 'percentage': 0}, 'manual_csv': {'count': 0, 'revenue': 0, 'percentage': 0}},
+            'transactions_preview': [],
+            'filters_applied': {'date_range': date_range, 'include_source': include_source}
+        }
+
     def get_sales_transactions(self, date_range=None, include_source=None, limit=100):
-        """
-        📋 Get individual transaction records (not summary)
-        
-        Args:
-            date_range: {'start': datetime, 'end': datetime} or None for all time
-            include_source: ['pos', 'manual', 'csv'] or None for all sources
-            limit: Maximum number of transactions to return
-        
-        Returns:
-            List of individual transaction records + basic summary
-        
-        Use for:
-            - Export to Excel/CSV
-            - Transaction history tables
-            - Detailed transaction lists
-        """
+        if self._unavailable:
+            return {'transactions': [], 'summary': {'total_transactions': 0, 'total_revenue': 0, 'average_transaction': 0, 'limited_to': limit}, 'filters_applied': {'date_range': date_range, 'include_source': include_source}}
+
         try:
             # Get all transactions
             all_transactions = self._get_all_transactions(date_range, include_source)

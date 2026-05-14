@@ -86,8 +86,17 @@ class ProductService:
             ValueError: If required data is missing or if creation fails.
         """
         try:
-            # The create_product method on the model already handles validation and creation logic.
-            product = Product.create_product(**data)
+            normalized = dict(data)
+            # Frontend sends 'SKU' (uppercase); model expects 'sku' (lowercase)
+            if 'SKU' in normalized and 'sku' not in normalized:
+                normalized['sku'] = normalized.pop('SKU')
+            # Strip fields that don't belong on the Product model:
+            # - stock/expiry_date: managed via batches
+            # - date_received/supplier_id/batch_number: batch-level fields sent by legacy frontend
+            # - image_uploaded_at: never a model attribute
+            for key in ('stock', 'expiry_date', 'date_received', 'supplier_id', 'batch_number', 'image_uploaded_at'):
+                normalized.pop(key, None)
+            product = Product.create_product(**normalized)
             logger.info(f"Successfully created product {product.sk}")
             Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
             _send_product_notification('created', product.product_name, product.sk)
@@ -139,7 +148,9 @@ class ProductService:
     @staticmethod
     def get_products_paginated(page_size: int = DEFAULT_PAGE_SIZE, page_token: str = None):
         """
-        Retrieves a page of active products for pagination.
+        Retrieves a page of all non-deleted products for the admin list.
+        Returns active, low_stock, and out_of_stock products — everything
+        except soft-deleted items.
         Only fetches one page from DynamoDB (no full load).
 
         Returns:
@@ -148,7 +159,7 @@ class ProductService:
         try:
             size = min(max(1, int(page_size)), MAX_PAGE_SIZE)
             last_key = _decode_page_token(page_token)
-            products, next_key = Product.get_all_active_products_paginated(limit=size, last_evaluated_key=last_key)
+            products, next_key = Product.get_all_non_deleted_paginated(limit=size, last_evaluated_key=last_key)
             next_token = _encode_page_token(next_key) if next_key else None
             return products, next_token
         except Exception as e:
@@ -463,6 +474,7 @@ class ProductService:
             "failed_count": len(failed),
             "failed_ids": failed,
         }
+
     # ========== STOCK & METADATA HELPERS ==========
 
     @staticmethod

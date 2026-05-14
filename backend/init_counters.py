@@ -36,6 +36,7 @@ def initialize_counters():
         ('suppliers', 'SUPP', 3),
         ('sales', 'SALE', 6),
         ('promotions', 'PROM', 4),
+        ('pos_pages', 'PAGE', 2),
     ]
     
     for collection, prefix, width in configs:

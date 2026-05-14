@@ -16,6 +16,7 @@ from . import (
     session_views,
     saleslog_views,
     sales_analytics_views,
+    pos_page_views,
 )
 
 app_name = 'office'
@@ -79,13 +80,14 @@ urlpatterns = [
     path('products/by-sku/<str:sku>/', product_views.ProductBySkuView.as_view(), name='products-by-sku'),
     path('products/by-barcode/<str:barcode>/', product_views.ProductByBarcodeView.as_view(), name='products-by-barcode'),
     path('products/category/<str:category_id>/', product_views.ProductsByCategoryView.as_view(), name='products-by-category'),
+    path('products/stock/', product_views.ProductStockListView.as_view(), name='products-stock-snapshot'),
+    path('products/stock/bulk-update/', product_views.BulkStockUpdateView.as_view(), name='products-bulk-stock-update'),
     path('products/<str:product_id>/', product_views.ProductDetailView.as_view(), name='products-detail'),
     path('products/<str:product_id>/restore/', product_views.ProductRestoreView.as_view(), name='products-restore'),
     path('products/<str:product_id>/stock/', product_views.ProductStockUpdateView.as_view(), name='products-stock-update'),
     path('products/<str:product_id>/stock/adjust/', product_views.StockAdjustmentView.as_view(), name='products-stock-adjust'),
     path('products/<str:product_id>/stock/restock/', product_views.RestockProductView.as_view(), name='products-restock'),
     path('products/<str:product_id>/stock/history/', product_views.StockHistoryView.as_view(), name='products-stock-history'),
-    path('products/stock/bulk-update/', product_views.BulkStockUpdateView.as_view(), name='products-bulk-stock-update'),
     
     # ==================== CATEGORIES ====================
     path('categories/', category_views.CategoryKPIView.as_view(), name='categories-list'),
@@ -183,6 +185,11 @@ urlpatterns = [
     path('sales-logs/', saleslog_views.SalesLogView.as_view(), name='sales-logs-list'),
     path('sales-logs/statistics/', saleslog_views.SalesLogStatsView.as_view(), name='sales-logs-stats'),
     
+    # ==================== POS PAGES ====================
+    path('pos-pages/', pos_page_views.PosPageListView.as_view(), name='pos-pages-list'),
+    path('pos-pages/<str:page_id>/products/', pos_page_views.PosPageProductsView.as_view(), name='pos-pages-products'),
+    path('pos-pages/<str:page_id>/', pos_page_views.PosPageDetailView.as_view(), name='pos-pages-detail'),
+
     # ==================== SALES REPORTS (v5 DynamoDB) ====================
     path('reports/sales-summary/', sales_analytics_views.SalesSummaryView.as_view(), name='sales-summary'),
     path('reports/sales-by-item/', sales_analytics_views.SalesByItemView.as_view(), name='sales-by-item'),

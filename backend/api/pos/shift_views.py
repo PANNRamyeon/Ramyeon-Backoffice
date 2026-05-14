@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 _service = ShiftService()
 
 
-class ShiftActiveView(APIView):
+class ActiveShiftView(APIView):
     """GET pos/shifts/active/?cashier_id=USER-00001"""
 
     @require_authentication
@@ -39,7 +39,7 @@ class ShiftActiveView(APIView):
             )
 
 
-class ShiftStartView(APIView):
+class StartShiftView(APIView):
     """POST pos/shifts/start/"""
 
     @require_authentication
@@ -89,7 +89,7 @@ class ShiftStartView(APIView):
             )
 
 
-class ShiftCloseView(APIView):
+class CloseShiftView(APIView):
     """POST pos/shifts/<shift_id>/close/"""
 
     @require_authentication

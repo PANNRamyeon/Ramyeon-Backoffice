@@ -175,10 +175,12 @@ class BatchService:
                 logger.warning(f"Could not query batches for {product_id} to sync total_stock: {e}")
                 batches = []
 
+            _USABLE = {"active", "low_stock", "expiring_soon"}
+
             valid = [
                 b for b in batches
-                if getattr(b, "quantity_remaining", 0) and int(b.quantity_remaining) > 0
-                and getattr(b, "status", None) not in ["expired", "exhausted"]
+                if getattr(b, "status", None) in _USABLE
+                and getattr(b, "quantity_remaining", 0) and int(b.quantity_remaining) > 0
                 and not b.is_expired()
             ]
 
@@ -190,14 +192,19 @@ class BatchService:
                 sk = _batch_sk(b)
                 if not sk:
                     return
+                status = getattr(b, "status", None)
                 qty = int(getattr(b, "quantity_remaining", 0) or 0)
                 if callable(getattr(b, "is_expired", None)) and b.is_expired():
                     qty = 0
+                is_usable = status in _USABLE and qty > 0
                 for i, v in enumerate(valid):
                     if _batch_sk(v) == sk:
-                        valid[i] = b
+                        if is_usable:
+                            valid[i] = b
+                        else:
+                            valid.pop(i)
                         return
-                if qty > 0:
+                if is_usable:
                     valid.append(b)
 
             if include_batch is not None:
@@ -304,8 +311,8 @@ class BatchService:
             return 0
         valid = [
             b for b in batches
-            if getattr(b, "quantity_remaining", 0) and int(b.quantity_remaining) > 0
-            and getattr(b, "status", None) not in ["expired", "exhausted"]
+            if getattr(b, "status", None) in {"active", "low_stock", "expiring_soon"}
+            and getattr(b, "quantity_remaining", 0) and int(b.quantity_remaining) > 0
             and not b.is_expired()
         ]
         return sum(int(b.quantity_remaining) for b in valid)
@@ -339,16 +346,15 @@ class BatchService:
             if shipment_id:
                 try:
                     shipment = Shipment.get_by_id(shipment_id)
-                    if shipment and shipment.total_products is not None:
+                    if shipment:
+                        batch_cost = float(batch_data.get('cost_price') or 0)
+                        batch_qty = float(batch_data.get('quantity_received') or 0)
                         shipment.total_products = (shipment.total_products or 0) + 1
-                        shipment.updated_at = datetime.utcnow()
-                        shipment.save()
-                    elif shipment:
-                        shipment.total_products = 1
+                        shipment.total_cost = (shipment.total_cost or 0) + (batch_cost * batch_qty)
                         shipment.updated_at = datetime.utcnow()
                         shipment.save()
                 except Exception as e:
-                    logger.warning(f"Could not update Shipment {shipment_id} total_products: {e}")
+                    logger.warning(f"Could not update Shipment {shipment_id} total_products/total_cost: {e}")
 
             product_name = self._get_product_name(product_id)
             notification_type = 'stock_ordered' if new_batch.status == 'pending' else 'stock_received'
@@ -378,15 +384,28 @@ class BatchService:
             raise Exception(f"Error creating batch: {str(e)}")
 
     def get_batches_by_product(self, product_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get all batches for a specific product, with optional status filter"""
+        """Get all batches for a specific product, with optional status filter.
+
+        Tries both the given product_id and its alternate form (with/without PROD- prefix)
+        because Product.to_dict() strips the prefix while batch records may store it either way.
+        """
         try:
             batches = Batch.get_by_product_id(product_id)
-            
+
+            if not batches:
+                if product_id.upper().startswith("PROD-"):
+                    alt_id = product_id[5:]
+                else:
+                    alt_id = f"PROD-{product_id.zfill(5)}"
+                batches = Batch.get_by_product_id(alt_id)
+                if batches:
+                    logger.debug(f"get_batches_by_product: found batches via alternate id '{alt_id}' for '{product_id}'")
+
             if status:
                 batches = [b for b in batches if b.status == status]
-            
+
             return [b.to_dict() for b in batches]
-            
+
         except Exception as e:
             logger.error(f"Error getting batches for product {product_id}: {str(e)}")
             raise Exception(f"Error getting batches: {str(e)}")

@@ -39,6 +39,7 @@ class CounterService:
             ('suppliers', 'SUPP', 3),
             ('sales', 'SALE', 6),
             ('promotions', 'PROM', 4),
+            ('pos_pages', 'PAGE', 2),
         ]
 
     def _get_current_max_id(self, collection_name, prefix):

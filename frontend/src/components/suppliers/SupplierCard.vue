@@ -7,15 +7,15 @@
           <input 
             type="checkbox" 
             class="form-check-input me-3"
-            :value="supplier.id"
+            :value="supplier.supplier_id"
             :checked="isSelected"
-            @change="$emit('toggle-select', supplier.id)"
+            @change="$emit('toggle-select', supplier.supplier_id)"
           />
           <div class="supplier-icon me-3">
             <i class="bi bi-building"></i>
           </div>
           <h5 class="card-title mb-0 supplier-name">
-            {{ supplier.name }}
+            {{ supplier.supplier_name }}
             <button
               @click.stop="$emit('toggle-favorite', supplier)"
               class="btn btn-link p-0 ms-2 favorite-toggle"
@@ -36,13 +36,13 @@
           <button 
             class="btn btn-link p-0 dropdown-toggle-btn"
             type="button"
-            :id="`dropdownMenuButton${supplier.id}`"
+            :id="`dropdownMenuButton${supplier.supplier_id}`"
             data-bs-toggle="dropdown"
             aria-expanded="false"
           >
             <i class="bi bi-three-dots-vertical"></i>
           </button>
-          <ul class="dropdown-menu" :aria-labelledby="`dropdownMenuButton${supplier.id}`">
+          <ul class="dropdown-menu" :aria-labelledby="`dropdownMenuButton${supplier.supplier_id}`">
             <li>
               <a class="dropdown-item" href="#" @click.prevent="$emit('edit', supplier)">
                 <i class="bi bi-pencil me-2"></i>Edit
@@ -60,7 +60,7 @@
             </li>
             <li><hr class="dropdown-divider"></li>
             <li>
-              <a class="dropdown-item text-danger" href="#" @click.prevent="$emit('delete', supplier)">
+              <a class="dropdown-item text-status-error" href="#" @click.prevent="$emit('delete', supplier)">
                 <i class="bi bi-trash me-2"></i>Delete
               </a>
             </li>
@@ -76,7 +76,7 @@
         </div>
         <div class="supplier-contact mb-2">
           <i class="bi bi-telephone contact-icon me-2"></i>
-          <span class="contact-text">{{ supplier.phone || 'No phone' }}</span>
+          <span class="contact-text">{{ supplier.phone_number || 'No phone' }}</span>
         </div>
         <div class="supplier-contact">
           <i class="bi bi-geo-alt contact-icon me-2"></i>
@@ -88,9 +88,9 @@
       <div class="mb-3 mt-auto">
         <p class="purchase-orders-label mb-2">Purchase Orders</p>
         <div class="d-flex justify-content-between align-items-center mb-2">
-          <span class="purchase-orders-count">{{ supplier.purchaseOrders }}</span>
-          <span :class="['badge', 'rounded-pill', getStatusBadgeClass(supplier.status)]">
-            {{ formatStatus(supplier.status) }}
+          <span class="purchase-orders-count">{{ supplier.purchaseOrders || 0 }}</span>
+          <span :class="['badge', 'rounded-pill', getStatusBadgeClass(supplier.isDeleted)]">
+            {{ supplier.isDeleted ? 'Inactive' : 'Active' }}
           </span>
         </div>
         
@@ -98,30 +98,30 @@
         <div class="supplier-stats">
           <div class="stat-row">
             <span class="stat-label">Active Orders:</span>
-            <span class="stat-value text-warning">{{ supplier.activeOrders || 0 }}</span>
+            <span class="stat-value text-status-warning">{{ supplier.activeOrders || 0 }}</span>
           </div>
           <div class="stat-row">
             <span class="stat-label">Total Spent:</span>
-            <span class="stat-value text-success">₱{{ formatCurrency(supplier.totalSpent || 0) }}</span>
+            <span class="stat-value text-status-success">₱{{ formatCurrency(supplier.totalSpent || 0) }}</span>
           </div>
           <div class="stat-row">
             <span class="stat-label">Days Active:</span>
-            <span class="stat-value text-info">{{ supplier.daysActive || 0 }}</span>
+            <span class="stat-value text-status-info">{{ supplier.daysActive || 0 }}</span>
           </div>
         </div>
       </div>
 
       <!-- Action Buttons -->
       <div class="d-flex gap-2 mt-2">
-        <button 
-          class="btn btn-outline-primary btn-sm flex-fill"
+        <button
+          class="btn btn-view btn-sm flex-fill"
           @click="$emit('view', supplier)"
         >
           <i class="bi bi-eye me-1"></i>
           View
         </button>
-        <button 
-          class="btn btn-outline-success btn-sm flex-fill"
+        <button
+          class="btn btn-add btn-sm flex-fill"
           @click="$emit('create-order', supplier)"
         >
           <i class="bi bi-plus me-1"></i>
@@ -152,17 +152,8 @@ export default {
     }
   },
   methods: {
-    getStatusBadgeClass(status) {
-      const classes = {
-        active: 'text-bg-success',
-        inactive: 'text-bg-danger',
-        pending: 'text-bg-warning'
-      }
-      return classes[status] || 'text-bg-secondary'
-    },
-
-    formatStatus(status) {
-      return status.charAt(0).toUpperCase() + status.slice(1)
+    getStatusBadgeClass(isDeleted) {
+      return isDeleted ? 'status-error' : 'status-success'
     },
 
     getShortAddress(address) {
@@ -237,20 +228,20 @@ export default {
 }
 
 .favorite-star {
-  color: #ffc107;
+  color: var(--status-warning);
   flex-shrink: 0;
   transition: all 0.2s ease;
   cursor: pointer;
 }
 
 .favorite-star:not(.favorite-filled) {
-  color: #9e9e9e;
+  color: var(--text-disabled);
   opacity: 1;
   stroke-width: 2;
 }
 
 .favorite-star.favorite-filled {
-  color: #ffc107;
+  color: var(--status-warning);
 }
 
 .favorite-star:hover {

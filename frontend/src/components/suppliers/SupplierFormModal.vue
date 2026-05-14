@@ -10,7 +10,7 @@
             </div>
             <div>
               <h4 class="modal-title mb-1">{{ isEdit ? 'Edit Supplier' : 'Add New Supplier' }}</h4>
-              <p class="text-muted mb-0 small">{{ isEdit ? 'Update supplier information' : 'Enter supplier details to add them to your network' }}</p>
+              <p class="text-secondary mb-0 small">{{ isEdit ? 'Update supplier information' : 'Enter supplier details to add them to your network' }}</p>
             </div>
           </div>
           <button 
@@ -33,18 +33,18 @@
                     <Building :size="16" class="me-2" />
                     Company Name
                   </label>
-                  <input 
-                    type="text" 
-                    class="form-control modern-input" 
-                    :class="{ 'is-invalid': formErrors.name }"
+                  <input
+                    type="text"
+                    class="form-control modern-input"
+                    :class="{ 'is-invalid': formErrors.supplier_name }"
                     id="supplierName"
-                    v-model="formData.name"
-                    @input="$emit('clear-error', 'name')"
+                    v-model="formData.supplier_name"
+                    @input="$emit('clear-error', 'supplier_name')"
                     placeholder="Enter company or supplier name"
                     required
                   >
-                  <div v-if="formErrors.name" class="invalid-feedback">
-                    {{ formErrors.name }}
+                  <div v-if="formErrors.supplier_name" class="invalid-feedback">
+                    {{ formErrors.supplier_name }}
                   </div>
                 </div>
 
@@ -58,7 +58,7 @@
                     type="text" 
                     class="form-control modern-input"
                     id="contactPerson"
-                    v-model="formData.contactPerson"
+                    v-model="formData.contact_person"
                     placeholder="Primary contact name"
                   >
                 </div>
@@ -95,14 +95,14 @@
                   <input 
                     type="tel" 
                     class="form-control modern-input" 
-                    :class="{ 'is-invalid': formErrors.phone }"
+                    :class="{ 'is-invalid': formErrors.phone_number }"
                     id="phone"
-                    v-model="formData.phone"
-                    @input="$emit('clear-error', 'phone')"
+                    v-model="formData.phone_number"
+                    @input="$emit('clear-error', 'phone_number')"
                     placeholder="+63 912 345 6789"
                   >
-                  <div v-if="formErrors.phone" class="invalid-feedback">
-                    {{ formErrors.phone }}
+                  <div v-if="formErrors.phone_number" class="invalid-feedback">
+                    {{ formErrors.phone_number }}
                   </div>
                 </div>
 
@@ -127,22 +127,6 @@
                   </select>
                 </div>
 
-                <!-- Status -->
-                <div class="form-group">
-                  <label for="status" class="form-label">
-                    <i class="bi bi-check-circle me-2"></i>
-                    Status
-                  </label>
-                  <select 
-                    class="form-select modern-input" 
-                    id="status"
-                    v-model="formData.status"
-                  >
-                    <option value="active">Active</option>
-                    <option value="pending">Pending Approval</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
-                </div>
               </div>
 
               <!-- Full Width Address -->
@@ -181,7 +165,7 @@
                     rows="3"
                     placeholder="Any additional information about this supplier (payment terms, delivery schedules, etc.)"
                   ></textarea>
-                  <small class="text-muted">Optional: Add any relevant notes about this supplier relationship</small>
+                  <small class="text-secondary">Optional: Add any relevant notes about this supplier relationship</small>
                 </div>
               </div>
             </div>
@@ -199,21 +183,21 @@
                 :checked="addAnother"
                 @change="$emit('update:add-another', $event.target.checked)"
                 >
-              <label class="form-check-label text-muted" for="addAnother">
+              <label class="form-check-label text-secondary" for="addAnother">
                 Add another supplier after saving
               </label>
             </div>
             <div class="d-flex gap-3">
-              <button 
-                type="button" 
-                class="btn btn-outline-secondary px-4"
+              <button
+                type="button"
+                class="btn btn-cancel px-4"
                 @click="$emit('close')"
               >
                 Cancel
               </button>
-              <button 
-                type="button" 
-                class="btn btn-primary px-4"
+              <button
+                type="button"
+                class="btn btn-save px-4"
                 @click="handleSubmit"
                 :disabled="!isValid || loading"
                 :class="{ 'btn-loading': loading }"
@@ -345,12 +329,12 @@ export default {
 .modal-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, var(--primary-light), var(--primary));
+  background-color: var(--surface-tertiary);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--primary-dark);
+  color: var(--text-accent);
 }
 
 .modal-title {
@@ -369,7 +353,7 @@ export default {
 
 .form-label.required::after {
   content: '*';
-  color: var(--error);
+  color: var(--status-error);
   margin-left: 4px;
 }
 
@@ -421,40 +405,14 @@ export default {
   border-top: 1px solid var(--border-primary);
 }
 
-.btn-primary {
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  border: none;
-  border-radius: 8px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
-
-.btn-primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(115, 146, 226, 0.3);
-}
-
-.btn-outline-secondary {
-  border: 2px solid var(--neutral-medium);
-  color: var(--tertiary-dark);
-  border-radius: 8px;
-  font-weight: 500;
-}
-
-.btn-outline-secondary:hover {
-  background-color: var(--neutral-medium);
-  border-color: var(--neutral-dark);
-  color: white;
-}
-
 .form-check-label {
-  color: var(--tertiary-dark);
+  color: var(--text-secondary);
   margin-left: 0.5rem;
 }
 
 .form-check-input:checked {
-  background-color: var(--primary);
-  border-color: var(--primary);
+  background-color: var(--border-accent);
+  border-color: var(--border-accent);
 }
 
 /* Responsive Styles */
@@ -555,17 +513,17 @@ export default {
 }
 
 .modal-content::-webkit-scrollbar-track {
-  background: var(--neutral-light);
+  background: var(--surface-secondary);
   border-radius: 3px;
 }
 
 .modal-content::-webkit-scrollbar-thumb {
-  background: var(--neutral-medium);
+  background: var(--border-secondary);
   border-radius: 3px;
 }
 
 .modal-content::-webkit-scrollbar-thumb:hover {
-  background: var(--primary);
+  background: var(--border-accent);
 }
 
 /* Prevent body scroll when modal is open */

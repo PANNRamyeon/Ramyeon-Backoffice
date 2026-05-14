@@ -1,125 +1,108 @@
 <template>
-  <div class="flex h-screen surface-secondary">
-    <!-- Main Content -->
-    <div class="flex-1 flex flex-col overflow-hidden">
-      <!-- Loading State -->
-      <div v-if="loading && !currentProduct" class="flex items-center justify-center h-full">
-        <div class="text-center">
-          <div class="spinner-border text-accent" role="status">
-            <span class="visually-hidden">Loading...</span>
-          </div>
-          <p class="mt-3 text-tertiary-medium">Loading product details...</p>
+  <div class="d-flex flex-column surface-secondary" style="min-height: 100%;">
+    <!-- Loading State -->
+    <div v-if="loading && !currentProduct" class="d-flex align-items-center justify-content-center flex-grow-1 py-5">
+      <div class="text-center">
+        <div class="spinner-border text-accent" role="status">
+          <span class="visually-hidden">Loading...</span>
         </div>
+        <p class="mt-3 text-tertiary-medium">Loading product details...</p>
+      </div>
+    </div>
+
+    <!-- Error State -->
+    <div v-else-if="error && !currentProduct" class="d-flex align-items-center justify-content-center flex-grow-1 py-5">
+      <div class="text-center">
+        <div class="mb-4 text-error" style="font-size: 3rem;">✕</div>
+        <h2 class="fs-4 fw-bold mb-2 text-error">Error Loading Product</h2>
+        <p class="text-tertiary-medium">{{ error }}</p>
+        <button @click="initializeData" class="mt-4 btn btn-save">Try Again</button>
+      </div>
+    </div>
+
+    <!-- Product Not Found State -->
+    <div v-else-if="!currentProduct || !currentProduct.product_id" class="d-flex align-items-center justify-content-center flex-grow-1 py-5">
+      <div class="text-center">
+        <Package :size="64" class="mb-4 text-tertiary-medium" />
+        <h2 class="fs-4 fw-bold mb-2 text-primary">Product Not Found</h2>
+        <p class="text-tertiary-medium">The product with ID "{{ id }}" could not be found.</p>
+        <button @click="router.push('/products')" class="mt-4 btn btn-save">Back to Products</button>
+      </div>
+    </div>
+
+    <!-- Product Content -->
+    <div v-else-if="currentProduct.product_id" class="d-flex flex-column flex-grow-1 overflow-hidden">
+      <!-- Success Message -->
+      <div v-if="successMessage" class="mx-4 mt-3 status-success rounded">
+        {{ successMessage }}
       </div>
 
-      <!-- Error State -->
-      <div v-else-if="error && !currentProduct" class="flex items-center justify-center h-full">
-        <div class="text-center">
-          <div class="text-6xl mb-4">❌</div>
-          <h2 class="text-2xl font-bold mb-2 text-error">Error Loading Product</h2>
-          <p class="text-tertiary-medium">{{ error }}</p>
-          <button 
-            @click="initializeData" 
-            class="mt-4 btn btn-submit"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
+      <!-- Header -->
+      <header class="surface-primary px-4 py-3 border-bottom-theme">
+        <nav class="breadcrumb-nav">
+          <router-link to="/products" class="breadcrumb-link">Inventory</router-link>
+          <ChevronRight :size="12" class="breadcrumb-icon" />
+          <router-link to="/products" class="breadcrumb-link">Products</router-link>
+          <ChevronRight :size="12" class="breadcrumb-icon" />
+          <span class="breadcrumb-current">Product Details</span>
+        </nav>
 
-      <!-- Product Not Found State -->
-      <div v-else-if="!currentProduct || !currentProduct.product_id" class="flex items-center justify-center h-full">
-        <div class="text-center">
-          <div class="text-6xl mb-4">📦</div>
-          <h2 class="text-2xl font-bold mb-2 text-primary">Product Not Found</h2>
-          <p class="text-tertiary-medium">The product with ID "{{ id }}" could not be found.</p>
-          <button 
-            @click="router.push('/products')" 
-            class="mt-4 btn btn-submit"
-          >
-            Back to Products
-          </button>
-        </div>
-      </div>
-
-      <!-- Product Content - Only show when we have a valid product -->
-      <div v-else-if="currentProduct.product_id" class="h-full">
-        <!-- Success Message -->
-        <div v-if="successMessage" class="mx-6 mt-4 status-success rounded-md">
-          {{ successMessage }}
-        </div>
-
-        <!-- Header -->
-        <header class="surface-primary px-6 py-3 border-bottom-theme">
-          <!-- Breadcrumb Navigation -->
-          <nav class="breadcrumb-nav">
-            <router-link to="/products" class="breadcrumb-link">Inventory</router-link>
-            <ChevronRight :size="12" class="breadcrumb-icon" />
-            <router-link to="/products" class="breadcrumb-link">Products</router-link>
-            <ChevronRight :size="12" class="breadcrumb-icon" />
-            <span class="breadcrumb-current">Product Details</span>
-          </nav>
-
-          <!-- Product Header -->
-          <div class="product-header">
-            <div class="product-info">
-              <h1 class="product-title text-primary">{{ currentProduct.product_name || 'Product Name' }}</h1>
-              <div class="description-and-buttons">
-                <p class="product-description text-tertiary-medium">{{ currentProduct.description || 'Product description not available.' }}</p>
-                <div class="button-group">
-                  <button @click="handleDelete" class="btn btn-delete btn-sm">Delete</button>
-                  <button @click="handleEdit" class="btn btn-edit btn-sm">Edit</button>
-                  <button @click="handleExport" class="btn btn-export btn-sm">Export</button>
-                </div>
+        <div class="product-header">
+          <div class="w-100">
+            <h1 class="product-title text-primary">{{ currentProduct.product_name }}</h1>
+            <div class="description-and-buttons">
+              <p class="product-description text-tertiary-medium mb-0">
+                {{ currentProduct.description || 'No description available.' }}
+              </p>
+              <div class="button-group">
+                <button @click="handleDelete" class="btn btn-delete btn-sm">Delete</button>
+                <button @click="handleEdit" class="btn btn-edit btn-sm">Edit</button>
               </div>
             </div>
           </div>
-        </header>
-
-        <!-- Tab Navigation -->
-        <div class="surface-primary px-6">
-          <nav class="d-flex border-bottom-theme">
-            <button
-              v-for="tab in tabs"
-              :key="tab"
-              @click="setActiveTab(tab)"
-              class="tab-button"
-              :class="{ 'tab-active': activeTab === tab }"
-            >
-              {{ tab }}
-            </button>
-          </nav>
         </div>
+      </header>
 
-        <!-- Content Area -->
-        <div class="flex-1 overflow-auto p-6 surface-secondary">
-          <!-- Overview Tab - Only render when active -->
-          <ProductOverview 
-            v-if="activeTab === 'Overview'"
-            :key="`overview-${id}`"
-            :product-id="id"
-            ref="overviewRef"
-            @adjust-stock="handleStockAdjustment"
-            @change-image="handleImageUpload"
-            @reorder="handleReorder"
-            @view-history="() => setActiveTab('Purchases')"
-          />
+      <!-- Tab Navigation -->
+      <div class="surface-primary px-4">
+        <nav class="d-flex border-bottom-theme">
+          <button
+            v-for="tab in tabs"
+            :key="tab"
+            @click="setActiveTab(tab)"
+            class="tab-button"
+            :class="{ 'tab-active': activeTab === tab }"
+          >
+            {{ tab }}
+          </button>
+        </nav>
+      </div>
 
-          <!-- Purchases Tab - Only render when active and has been visited -->
-          <ProductPurchases 
-            v-else-if="activeTab === 'Purchases' && hasVisitedTab('Purchases')"
-            :key="`purchases-${id}`"
-            :product-id="id" 
-            :product="currentProduct" 
-          />
+      <!-- Content Area -->
+      <div class="flex-grow-1 overflow-auto p-4 surface-secondary">
+        <ProductOverview
+          v-if="activeTab === 'Overview'"
+          :key="`overview-${id}`"
+          :product-id="id"
+          ref="overviewRef"
+          @adjust-stock="handleStockAdjustment"
+          @change-image="handleEdit"
+          @reorder="handleReorder"
+          @view-history="() => setActiveTab('Purchases')"
+        />
 
-          <!-- Adjustments Tab - Only render when active and has been visited -->
-          <ProductAdjustments 
-            v-else-if="activeTab === 'Adjustments' && hasVisitedTab('Adjustments')"
-            :key="`adjustments-${id}`"
-            :product-id="id" 
-          />
-        </div>
+        <ProductPurchases
+          v-else-if="activeTab === 'Purchases' && hasVisitedTab('Purchases')"
+          :key="`purchases-${id}`"
+          :product-id="id"
+          :product="currentProduct"
+        />
+
+        <ProductAdjustments
+          v-else-if="activeTab === 'Adjustments' && hasVisitedTab('Adjustments')"
+          :key="`adjustments-${id}`"
+          :product-id="id"
+        />
       </div>
     </div>
 
@@ -137,10 +120,10 @@
   </div>
 </template>
 
-<script>
+<script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronRight } from 'lucide-vue-next'
+import { ChevronRight, Package } from 'lucide-vue-next'
 import { useProducts } from '@/composables/api/useProducts'
 import { useCategories } from '@/composables/api/useCategories'
 import AddProductModal from '@/components/products/AddProductModal.vue'
@@ -149,204 +132,98 @@ import ProductOverview from '@/components/products/ProductOverview.vue'
 import ProductPurchases from '@/components/products/ProductPurchases.vue'
 import ProductAdjustments from '@/components/products/ProductAdjustments.vue'
 
-export default {
-  name: 'ProductDetails',
-  components: {
-    ChevronRight,
-    AddProductModal,
-    StockUpdateModal,
-    ProductOverview,
-    ProductPurchases,
-    ProductAdjustments 
-  },
-  props: {
-    id: {
-      type: String,
-      required: true
-    }
-  },
-  setup(props) {
-    const router = useRouter()
-    
-    // Template refs
-    const addProductModal = ref(null)
-    const stockUpdateModal = ref(null)
-    
-    // Use composables
-    const {
-      currentProduct,
-      loading,
-      error,
-      fetchProductById,
-      deleteProduct,
-      exportProducts,
-      exportProductDetails
-    } = useProducts()
+const props = defineProps({
+  id: { type: String, required: true }
+})
 
-    const {
-      activeCategories,
-      initializeCategories
-    } = useCategories()
+const router = useRouter()
 
-    // Local state
-    const activeTab = ref('Overview')
-    const tabs = ['Overview', 'Purchases', 'Adjustments']
-    const successMessage = ref('')
-    const isInitialized = ref(false)
-    const visitedTabs = ref(new Set(['Overview'])) // Track which tabs have been visited
-    const overviewRef = ref(null)
+const addProductModal = ref(null)
+const stockUpdateModal = ref(null)
+const overviewRef = ref(null)
 
-    // Check if a tab has been visited
-    const hasVisitedTab = (tab) => {
-      return visitedTabs.value.has(tab)
-    }
+const { currentProduct, loading, error, fetchProductById, deleteProduct } = useProducts()
+const { activeCategories, initializeCategories } = useCategories()
 
-    // Methods
-    const handleEdit = () => {
-      if (currentProduct.value && currentProduct.value.product_id) {
-        addProductModal.value?.openEdit?.(currentProduct.value)
-      }
-    }
+const activeTab = ref('Overview')
+const tabs = ['Overview', 'Purchases', 'Adjustments']
+const successMessage = ref('')
+const isInitialized = ref(false)
+const visitedTabs = ref(new Set(['Overview']))
 
-    const handleStockAdjustment = () => {
-      if (currentProduct.value && currentProduct.value.product_id) {
-        stockUpdateModal.value?.openStock?.(currentProduct.value)
-      }
-    }
+const hasVisitedTab = (tab) => visitedTabs.value.has(tab)
 
-    const handleImageUpload = () => {
-      if (currentProduct.value && currentProduct.value.product_id) {
-        addProductModal.value?.openEdit?.(currentProduct.value)
-      }
-    }
+const setActiveTab = (tab) => {
+  activeTab.value = tab
+  visitedTabs.value.add(tab)
+}
 
-    const handleReorder = () => {
-      // TODO: Implement reorder logic
-    }
-
-    const handleDelete = async () => {
-      if (!currentProduct.value || !currentProduct.value.product_name) {
-        return
-      }
-      
-      const confirmed = confirm(`Are you sure you want to delete "${currentProduct.value.product_name}"?`)
-      if (confirmed) {
-        try {
-          await deleteProduct(currentProduct.value.product_id)
-          router.push('/products')
-        } catch (err) {
-          console.error('❌ Error deleting product:', err)
-        }
-      }
-    }
-
-    const handleExport = async () => {
-      if (!currentProduct.value || !currentProduct.value.product_id) {
-        console.warn('⚠️ No product loaded for export');
-        return;
-      }
-
-      try {
-        await exportProductDetails(currentProduct.value.product_id);
-      } catch (err) {
-        console.error('❌ Error exporting product details:', err);
-      }
-    }
-
-
-   const handleModalSuccess = async (result) => {
-    if (result?.message) {
-      successMessage.value = result.message
-      setTimeout(() => {
-        successMessage.value = ''
-      }, 3000)
-    }
-    
-    try {
-      // Optional: still refresh the product data
-      await fetchProductById(props.id)
-    } catch (err) {
-      console.error('❌ Failed to refresh product after modal:', err)
-    }
-
-    // 🔥 Hard refresh the current route (page-level refresh)
-    router.go(0)
+const handleEdit = () => {
+  if (currentProduct.value?.product_id) {
+    addProductModal.value?.openEdit?.(currentProduct.value)
   }
+}
 
+const handleStockAdjustment = () => {
+  if (currentProduct.value?.product_id) {
+    stockUpdateModal.value?.openStock?.(currentProduct.value)
+  }
+}
 
+const handleReorder = () => {
+  // TODO: implement reorder
+}
 
-    const setActiveTab = (tab) => {
-      activeTab.value = tab
-      
-      // Mark this tab as visited for lazy loading
-      visitedTabs.value.add(tab)
-    }
-
-    const initializeData = async () => {
-      // Prevent multiple initialization
-      if (isInitialized.value) {
-        return
-      }
-      
-      try {
-        // Only fetch product and categories here
-        // Let child components fetch their own batch data
-        await Promise.all([
-          initializeCategories(),
-          fetchProductById(props.id)
-        ])
-        
-        isInitialized.value = true
-      } catch (err) {
-        console.error('❌ Failed to initialize data:', err)
-        isInitialized.value = false // Allow retry
-      }
-    }
-
-    onMounted(() => {
-      initializeData()
-    })
-
-    return {
-      // State
-      loading,
-      error,
-      successMessage,
-      currentProduct,
-      activeTab,
-      tabs,
-      router,
-      activeCategories,
-      
-      // Template refs
-      addProductModal,
-      stockUpdateModal,
-      overviewRef,
-      // Methods
-      setActiveTab,
-      hasVisitedTab,
-      handleDelete,
-      handleEdit,
-      handleStockAdjustment,
-      handleImageUpload,
-      handleReorder,
-      handleExport,
-      handleModalSuccess,
-      initializeData
+const handleDelete = async () => {
+  if (!currentProduct.value?.product_name) return
+  const confirmed = confirm(`Are you sure you want to delete "${currentProduct.value.product_name}"?`)
+  if (confirmed) {
+    try {
+      await deleteProduct(currentProduct.value.product_id)
+      router.push('/products')
+    } catch (err) {
+      console.error('Error deleting product:', err)
     }
   }
 }
+
+
+const handleModalSuccess = async (result) => {
+  if (result?.message) {
+    successMessage.value = result.message
+    setTimeout(() => { successMessage.value = '' }, 3000)
+  }
+  try {
+    await fetchProductById(props.id)
+    overviewRef.value?.loadProductData?.()
+  } catch (err) {
+    console.error('Failed to refresh product after modal:', err)
+  }
+}
+
+const initializeData = async () => {
+  if (isInitialized.value) return
+  try {
+    await Promise.all([initializeCategories(), fetchProductById(props.id)])
+    isInitialized.value = true
+  } catch (err) {
+    console.error('Failed to initialize data:', err)
+    isInitialized.value = false
+  }
+}
+
+onMounted(() => {
+  initializeData()
+})
 </script>
-  
+
 <style scoped>
-/* Breadcrumb Navigation Styles */
 .breadcrumb-nav {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
   font-size: 12px;
-  line-height: 1;
 }
 
 .breadcrumb-link {
@@ -372,15 +249,6 @@ export default {
   flex-shrink: 0;
 }
 
-/* Product Header Styles */
-.product-header {
-  width: 100%;
-}
-
-.product-info {
-  width: 100%;
-}
-
 .product-title {
   font-size: 1.5rem;
   font-weight: 700;
@@ -397,11 +265,9 @@ export default {
 
 .product-description {
   font-size: 0.875rem;
-  margin: 0;
   flex: 1;
 }
 
-/* Button Group Styles */
 .button-group {
   display: flex;
   gap: 12px;
@@ -409,7 +275,6 @@ export default {
   flex-shrink: 0;
 }
 
-/* Tab Styles */
 .tab-button {
   border: none;
   background: transparent;
@@ -433,7 +298,6 @@ export default {
   font-weight: 600;
 }
 
-/* Responsive Design */
 @media (max-width: 768px) {
   .description-and-buttons {
     flex-direction: column;

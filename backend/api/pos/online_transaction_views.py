@@ -1,8 +1,9 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import AllowAny
 from app.services.sales.online_transactions_services import OnlineTransactionService
+from app.utils.singleton import get_singleton
 from datetime import datetime, timedelta
 import logging
 
@@ -10,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 class OnlineTransactionServiceView(APIView):
     """Base view for online transaction operations"""
-    permission_classes = [IsAuthenticated]
-    
-    def __init__(self):
-        super().__init__()
-        self.service = OnlineTransactionService()
+    permission_classes = [AllowAny]
+
+    @property
+    def service(self):
+        return get_singleton(OnlineTransactionService)
 
 # ================================================================
 # ORDER MANAGEMENT

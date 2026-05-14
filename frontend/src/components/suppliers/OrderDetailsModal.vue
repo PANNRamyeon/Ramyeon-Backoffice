@@ -11,7 +11,7 @@
               <h4 class="modal-title mb-1">
                 {{ isEditMode ? 'Edit Order' : 'Order Details' }}
               </h4>
-              <p class="text-muted mb-0 small">
+              <p class="text-secondary mb-0 small">
                 {{ isEditMode ? 'Modify order information' : 'View order information' }}
               </p>
             </div>
@@ -20,7 +20,7 @@
             <button 
               v-if="!isEditMode && canEdit" 
               type="button" 
-              class="btn btn-primary btn-sm"
+              class="btn btn-edit btn-sm"
               @click="toggleEditMode"
             >
               <Edit :size="16" class="me-1" />
@@ -52,7 +52,7 @@
                   <div v-if="!isEditMode">
                     <span>{{ formatDate(order.expectedDate) }}</span>
                     <br>
-                    <small :class="['text-muted', { 'text-danger': isOverdue(order) }]">
+                    <small :class="['text-secondary', { 'text-status-error': isOverdue(order) }]">
                       {{ getTimeRemaining(order.expectedDate) }}
                     </small>
                   </div>
@@ -71,8 +71,8 @@
                     </span>
                   </div>
                   <select v-else class="form-select form-select-sm" v-model="editForm.status">
-                    <option value="Pending">Pending</option>
-                    <option value="Active">Active</option>
+                    <option value="Pending Delivery">Pending Delivery</option>
+                    <option value="Partially Received">Partially Received</option>
                     <option value="Received">Received</option>
                     <option value="Cancelled">Cancelled</option>
                   </select>
@@ -96,16 +96,16 @@
                 </div>
                 <div class="info-item">
                   <label>Subtotal:</label>
-                  <span class="text-muted">₱{{ formatCurrency(order.subtotal || 0) }}</span>
+                  <span class="text-secondary">₱{{ formatCurrency(order.subtotal || 0) }}</span>
                 </div>
                 <div class="info-item">
                   <label>Tax ({{ order.taxRate || 12 }}%):</label>
-                  <span class="text-muted">₱{{ formatCurrency(order.tax || 0) }}</span>
+                  <span class="text-secondary">₱{{ formatCurrency(order.tax || 0) }}</span>
                 </div>
                 <div class="info-item">
                   <label>Shipping:</label>
                   <div v-if="!isEditMode">
-                    <span class="text-muted">₱{{ formatCurrency(order.shippingCost || 0) }}</span>
+                    <span class="text-secondary">₱{{ formatCurrency(order.shippingCost || 0) }}</span>
                   </div>
                   <div v-else class="input-group input-group-sm">
                     <span class="input-group-text">₱</span>
@@ -131,7 +131,7 @@
             <h6 class="info-card-title">
               <List :size="16" class="me-2" />
               Order Items
-              <span class="badge bg-secondary ms-2">{{ orderItems.length }}</span>
+              <span class="badge ms-2">{{ orderItems.length }}</span>
             </h6>
             <div class="table-responsive">
               <table class="table table-sm items-table">
@@ -187,7 +187,7 @@
                         <option value="bottle">bottle</option>
                         <option value="can">can</option>
                       </select>
-                      <span v-else class="text-muted">{{ item.unit || 'pcs' }}</span>
+                      <span v-else class="text-secondary">{{ item.unit || 'pcs' }}</span>
                     </td>
                     <td>
                       <div v-if="isEditMode" class="input-group input-group-sm" style="width: 120px;">
@@ -204,10 +204,10 @@
                       <span v-else>₱{{ formatCurrency(item.unitPrice) }}</span>
                     </td>
                     <td>
-                      <span class="fw-bold text-success">₱{{ formatCurrency(item.totalPrice) }}</span>
+                      <span class="fw-bold text-status-success">₱{{ formatCurrency(item.totalPrice) }}</span>
                     </td>
                     <td v-if="!isEditMode">
-                      <small class="text-muted">{{ item.notes || '-' }}</small>
+                      <small class="text-secondary">{{ item.notes || '-' }}</small>
                     </td>
                     <td v-if="isEditMode">
                       <div class="d-flex gap-1">
@@ -220,7 +220,7 @@
                         >
                         <button 
                           type="button" 
-                          class="btn btn-outline-danger btn-sm"
+                          class="btn btn-delete btn-sm"
                           @click="removeItem(index)"
                           :disabled="orderItems.length <= 1"
                           title="Remove Item"
@@ -237,7 +237,7 @@
                     <td class="fw-bold">{{ displayTotalQuantity }}</td>
                     <td></td>
                     <td></td>
-                    <td class="fw-bold text-success">₱{{ formatCurrency(displayTotalAmount) }}</td>
+                    <td class="fw-bold text-status-success">₱{{ formatCurrency(displayTotalAmount) }}</td>
                     <td v-if="!isEditMode"></td>
                     <td v-if="isEditMode"></td>
                   </tr>
@@ -252,10 +252,10 @@
               <List :size="16" class="me-2" />
               Order Items
             </h6>
-            <div class="text-center py-4 text-muted">
+            <div class="text-center py-4 text-secondary">
               <Package :size="48" class="mb-2 opacity-50" />
               <p class="mb-0">
-                {{ itemsReady ? 'No items found for this order' : 'Loading items...' }}
+                {{ loadingBatches ? 'Loading items...' : 'No items found for this order' }}
               </p>
             </div>
           </div>
@@ -310,10 +310,10 @@
                 <div class="timeline-content">
                   <div class="timeline-header">
                     <strong>{{ event.title }}</strong>
-                    <small class="text-muted ms-auto">{{ formatTimeAgo(event.date) }}</small>
+                    <small class="text-secondary ms-auto">{{ formatTimeAgo(event.date) }}</small>
                   </div>
-                  <p class="mb-1 text-muted">{{ event.description }}</p>
-                  <small class="text-muted">by {{ event.user }}</small>
+                  <p class="mb-1 text-secondary">{{ event.description }}</p>
+                  <small class="text-secondary">by {{ event.user }}</small>
                 </div>
               </div>
             </div>
@@ -326,7 +326,7 @@
               <button 
                 v-if="!isEditMode" 
                 type="button" 
-                class="btn btn-outline-primary"
+                class="btn btn-export"
                 @click="printOrder"
               >
                 <Printer :size="16" class="me-1" />
@@ -334,13 +334,13 @@
               </button>
             </div>
             <div class="d-flex gap-2">
-              <button type="button" class="btn btn-secondary" @click="handleCancel">
+              <button type="button" class="btn btn-cancel" @click="handleCancel">
                 {{ isEditMode ? 'Cancel' : 'Close' }}
               </button>
               <button 
                 v-if="isEditMode" 
                 type="button" 
-                class="btn btn-primary" 
+                class="btn btn-save"
                 @click="saveOrder"
                 :disabled="saving || !isFormValid"
               >
@@ -355,459 +355,217 @@
   </Teleport>
 </template>
 
-<script>
+<script setup>
+import { ref, computed, watch } from 'vue'
 import {
-  Eye,
-  Edit,
-  FileText,
-  DollarSign,
-  Package,
-  List,
-  MessageSquare,
-  Clock,
-  Plus,
-  Trash2,
-  Printer,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Activity
+  Eye, Edit, FileText, DollarSign, Package, List,
+  MessageSquare, Clock, Plus, Trash2, Printer,
+  AlertTriangle, CheckCircle, XCircle, Activity
 } from 'lucide-vue-next'
+import { useShipments } from '@/composables/api/useShipments'
+import { useToast } from '@/composables/ui/useToast'
 
-export default {
-  name: 'OrderDetailsModal',
-  components: {
-    Eye,
-    Edit,
-    FileText,
-    DollarSign,
-    Package,
-    List,
-    MessageSquare,
-    Clock,
-    Plus,
-    Trash2,
-    Printer,
-    AlertTriangle,
-    CheckCircle,
-    XCircle,
-    Activity
-  },
-  props: {
-    show: {
-      type: Boolean,
-      default: false
-    },
-    order: {
-      type: Object,
-      required: true
-    },
-    canEdit: {
-      type: Boolean,
-      default: true
-    },
-    initialMode: {
-      type: String,
-      default: 'view',
-      validator: value => ['view', 'edit'].includes(value)
-    }
-  },
-  emits: ['close', 'save', 'edit-mode-changed'],
-  data() {
-    return {
-      isEditMode: false,
-      saving: false,
-      Edit,
-      Eye,
-      editForm: {
-        expectedDate: '',
-        status: '',
-        quantity: 0,
-        total: 0,
-        description: '',
-        notes: ''
-      },
-      editableItems: [],
-      orderItems: [],
-      orderHistory: [],
-      // Force reactive updates
-      itemsReady: false
-    }
-  },
-  computed: {
-    displayItemCount() {
-      // Direct access without itemsReady check
-      return this.orderItems?.length || 0
-    },
-    
-    displayTotalQuantity() {
-      if (!this.orderItems || this.orderItems.length === 0) return 0
-      return this.orderItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
-    },
-    
-    displayTotalAmount() {
-      if (!this.orderItems || this.orderItems.length === 0) return 0
-      return this.orderItems.reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0)
-    },
-    
-    isFormValid() {
-      return this.editForm.quantity > 0 && 
-            this.editForm.total > 0 && 
-            this.editForm.expectedDate && 
-            this.editForm.status
-    }
-  },
-  watch: {
-    show: {
-      handler(newVal) {
-        try {
-          if (newVal) {
-            this.initializeModal()
-          }
-        } catch (error) {
-          console.error('Error in show watcher:', error)
-        }
-      },
-      immediate: true
-    },
-    
-    order: {
-      handler(newOrder, oldOrder) {
-        try {
-          if (this.show && newOrder) {
-            this.initializeModal()
-          }
-        } catch (error) {
-          console.error('Error in order watcher:', error)
-        }
-      },
-      deep: true,
-      immediate: false  // Changed to false to prevent double initialization
-    },
-    
-    initialMode: {
-      handler(newMode) {
-        try {
-          if (this.show) {
-            this.isEditMode = newMode === 'edit'
-            this.$emit('edit-mode-changed', this.isEditMode)
-          }
-        } catch (error) {
-          console.error('Error in initialMode watcher:', error)
-        }
-      },
-      immediate: true
-    }
-  },
-  methods: {
-    initializeModal() {
-      this.isEditMode = this.initialMode === 'edit'
-      this.resetEditForm()
-      this.loadOrderData()
-      this.$emit('edit-mode-changed', this.isEditMode)
-    },
+const props = defineProps({
+  show:        { type: Boolean, default: false },
+  order:       { type: Object,  required: true },
+  canEdit:     { type: Boolean, default: true },
+  initialMode: { type: String,  default: 'view', validator: v => ['view', 'edit'].includes(v) }
+})
 
-    handleOverlayClick(event) {
-      if (event.target === event.currentTarget && !this.saving) {
-        if (this.isEditMode) {
-          this.isEditMode = false
-          this.resetEditForm()
-          this.editableItems = [...this.orderItems]
-          this.$emit('edit-mode-changed', this.isEditMode)
-        }
-        this.closeModal()
-      }
-    },
+const emit = defineEmits(['close', 'save', 'edit-mode-changed'])
 
-    resetEditForm() {
-      const formatDateForInput = (dateString) => {
-        if (!dateString) return ''
-        const date = new Date(dateString)
-        return date.toISOString().split('T')[0]
-      }
+const { fetchShipmentWithBatches, updateShipment } = useShipments()
+const { success: showSuccess, error: showError } = useToast()
 
-      this.editForm = {
-        expectedDate: formatDateForInput(this.order.expectedDate),
-        status: this.order.status || 'Pending',
-        quantity: this.order.quantity || 0,
-        total: this.order.total || 0,
-        description: this.order.description || '',
-        notes: this.order.notes || '',
-        priority: this.order.priority || 'normal',
-        subtotal: this.order.subtotal || 0,
-        tax: this.order.tax || 0,
-        shippingCost: this.order.shippingCost || 0
-      }
-    },
+// ── State ─────────────────────────────────────────────────────────────────────
+const isEditMode  = ref(false)
+const saving      = ref(false)
+const loadingBatches = ref(false)
+const orderItems  = ref([])
+const orderHistory = ref([])
+const itemsReady  = ref(false)
 
-    safeNumber(value, defaultValue = 0) {
-      const num = Number(value)
-      return isNaN(num) ? defaultValue : num
-    },
+const editForm = ref({
+  expectedDate: '',
+  status:       '',
+  notes:        '',
+  shippingCost: 0
+})
 
-    loadOrderData() {
-      try {
-        // Reset state
-        this.itemsReady = false
-        
-        // Validate order object
-        if (!this.order) {
-          console.warn('No order object provided')
-          this.orderItems = []
-          this.editableItems = []
-          this.itemsReady = true
-          return
-        }
-        
-        // Process items with better error handling
-        if (this.order.items && Array.isArray(this.order.items) && this.order.items.length > 0) {
-          // Create new arrays with proper reactivity
-          const processedItems = this.order.items.map((item, index) => {
-            const processedItem = {
-              name: item?.name || item?.product_name || `Item ${index + 1}`,
-              quantity: Number(item?.quantity) || 0,
-              unit: item?.unit || 'pcs',
-              unitPrice: Number(item?.unitPrice || item?.unit_price) || 0,
-              notes: item?.notes || '',
-              productId: item?.productId || item?.product_id || `temp-${index}`,
-              totalPrice: 0
-            }
-            
-            // Calculate total price
-            processedItem.totalPrice = processedItem.quantity * processedItem.unitPrice
-            
-            return processedItem
-          })
-          
-          // Assign new arrays directly (Vue 3 handles reactivity automatically)
-          this.orderItems = [...processedItems]
-          this.editableItems = JSON.parse(JSON.stringify(processedItems))
-        } else {
-          this.orderItems = []
-          this.editableItems = []
-        }
-        
-        // Load order history safely
-        try {
-          this.orderHistory = this.order?.orderHistory || []
-        } catch (historyError) {
-          console.error('Error loading order history:', historyError)
-          this.orderHistory = []
-        }
-        
-        // Signal that items are ready
-        this.itemsReady = true
+// ── Status mapping (frontend label ↔ backend value) ───────────────────────────
+const STATUS_TO_BACKEND = {
+  'Pending Delivery': 'pending',
+  'Received':        'received',
+  'Cancelled':       'cancelled'
+}
+const STATUS_FROM_BACKEND = Object.fromEntries(
+  Object.entries(STATUS_TO_BACKEND).map(([k, v]) => [v, k])
+)
 
-        // Force update in Vue 3
-        this.$nextTick(() => {
-          // Force re-render if needed
-          this.$forceUpdate()
-        })
-        
-      } catch (error) {
-        console.error('Critical error in loadOrderData:', error)
-        this.itemsReady = true
-        this.orderItems = []
-        this.editableItems = []
-        this.orderHistory = []
-      }
-    },
+// ── Computed ──────────────────────────────────────────────────────────────────
+const displayItemCount    = computed(() => orderItems.value.length)
+const displayTotalQuantity = computed(() =>
+  orderItems.value.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
+)
+const displayTotalAmount = computed(() =>
+  orderItems.value.reduce((s, i) => s + (Number(i.totalPrice) || 0), 0)
+)
+const isFormValid = computed(() => !!editForm.value.expectedDate && !!editForm.value.status)
 
-    toggleEditMode() {
-      this.isEditMode = !this.isEditMode
-      if (this.isEditMode) {
-        this.resetEditForm()
-        this.editableItems = [...this.orderItems]
-      }
-      this.$emit('edit-mode-changed', this.isEditMode)
-    },
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatDate(d) {
+  if (!d) return 'N/A'
+  return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
 
-    handleCancel() {
-      if (this.isEditMode) {
-        this.isEditMode = false
-        this.resetEditForm()
-        this.editableItems = [...this.orderItems]
-      } else {
-        this.closeModal()
-      }
-    },
+function formatTimeAgo(d) {
+  if (!d) return ''
+  const diff = Math.abs(Date.now() - new Date(d))
+  const days  = Math.floor(diff / 86400000)
+  const hours = Math.floor(diff / 3600000)
+  if (days  > 0) return `${days} day${days  > 1 ? 's' : ''} ago`
+  if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`
+  return 'Just now'
+}
 
-    closeModal() {
-      this.isEditMode = false
-      this.$emit('close')
-    },
+function formatCurrency(amount) {
+  return new Intl.NumberFormat('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount || 0)
+}
 
-    async saveOrder() {
-      this.saving = true
-      
-      try {
-        const subtotal = this.getTotalAmount()
-        const tax = subtotal * 0.12
-        const shipping = this.editForm.shippingCost || 0
-        const total = subtotal + tax + shipping
+function isOverdue(order) {
+  return new Date(order.expectedDate) < new Date() &&
+    ['Pending Delivery', 'Partially Received'].includes(order.status)
+}
 
-        const updatedOrder = {
-          ...this.order,
-          ...this.editForm,
-          quantity: this.getTotalQuantity(),
-          subtotal: subtotal,
-          tax: tax,
-          total: total,
-          items: this.editableItems.map(item => ({
-            name: item.name,
-            quantity: item.quantity,
-            unit: item.unit,
-            unitPrice: item.unitPrice,
-            totalPrice: item.totalPrice,
-            notes: item.notes
-          }))
-        }
+function getTimeRemaining(dateString) {
+  if (!dateString) return ''
+  const diff  = new Date(dateString) - new Date()
+  const days  = Math.ceil(diff / 86400000)
+  if (days < 0)  return `${Math.abs(days)} days overdue`
+  if (days === 0) return 'Due today'
+  if (days === 1) return 'Due tomorrow'
+  return `${days} days remaining`
+}
 
-        this.$emit('save', updatedOrder)
-        this.isEditMode = false
-        
-      } catch (error) {
-        console.error('Error saving order:', error)
-        alert('Failed to save order. Please try again.')
-      } finally {
-        this.saving = false
-      }
-    },
+function getOrderStatusClass(status) {
+  return { 'Received': 'status-success', 'Pending Delivery': 'status-warning',
+           'Cancelled': 'status-error',   'Partially Received': 'status-info' }[status] ?? ''
+}
 
-    addNewItem() {
-      this.editableItems.push({
-        name: '',
-        quantity: 1,
-        unit: 'pcs',
-        unitPrice: 0,
-        totalPrice: 0,
-        notes: ''
-      })
-    },
+function getEventIcon(type) {
+  return { created: Plus, updated: Edit, cancelled: XCircle, received: CheckCircle }[type] || Activity
+}
 
-    removeItem(index) {
-      if (this.editableItems.length > 1) {
-        this.editableItems.splice(index, 1)
-        this.updateFormTotals()
-      }
-    },
+function getEventMarkerClass(type) {
+  return { created: 'marker-info', updated: 'marker-info',
+           cancelled: 'marker-error', received: 'marker-success' }[type] || 'marker-default'
+}
 
-    calculateItemTotal(item) {
-      item.totalPrice = (item.quantity || 0) * (item.unitPrice || 0)
-      this.updateFormTotals()
-    },
-
-    updateFormTotals() {
-      this.editForm.quantity = this.getTotalQuantity()
-      this.editForm.total = this.getTotalAmount()
-    },
-
-    getTotalQuantity() {
-      return this.displayTotalQuantity
-    },
-
-    getTotalAmount() {
-      return this.displayTotalAmount
-    },
-
-    printOrder() {
-      window.print()
-    },
-
-    // Utility methods
-    formatDate(dateString) {
-      if (!dateString) return 'N/A'
-      const date = new Date(dateString)
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      })
-    },
-
-    formatTimeAgo(dateString) {
-      const date = new Date(dateString)
-      const now = new Date()
-      const diffTime = Math.abs(now - date)
-      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
-      const diffHours = Math.floor(diffTime / (1000 * 60 * 60))
-
-      if (diffDays > 0) {
-        return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
-      } else if (diffHours > 0) {
-        return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-      } else {
-        return 'Just now'
-      }
-    },
-
-    formatCurrency(amount) {
-      return new Intl.NumberFormat('en-PH', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      }).format(amount || 0)
-    },
-
-    getCostPerItem() {
-      return this.isEditMode 
-        ? (this.editForm.total || 0) / (this.editForm.quantity || 1)
-        : (this.order.total || 0) / (this.order.quantity || 1)
-    },
-
-    isOverdue(order) {
-      const expectedDate = new Date(order.expectedDate)
-      const today = new Date()
-      return expectedDate < today && (order.status === 'Pending' || order.status === 'Active')
-    },
-
-    getTimeRemaining(dateString) {
-      const expectedDate = new Date(dateString)
-      const today = new Date()
-      const diffTime = expectedDate - today
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-      
-      if (diffDays < 0) {
-        return `${Math.abs(diffDays)} days overdue`
-      } else if (diffDays === 0) {
-        return 'Due today'
-      } else if (diffDays === 1) {
-        return 'Due tomorrow'
-      } else {
-        return `${diffDays} days remaining`
-      }
-    },
-
-    getOrderStatusClass(status) {
-      const classes = {
-        'Received': 'bg-success',
-        'Pending': 'bg-warning',
-        'Cancelled': 'bg-danger',
-        'Active': 'bg-primary'
-      }
-      return classes[status] || 'bg-secondary'
-    },
-
-    getEventIcon(type) {
-      const icons = {
-        created: Plus,
-        updated: Edit,
-        cancelled: XCircle,
-        received: CheckCircle
-      }
-      return icons[type] || Activity
-    },
-
-    getEventMarkerClass(type) {
-      const classes = {
-        created: 'bg-primary',
-        updated: 'bg-info',
-        cancelled: 'bg-danger',
-        received: 'bg-success'
-      }
-      return classes[type] || 'bg-secondary'
-    }
+// ── Load batches from API when modal opens ────────────────────────────────────
+async function loadBatches() {
+  if (!props.order?.id) return
+  loadingBatches.value = true
+  itemsReady.value = false
+  try {
+    const shipment = await fetchShipmentWithBatches(props.order.id, true)
+    const batches  = shipment?.batches || []
+    orderItems.value = batches.map(b => ({
+      name:       b.product_name || 'Unknown Product',
+      quantity:   Number(b.quantity_received) || 0,
+      unit:       'pcs',
+      unitPrice:  Number(b.cost_price)  || 0,
+      totalPrice: (Number(b.cost_price) || 0) * (Number(b.quantity_received) || 0),
+      notes:      '',
+      productId:  b.product_id,
+      batchId:    b.batch_id,
+      expiryDate: b.expiry_date,
+      status:     b.status
+    }))
+    orderHistory.value = props.order.orderHistory || []
+  } catch {
+    orderItems.value  = []
+    orderHistory.value = props.order.orderHistory || []
+  } finally {
+    loadingBatches.value = false
+    itemsReady.value     = true
   }
 }
+
+function resetEditForm() {
+  editForm.value = {
+    expectedDate: props.order.expectedDate || '',
+    status:       props.order.status || 'Pending Delivery',
+    notes:        props.order.notes  || '',
+    shippingCost: props.order.shippingCost || 0
+  }
+}
+
+function initializeModal() {
+  isEditMode.value = props.initialMode === 'edit'
+  resetEditForm()
+  loadBatches()
+  emit('edit-mode-changed', isEditMode.value)
+}
+
+// ── Watch show prop ───────────────────────────────────────────────────────────
+watch(() => props.show, newVal => { if (newVal) initializeModal() }, { immediate: true })
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+function toggleEditMode() {
+  isEditMode.value = !isEditMode.value
+  if (isEditMode.value) resetEditForm()
+  emit('edit-mode-changed', isEditMode.value)
+}
+
+function handleCancel() {
+  if (isEditMode.value) {
+    isEditMode.value = false
+    resetEditForm()
+  } else {
+    closeModal()
+  }
+}
+
+function closeModal() {
+  isEditMode.value = false
+  emit('close')
+}
+
+function handleOverlayClick(event) {
+  if (event.target === event.currentTarget && !saving.value) closeModal()
+}
+
+async function saveOrder() {
+  saving.value = true
+  try {
+    const backendStatus = STATUS_TO_BACKEND[editForm.value.status] || editForm.value.status
+
+    await updateShipment(props.order.id, {
+      expected_delivery_date: editForm.value.expectedDate || null,
+      status:      backendStatus,
+      notes:       editForm.value.notes || null,
+      freight_cost: editForm.value.shippingCost || null
+    })
+
+    showSuccess('Order updated successfully')
+
+    emit('save', {
+      ...props.order,
+      expectedDate: editForm.value.expectedDate,
+      status:       editForm.value.status,
+      notes:        editForm.value.notes,
+      shippingCost: editForm.value.shippingCost
+    })
+
+    isEditMode.value = false
+  } catch (err) {
+    showError(err.message || 'Failed to save order')
+  } finally {
+    saving.value = false
+  }
+}
+
+function printOrder() { window.print() }
 </script>
 
 <style scoped>
@@ -848,12 +606,12 @@ export default {
 .modal-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, var(--primary-light), var(--primary));
+  background-color: var(--status-info-bg);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--primary-dark);
+  color: var(--status-info);
 }
 
 .modal-header {
@@ -861,8 +619,8 @@ export default {
   align-items: center;
   justify-content: space-between;
   padding: 2rem 2rem 1rem 2rem;
-  border-bottom: 1px solid var(--neutral);
-  background-color: var(--surface-tertiary);
+  border-bottom: 1px solid var(--border-primary);
+  background-color: var(--surface-secondary);
   flex-shrink: 0;
 }
 
@@ -876,8 +634,8 @@ export default {
 
 .modal-footer {
   padding: 1.5rem 2rem 2rem 2rem;
-  background-color: var(--surface-tertiary);
-  border-top: 1px solid var(--neutral);
+  background-color: var(--surface-secondary);
+  border-top: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
 
@@ -909,7 +667,8 @@ export default {
 }
 
 .info-card {
-  background: var(--neutral-light);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 12px;
   padding: 1.5rem;
   margin-bottom: 1rem;
@@ -920,12 +679,12 @@ export default {
 }
 
 .info-card-title {
-  color: var(--tertiary-dark);
+  color: var(--text-primary);
   font-weight: 600;
   margin-bottom: 1rem;
   display: flex;
   align-items: center;
-  border-bottom: 1px solid var(--neutral);
+  border-bottom: 1px solid var(--border-primary);
   padding-bottom: 0.5rem;
 }
 
@@ -935,7 +694,7 @@ export default {
   align-items: flex-start;
   margin-bottom: 0.75rem;
   padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--neutral);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .info-item:last-child {
@@ -946,7 +705,7 @@ export default {
 
 .info-item label {
   font-weight: 500;
-  color: var(--tertiary-medium);
+  color: var(--text-secondary);
   font-size: 0.875rem;
   margin-bottom: 0;
   flex-shrink: 0;
@@ -954,7 +713,7 @@ export default {
 }
 
 .info-item span, .info-item div {
-  color: var(--tertiary-dark);
+  color: var(--text-primary);
   font-weight: 500;
   text-align: right;
   flex-grow: 1;
@@ -962,36 +721,36 @@ export default {
 
 .order-id-text {
   font-family: 'Monaco', 'Menlo', monospace;
-  color: var(--primary) !important;
+  color: var(--text-accent) !important;
   font-weight: 600;
 }
 
 .amount-text {
   font-size: 1.1rem;
   font-weight: 700;
-  color: var(--success) !important;
+  color: var(--status-success) !important;
 }
 
 .description-content, .notes-content {
-  background: white;
+  background: var(--surface-primary);
   padding: 1rem;
   border-radius: 8px;
-  border: 1px solid var(--neutral);
+  border: 1px solid var(--border-primary);
   min-height: 60px;
-  color: var(--tertiary-dark);
+  color: var(--text-primary);
   line-height: 1.6;
 }
 
 .items-table {
-  background: white;
+  background: var(--surface-primary);
   border-radius: 8px;
   overflow: hidden;
   font-size: 0.875rem;
 }
 
 .items-table th {
-  background: var(--primary-light);
-  color: var(--primary-dark);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
   font-weight: 600;
   border: none;
   padding: 0.75rem 0.5rem;
@@ -1002,21 +761,21 @@ export default {
 
 .items-table td {
   padding: 0.75rem 0.5rem;
-  border-top: 1px solid var(--neutral);
+  border-top: 1px solid var(--border-primary);
   vertical-align: middle;
 }
 
 .items-table tbody tr:hover {
-  background-color: var(--neutral-light);
+  background-color: var(--state-hover);
 }
 
 .items-table tfoot tr {
-  border-top: 2px solid var(--primary);
+  border-top: 2px solid var(--border-accent);
 }
 
 .items-table tfoot td {
   font-weight: 600;
-  background-color: var(--neutral-light);
+  background-color: var(--surface-secondary);
 }
 
 /* Form controls in table */
@@ -1051,7 +810,7 @@ export default {
   top: 30px;
   bottom: -24px;
   width: 2px;
-  background-color: var(--neutral-medium);
+  background-color: var(--border-primary);
 }
 
 .timeline-marker {
@@ -1086,11 +845,25 @@ export default {
   border-radius: 4px;
 }
 
+/* Semantic timeline marker colors */
+.timeline-marker.marker-info {
+  background-color: var(--status-info);
+}
+.timeline-marker.marker-success {
+  background-color: var(--status-success);
+}
+.timeline-marker.marker-error {
+  background-color: var(--status-error);
+}
+.timeline-marker.marker-default {
+  background-color: var(--border-primary);
+}
+
 /* Form controls in edit mode */
 .form-control:focus,
 .form-select:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 0.2rem rgba(115, 146, 226, 0.25);
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 0.2rem var(--state-hover);
 }
 
 /* Responsive adjustments */

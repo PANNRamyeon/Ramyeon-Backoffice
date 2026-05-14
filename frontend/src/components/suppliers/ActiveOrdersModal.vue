@@ -4,7 +4,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">
-            <Package :size="20" class="me-2 text-warning" />
+            <Package :size="20" class="me-2 text-status-warning" />
             {{ modalTitle }}
           </h5>
           <button type="button" class="btn-close" @click="$emit('close')"></button>
@@ -14,27 +14,27 @@
             <div class="spinner-border text-primary" role="status">
               <span class="visually-hidden">Loading...</span>
             </div>
-            <p class="mt-2 text-muted">Loading active orders...</p>
+            <p class="mt-2 text-secondary">Loading active orders...</p>
           </div>
           
           <div v-else-if="processedOrders.length === 0" class="text-center py-4">
-            <Package :size="48" class="text-tertiary-medium mb-3" />
-            <p class="text-tertiary-medium">No active orders found</p>
-            <small class="text-muted">There are currently no pending purchase orders</small>
+            <Package :size="48" class="text-secondary mb-3" />
+            <p class="text-secondary">No active orders found</p>
+            <small class="text-secondary">There are currently no pending purchase orders</small>
           </div>
           
           <div v-else class="row g-3">
             <div v-for="order in processedOrders" :key="order.id" class="col-12">
-              <div class="card border-start border-warning border-3">
+              <div class="card border-start border-3" style="border-left-color: var(--status-warning) !important">
                 <div class="card-body">
                   <div class="d-flex justify-content-between align-items-start mb-3">
                     <div>
                       <h6 class="mb-1 fw-bold">{{ order.id }}</h6>
                       <p class="text-tertiary-medium mb-1">{{ order.supplier }}</p>
-                      <small class="text-tertiary-medium">Ordered: {{ formatDate(order.orderDate) }}</small>
+                      <small class="text-secondary">Ordered: {{ formatDate(order.orderDate) }}</small>
                     </div>
                     <div class="text-end">
-                      <h5 class="mb-1 text-warning fw-bold">₱{{ formatCurrency(order.totalAmount) }}</h5>
+                      <h5 class="mb-1 text-status-warning fw-bold">₱{{ formatCurrency(order.totalAmount) }}</h5>
                       <span :class="getStatusBadgeClass(order.status)" class="badge">
                         {{ getStatusText(order.status) }}
                       </span>
@@ -42,17 +42,17 @@
                   </div>
                   
                   <div class="mb-3">
-                    <small class="text-tertiary-medium">Expected Delivery:</small>
+                    <small class="text-secondary">Expected Delivery:</small>
                     <div class="fw-semibold">{{ formatDate(order.expectedDelivery) }}</div>
                   </div>
                   
                   <div class="border-top pt-2">
-                    <small class="text-tertiary-medium">Items ({{ order.items?.length || 0 }}):</small>
+                    <small class="text-secondary">Items ({{ order.items?.length || 0 }}):</small>
                     <div class="mt-1">
                       <div v-for="(item, index) in order.items" :key="index" class="d-flex justify-content-between small">
                         <div>
                           <div class="fw-medium">{{ getProductName(item) }}</div>
-                          <small class="text-muted">{{ getProductId(item) }}</small>
+                          <small class="text-secondary">{{ getProductId(item) }}</small>
                         </div>
                         <div class="text-end">
                           <div>{{ item.quantity }}x</div>
@@ -67,8 +67,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" @click="$emit('close')">Close</button>
-          <button type="button" class="btn btn-warning" @click="handleViewAllOrders">View All Orders</button>
+          <button type="button" class="btn btn-cancel" @click="$emit('close')">Close</button>
+          <button type="button" class="btn btn-view" @click="handleViewAllOrders">View All Orders</button>
         </div>
       </div>
     </div>
@@ -121,7 +121,7 @@ export default {
   computed: {
     modalTitle() {
       if (this.supplier) {
-        return `Active Orders - ${this.supplier.name}`
+        return `Active Orders - ${this.supplier.supplier_name}`
       }
       return 'Active Purchase Orders'
     },
@@ -134,10 +134,9 @@ export default {
       // Filter orders based on supplier if provided
       let filtered = this.orders
       if (this.supplier) {
-        filtered = this.orders.filter(order => 
-          order.supplierId === this.supplier.id || 
-          order.supplier === this.supplier.name ||
-          order.supplierId === this.supplier.id
+        filtered = this.orders.filter(order =>
+          order.supplierId === this.supplier.supplier_id ||
+          order.supplier === this.supplier.supplier_name
         )
       }
       
@@ -190,13 +189,13 @@ export default {
 
     getStatusBadgeClass(status) {
       const statusClasses = {
-        'Pending Delivery': 'bg-warning text-dark',
-        'Partially Received': 'bg-info text-white',
-        'Received': 'bg-success text-white',
-        'Depleted': 'bg-secondary text-white',
-        'Mixed Status': 'bg-primary text-white'
+        'Pending Delivery': 'status-warning',
+        'Partially Received': 'status-info',
+        'Received': 'status-success',
+        'Depleted': '',
+        'Mixed Status': 'status-info'
       }
-      return statusClasses[status] || 'bg-secondary text-white'
+      return statusClasses[status] || ''
     },
 
     getStatusText(status) {
@@ -208,10 +207,6 @@ export default {
 
 <style scoped>
 @import '@/assets/styles/colors.css';
-
-.text-tertiary-medium {
-  color: var(--tertiary-medium) !important;
-}
 
 /* Modal styling */
 .modal-backdrop.show {
@@ -281,7 +276,7 @@ export default {
 }
 
 .modal-header {
-  border-bottom: 1px solid var(--neutral-light);
+  border-bottom: 1px solid var(--border-primary);
   padding: 1.5rem;
 }
 
@@ -292,7 +287,7 @@ export default {
 }
 
 .modal-footer {
-  border-top: 1px solid var(--neutral-light);
+  border-top: 1px solid var(--border-primary);
   padding: 1rem 1.5rem;
 }
 </style>

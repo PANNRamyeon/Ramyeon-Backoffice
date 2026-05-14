@@ -173,13 +173,13 @@
     <!-- Suppliers Grid -->
     <div v-if="!suppliersComposable.loading?.value || (suppliersComposable.suppliers?.value && suppliersComposable.suppliers.value.length > 0)" class="row g-4">
       <div 
-        v-for="supplier in suppliersComposable.filteredSuppliers?.value || []" 
-        :key="supplier.id"
+        v-for="supplier in suppliersComposable.filteredSuppliers?.value || []"
+        :key="supplier.supplier_id"
         class="col-12 col-md-6 col-lg-4"
       >
         <SupplierCard
           :supplier="supplier"
-          :is-selected="suppliersComposable.selectedSuppliers?.value?.includes(supplier.id) || false"
+          :is-selected="suppliersComposable.selectedSuppliers?.value?.includes(supplier.supplier_id) || false"
           @toggle-select="toggleSupplierSelection"
           @toggle-favorite="handleToggleFavorite"
           @edit="formComposable.editSupplier"
@@ -410,10 +410,7 @@ export default {
     }
 
     const handleBulkSave = (newSuppliers) => {
-      const result = bulkComposable.handleBulkSave(
-        newSuppliers, 
-        suppliersComposable.suppliers?.value || []
-      )
+      const result = bulkComposable.handleBulkSave(newSuppliers)
       
       if (result.success) {
         suppliersComposable.successMessage.value = result.message
@@ -441,7 +438,7 @@ export default {
       
       if (result.success) {
         // Show success toast
-        success(`${supplier.name} ${supplier.isFavorite ? 'added to' : 'removed from'} favorites`)
+        success(`${supplier.supplier_name} ${supplier.isFavorite ? 'added to' : 'removed from'} favorites`)
       } else if (result.error) {
         // Show error toast
         showError(result.error)
@@ -449,9 +446,9 @@ export default {
     }
 
     const viewSupplier = (supplier) => {
-      router.push({ 
-        name: 'SupplierDetails', 
-        params: { supplierId: supplier.id.toString() } 
+      router.push({
+        name: 'SupplierDetails',
+        params: { supplierId: supplier.supplier_id }
       })
     }
 
@@ -461,19 +458,9 @@ export default {
 
     const handleSaveSupplier = async () => {
       try {
-        const result = await formComposable.saveSupplier(suppliersComposable)
-        
-        if (result.success) {
-          // Refresh the suppliers list to ensure the new supplier is visible
-          await suppliersComposable.refreshData()
-          
-          // Update reports if available
-          if (reportsComposable && reportsComposable.refreshReports) {
-            await reportsComposable.refreshReports()
-          }
-        }
-      } catch (error) {
-        console.error('Error in handleSaveSupplier:', error)
+        await formComposable.saveSupplier()
+      } catch (err) {
+        console.error('Error in handleSaveSupplier:', err)
       }
     }
 
@@ -504,10 +491,7 @@ export default {
     }
 
     const handleImportSave = (importedSuppliers) => {
-      const result = importComposable.handleImportSave(
-        importedSuppliers, 
-        suppliersComposable.suppliers?.value || []
-      )
+      const result = importComposable.handleImportSave(importedSuppliers)
       
       if (result.success) {
         suppliersComposable.successMessage.value = result.message

@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import HttpResponse
 from django.views import View
+from django.core.cache import cache
 
 from datetime import datetime, timedelta
 
@@ -22,6 +23,19 @@ import json
 
 logger = logging.getLogger(__name__)
 
+
+def _product_cache_version():
+    """Return current product cache version; increment on writes to bust all product list caches."""
+    return cache.get('products_cache_version', 0)
+
+
+def _invalidate_product_caches():
+    """Bust all product list pages and stock snapshot by incrementing the cache version."""
+    cache.delete('products_stock_snapshot')
+    v = cache.get('products_cache_version', 0)
+    cache.set('products_cache_version', v + 1, 86400)
+
+
 # ================ PRODUCT VIEWS ================
 
 class TestTemplateView(APIView):
@@ -33,7 +47,12 @@ class TestTemplateView(APIView):
 class ProductListView(APIView):
     @require_authentication
     def get(self, request):
-        """Get products with optional filters and pagination (50 per page by default)."""
+        """Get products with pagination — or export to CSV/XLSX when ?format=csv|xlsx."""
+        # 'format' is reserved by DRF — export uses 'export_format' instead
+        file_format = request.GET.get('export_format', '').lower()
+        if file_format in ('csv', 'xlsx'):
+            return ProductExportView().get(request)
+
         try:
             category_id = request.GET.get('category_id')
             status_filter = request.GET.get('status')
@@ -46,6 +65,12 @@ class ProductListView(APIView):
                 page_size = min(max(1, int(page_size)), MAX_PAGE_SIZE)
             except (TypeError, ValueError):
                 page_size = DEFAULT_PAGE_SIZE
+
+            v = _product_cache_version()
+            cache_key = f"products_list:{v}:{category_id}:{status_filter}:{search_term}:{subcategory_name}:{page_size}:{page_token}"
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return Response(cached, status=status.HTTP_200_OK)
 
             # All paths use server-side pagination: only one page is fetched from DynamoDB.
             if search_term:
@@ -76,6 +101,7 @@ class ProductListView(APIView):
             }
             if next_page_token:
                 payload['next_page_token'] = next_page_token
+            cache.set(cache_key, payload, 120)  # 2-minute cache per page
             return Response(payload, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in ProductListView.get: {e}")
@@ -92,8 +118,9 @@ class ProductListView(APIView):
             product_data = dict(request.data)
             new_product = ProductService.create_product(product_data)
 
+            _invalidate_product_caches()
             return Response({
-                'message': 'Product created successfully', 
+                'message': 'Product created successfully',
                 'data': new_product.to_dict()
             }, status=status.HTTP_201_CREATED)
         except ValueError as ve:
@@ -139,13 +166,14 @@ class ProductDetailView(APIView):
                     {"error": "Product not found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
+            _invalidate_product_caches()
             return Response({
-                'message': 'Product updated successfully', 
+                'message': 'Product updated successfully',
                 'data': updated_product.to_dict()
             }, status=status.HTTP_200_OK)
         except ValueError as ve:
             return Response(
-                {"error": str(ve)}, 
+                {"error": str(ve)},
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
@@ -167,9 +195,10 @@ class ProductDetailView(APIView):
                     {"error": "Product not found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
+            _invalidate_product_caches()
             delete_type = "permanently deleted" if hard_delete else "moved to trash"
             return Response(
-                {"message": f"Product {delete_type} successfully"}, 
+                {"message": f"Product {delete_type} successfully"},
                 status=status.HTTP_200_OK
             )
         except Exception as e:
@@ -190,13 +219,14 @@ class ProductDetailView(APIView):
                     {"error": "Product not found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
+            _invalidate_product_caches()
             return Response({
-                'message': 'Product updated successfully', 
+                'message': 'Product updated successfully',
                 'data': updated_product.to_dict()
             }, status=status.HTTP_200_OK)
         except ValueError as ve:
             return Response(
-                {"error": str(ve)}, 
+                {"error": str(ve)},
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
@@ -351,6 +381,7 @@ class ProductStockUpdateView(APIView):
                     batch_data["shipment_id"] = request.data.get("shipment_id")
                 created_batch = batch_svc.create_batch(batch_data)
                 updated_product = ProductService.get_product_by_id(effective_product_id)
+                _invalidate_product_caches()
                 return Response(
                     {
                         "message": "Stock added via new batch",
@@ -726,6 +757,43 @@ class ProductSyncView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+# ================ PRODUCT STOCK SNAPSHOT ================
+
+class ProductStockListView(APIView):
+    @require_authentication
+    def get(self, request):
+        """Lightweight stock snapshot: returns only product_id, total_stock, and status for all non-deleted products.
+        Used by the POS frontend for background stock polling without re-fetching full product data."""
+        try:
+            cache_key = 'products_stock_snapshot'
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return Response(cached, status=status.HTTP_200_OK)
+
+            all_products = []
+            last_key = None
+            while True:
+                page, last_key = Product.get_all_non_deleted_paginated(limit=200, last_evaluated_key=last_key)
+                all_products.extend(page)
+                if not last_key:
+                    break
+
+            data = [
+                {
+                    'product_id': p.sk,
+                    'total_stock': int(p.total_stock) if p.total_stock else 0,
+                    'status': p.status,
+                }
+                for p in all_products
+            ]
+            payload = {'data': data, 'count': len(data)}
+            cache.set(cache_key, payload, 60)  # 60-second cache
+            return Response(payload, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error in ProductStockListView.get: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 # ================ PRODUCT IMPORT/EXPORT VIEWS ================
 
 class BulkCreateProductsView(APIView):
@@ -824,303 +892,128 @@ class ProductImportView(APIView):
 class ProductExportView(APIView):
     @require_authentication
     def get(self, request):
-        """Export products to CSV/Excel (with uncategorized filter support)"""
-        try:
-            product_service = ProductService()
-            file_type = request.GET.get('format', 'csv').lower()
-            
-            # ===============================
-            # 🔹 Collect filters
-            # ===============================
-            filters = {}
-            if request.GET.get('category_id'):
-                filters['category_id'] = request.GET.get('category_id')
-            if request.GET.get('subcategory_name'):
-                filters['subcategory_name'] = request.GET.get('subcategory_name')
-            if request.GET.get('status'):
-                filters['status'] = request.GET.get('status')
-            if request.GET.get('stock_level'):
-                filters['stock_level'] = request.GET.get('stock_level')
-            if request.GET.get('search'):
-                filters['search'] = request.GET.get('search')
-            if request.GET.get('include_deleted'):
-                filters['include_deleted'] = request.GET.get('include_deleted')
-            
-            # ✅ NEW: support for uncategorized export
-            uncategorized_only = request.GET.get('uncategorized_only', 'false').lower() == 'true'
-            if uncategorized_only:
-                filters['uncategorized_only'] = True
+        """Export all non-deleted products to CSV or XLSX, with optional filters."""
+        import csv
+        from io import StringIO, BytesIO
+        from datetime import date
 
-            print(f"🔍 Export filters: {filters}")
-            print(f"🔍 Export format: {file_type}")
-            
-            # ===============================
-            # 🔹 Get products with filters
-            # ===============================
-            products = product_service.get_all_products(
-                filters=filters if filters else None, 
-                include_deleted=filters.get('include_deleted', False),
-                include_images=False  # Exclude images from export
-            )
-            
-            # ✅ Filter uncategorized in Python (fallback if DB filtering not yet added)
-            if uncategorized_only:
-                products = [
-                    p for p in products
-                    if not p.get('category_id') or p.get('category_id') == 'UNCTGRY-001'
-                ]
-
-            print(f"🔍 Found {len(products)} products for export")
-            
-            # ===============================
-            # 🔹 Handle Empty Export
-            # ===============================
-            if not products:
-                content_type = (
-                    "text/csv"
-                    if file_type == "csv"
-                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                filename = f"products_export.{file_type}"
-                response = HttpResponse("", content_type=content_type)
-                response["Content-Disposition"] = f'attachment; filename="{filename}"'
-                return response
-            
-            # ===============================
-            # 🔹 Export to CSV
-            # ===============================
-            if file_type == "csv":
-                import csv
-                from io import StringIO
-                
-                output = StringIO()
-                fieldnames = [
-                    "ID", "Product Name", "SKU", "Barcode", "Category", "Subcategory",
-                    "Price", "Cost Price", "Stock", "Total Stock", "Low Stock Threshold",
-                    "Status", "Supplier", "Description", "Unit", "Created At", "Updated At",
-                ]
-                writer = csv.DictWriter(output, fieldnames=fieldnames)
-                writer.writeheader()
-
-                for product in products:
-                    writer.writerow({
-                        "ID": product.get("_id", ""),
-                        "Product Name": product.get("product_name", ""),
-                        "SKU": product.get("SKU", ""),
-                        "Barcode": product.get("barcode", ""),
-                        "Category": product.get("category_name", product.get("category_id", "")),
-                        "Subcategory": product.get("subcategory_name", ""),
-                        "Price": product.get("selling_price", product.get("price", "")),
-                        "Cost Price": product.get("cost_price", ""),
-                        "Stock": product.get("stock", ""),
-                        "Total Stock": product.get("total_stock", product.get("stock", "")),
-                        "Low Stock Threshold": product.get("low_stock_threshold", ""),
-                        "Status": product.get("status", ""),
-                        "Supplier": product.get("supplier", product.get("supplier_id", "")),
-                        "Description": product.get("description", ""),
-                        "Unit": product.get("unit", ""),
-                        "Created At": product.get("created_at", ""),
-                        "Updated At": product.get("updated_at", ""),
-                    })
-
-                response = HttpResponse(output.getvalue(), content_type="text/csv")
-                response["Content-Disposition"] = 'attachment; filename="products_export.csv"'
-                return response
-
-            # ===============================
-            # 🔹 Export to Excel
-            # ===============================
-            elif file_type == "xlsx":
-                import pandas as pd
-                from io import BytesIO
-
-                df = pd.DataFrame([
-                    {
-                        "ID": p.get("_id", ""),
-                        "Product Name": p.get("product_name", ""),
-                        "SKU": p.get("SKU", ""),
-                        "Barcode": p.get("barcode", ""),
-                        "Category": p.get("category_name", p.get("category_id", "")),
-                        "Subcategory": p.get("subcategory_name", ""),
-                        "Price": p.get("selling_price", p.get("price", "")),
-                        "Cost Price": p.get("cost_price", ""),
-                        "Stock": p.get("stock", ""),
-                        "Total Stock": p.get("total_stock", p.get("stock", "")),
-                        "Low Stock Threshold": p.get("low_stock_threshold", ""),
-                        "Status": p.get("status", ""),
-                        "Supplier": p.get("supplier", p.get("supplier_id", "")),
-                        "Description": p.get("description", ""),
-                        "Unit": p.get("unit", ""),
-                        "Created At": p.get("created_at", ""),
-                        "Updated At": p.get("updated_at", ""),
-                    }
-                    for p in products
-                ])
-
-                output = BytesIO()
-                df.to_excel(output, index=False, engine="openpyxl")
-                output.seek(0)
-                response = HttpResponse(
-                    output.getvalue(),
-                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                response["Content-Disposition"] = 'attachment; filename="products_export.xlsx"'
-                return response
-
-            # Default fallback
-            return Response({"error": "Invalid format. Use 'csv' or 'xlsx'."},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            logger.error(f"Error in ProductExportView.get: {e}")
-            import traceback
-            traceback.print_exc()
-            return Response({"error": f"Export failed: {str(e)}"},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @require_authentication
-    def get(self, request):
-        """Export products to CSV/Excel - FIXED VERSION"""
-        try:
-            product_service = ProductService()
-            file_type = request.GET.get('format', 'csv').lower()
-            
-            # Get ALL filters that your frontend might send
-            filters = {}
-            if request.GET.get('category_id'):
-                filters['category_id'] = request.GET.get('category_id')
-            if request.GET.get('subcategory_name'):
-                filters['subcategory_name'] = request.GET.get('subcategory_name')
-            if request.GET.get('status'):
-                filters['status'] = request.GET.get('status')
-            if request.GET.get('stock_level'):
-                filters['stock_level'] = request.GET.get('stock_level')
-            if request.GET.get('search'):
-                filters['search'] = request.GET.get('search')
-            if request.GET.get('include_deleted'):
-                filters['include_deleted'] = request.GET.get('include_deleted')
-            
-            print(f"🔍 Export filters: {filters}")
-            print(f"🔍 Export format: {file_type}")
-            
-            # Get products with filters
-            products = product_service.get_all_products(
-                filters=filters if filters else None, 
-                include_deleted=filters.get('include_deleted', False),
-                include_images=False  # Exclude images from export
-            )
-            
-            print(f"🔍 Found {len(products)} products for export")
-            
-            if not products:
-                # Return empty file instead of error response
-                if file_type == 'csv':
-                    response = HttpResponse("", content_type='text/csv')
-                    response['Content-Disposition'] = 'attachment; filename="products_export.csv"'
-                    return response
-                else:
-                    response = HttpResponse("", content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                    response['Content-Disposition'] = 'attachment; filename="products_export.xlsx"'
-                    return response
-            
-            if file_type == 'csv':
-                import csv
-                from io import StringIO
-                
-                output = StringIO()
-                
-                # Use comprehensive field names that match your frontend expectations
-                fieldnames = [
-                    'ID', 'Product Name', 'SKU', 'Barcode', 'Category', 'Subcategory',
-                    'Price', 'Cost Price', 'Stock', 'Total Stock', 'Low Stock Threshold',
-                    'Status', 'Supplier', 'Description', 'Unit', 'Created At', 'Updated At'
-                ]
-                
-                writer = csv.DictWriter(output, fieldnames=fieldnames)
-                writer.writeheader()
-                
-                for product in products:
-                    # Map product fields to CSV columns
-                    row = {
-                        'ID': product.get('_id', ''),
-                        'Product Name': product.get('product_name', ''),
-                        'SKU': product.get('SKU', ''),
-                        'Barcode': product.get('barcode', ''),
-                        'Category': product.get('category_name', product.get('category_id', '')),
-                        'Subcategory': product.get('subcategory_name', ''),
-                        'Price': product.get('selling_price', product.get('price', '')),
-                        'Cost Price': product.get('cost_price', ''),
-                        'Stock': product.get('stock', ''),
-                        'Total Stock': product.get('total_stock', product.get('stock', '')),
-                        'Low Stock Threshold': product.get('low_stock_threshold', ''),
-                        'Status': product.get('status', ''),
-                        'Supplier': product.get('supplier', product.get('supplier_id', '')),
-                        'Description': product.get('description', ''),
-                        'Unit': product.get('unit', ''),
-                        'Created At': product.get('created_at', ''),
-                        'Updated At': product.get('updated_at', '')
-                    }
-                    writer.writerow(row)
-                
-                response = HttpResponse(output.getvalue(), content_type='text/csv')
-                response['Content-Disposition'] = 'attachment; filename="products_export.csv"'
-                return response
-                
-            elif file_type == 'xlsx':
-                import pandas as pd
-                from io import BytesIO
-                
-                # Convert products to DataFrame
-                data = []
-                for product in products:
-                    data.append({
-                        'ID': product.get('_id', ''),
-                        'Product Name': product.get('product_name', ''),
-                        'SKU': product.get('SKU', ''),
-                        'Barcode': product.get('barcode', ''),
-                        'Category': product.get('category_name', product.get('category_id', '')),
-                        'Subcategory': product.get('subcategory_name', ''),
-                        'Price': product.get('selling_price', product.get('price', '')),
-                        'Cost Price': product.get('cost_price', ''),
-                        'Stock': product.get('stock', ''),
-                        'Total Stock': product.get('total_stock', product.get('stock', '')),
-                        'Low Stock Threshold': product.get('low_stock_threshold', ''),
-                        'Status': product.get('status', ''),
-                        'Supplier': product.get('supplier', product.get('supplier_id', '')),
-                        'Description': product.get('description', ''),
-                        'Unit': product.get('unit', ''),
-                        'Created At': product.get('created_at', ''),
-                        'Updated At': product.get('updated_at', '')
-                    })
-                
-                df = pd.DataFrame(data)
-                output = BytesIO()
-                df.to_excel(output, index=False, engine='openpyxl')
-                output.seek(0)
-                
-                response = HttpResponse(
-                    output.getvalue(),
-                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                )
-                response['Content-Disposition'] = 'attachment; filename="products_export.xlsx"'
-                return response
-            
-            else:
-                # For unsupported formats, return CSV by default
-                return Response(
-                    {"error": "Invalid format. Use 'csv' or 'xlsx'"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-        except Exception as e:
-            logger.error(f"Error in ProductExportView.get: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # Return error response that frontend can handle
+        file_type = request.GET.get('export_format', 'csv').lower()
+        if file_type not in ('csv', 'xlsx'):
             return Response(
-                {"error": f"Export failed: {str(e)}"}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": "Invalid format. Use 'csv' or 'xlsx'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- collect optional filters from query params ---
+        category_id     = request.GET.get('category_id') or None
+        subcategory     = request.GET.get('subcategory_name') or None
+        status_filter   = request.GET.get('status') or None
+        stock_level     = request.GET.get('stock_level') or None
+        search          = (request.GET.get('search') or '').strip().lower()
+
+        try:
+            # --- fetch ALL non-deleted products via paginated loop ---
+            all_products = []
+            last_key = None
+            while True:
+                page, last_key = Product.get_all_non_deleted_paginated(
+                    limit=200, last_evaluated_key=last_key
+                )
+                all_products.extend(page)
+                if not last_key:
+                    break
+
+            # --- apply filters in Python ---
+            if category_id:
+                all_products = [p for p in all_products if p.category_id == category_id]
+            if subcategory:
+                all_products = [p for p in all_products if getattr(p, 'subcategory_name', '') == subcategory]
+            if status_filter:
+                all_products = [p for p in all_products if p.status == status_filter]
+            if stock_level == 'out_of_stock':
+                all_products = [p for p in all_products if int(p.total_stock or 0) == 0]
+            elif stock_level == 'low_stock':
+                all_products = [
+                    p for p in all_products
+                    if int(p.total_stock or 0) > 0 and int(p.total_stock or 0) <= int(p.low_stock_threshold or 0)
+                ]
+            if search:
+                all_products = [
+                    p for p in all_products
+                    if search in (p.product_name or '').lower()
+                    or search in (p.SKU or '').lower()
+                    or search in (p.sk or '').lower()
+                ]
+
+            logger.info(f"Export: {len(all_products)} products, format={file_type}")
+
+            # --- build category id → name lookup ---
+            category_map = {}
+            try:
+                for cat in Category.query("category"):
+                    category_map[cat.sk] = cat.category_name
+            except Exception as e:
+                logger.warning(f"Export: could not load categories for name lookup: {e}")
+
+            # --- build rows from model instances via to_dict() ---
+            today = date.today().isoformat()
+            filename = f"products_export_{today}.{file_type}"
+
+            def make_row(p):
+                d = p.to_dict()
+                category_id = d.get('category_id', '')
+                return {
+                    'Product ID':           d.get('product_id', p.sk),
+                    'Product Name':         d.get('product_name', ''),
+                    'SKU':                  d.get('sku') or d.get('SKU', ''),
+                    'Barcode':              d.get('barcode', ''),
+                    'Category':             category_map.get(category_id, category_id),
+                    'Subcategory':          d.get('subcategory_name', ''),
+                    'Selling Price':        d.get('selling_price', ''),
+                    'Cost Price':           d.get('cost_price', ''),
+                    'Total Stock':          d.get('total_stock', 0),
+                    'Low Stock Threshold':  d.get('low_stock_threshold', ''),
+                    'Status':               d.get('status', ''),
+                    'Oldest Expiry':        d.get('oldest_batch_expiry', ''),
+                    'Newest Expiry':        d.get('newest_batch_expiry', ''),
+                    'Expiry Alert':         d.get('expiry_alert', False),
+                    'Unit':                 d.get('unit', ''),
+                    'Description':          d.get('description', ''),
+                    'Created At':           d.get('created_at', ''),
+                    'Updated At':           d.get('updated_at', ''),
+                }
+
+            rows = [make_row(p) for p in all_products]
+
+            # --- CSV ---
+            if file_type == 'csv':
+                output = StringIO()
+                if rows:
+                    writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()))
+                    writer.writeheader()
+                    writer.writerows(rows)
+                response = HttpResponse(output.getvalue(), content_type='text/csv')
+                response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                return response
+
+            # --- XLSX ---
+            import pandas as pd
+            df = pd.DataFrame(rows)
+            output = BytesIO()
+            df.to_excel(output, index=False, engine='openpyxl')
+            output.seek(0)
+            response = HttpResponse(
+                output.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+
+        except Exception as e:
+            logger.error(f"ProductExportView error: {e}", exc_info=True)
+            return Response(
+                {"error": f"Export failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

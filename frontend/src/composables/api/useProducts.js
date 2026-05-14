@@ -65,11 +65,11 @@ export function useProducts() {
     
     if (filters.value.stock_level) {
       if (filters.value.stock_level === 'out_of_stock') {
-        result = result.filter(product => (product.total_stock || product.stock) === 0)
+        result = result.filter(product => (product.total_stock ?? product.stock ?? 0) === 0)
       } else if (filters.value.stock_level === 'low_stock') {
         result = result.filter(product => {
-          const currentStock = product.total_stock || product.stock
-          return currentStock > 0 && currentStock <= product.low_stock_threshold
+          const currentStock = product.total_stock ?? product.stock ?? 0
+          return currentStock > 0 && currentStock <= (product.low_stock_threshold ?? 0)
         })
       }
     }
@@ -142,16 +142,16 @@ export function useProducts() {
   const fetchProducts = async (customFilters = {}) => {
     loading.value = true
     error.value = null
-    
+
     try {
       const mergedFilters = { ...filters.value, ...customFilters }
-      const response = await apiProductsService.getAllProducts(mergedFilters)
-      products.value = response.data || []
-      
+      const allProducts = await apiProductsService.getAllProductsAllPages(mergedFilters)
+      products.value = allProducts
+
       if (Object.keys(customFilters).length > 0 || products.value.length > 0) {
         toast.success(`Loaded ${products.value.length} products`)
       }
-      return response
+      return { data: allProducts }
     } catch (err) {
       error.value = err.message
       toast.error(`Failed to load products: ${err.message}`)
@@ -848,11 +848,11 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
   const initializeProducts = async () => {
     loading.value = true
     error.value = null
-    
+
     try {
-      const response = await apiProductsService.getAllProducts(filters.value)
-      products.value = response.data || []
-      return response
+      const allProducts = await apiProductsService.getAllProductsAllPages(filters.value)
+      products.value = allProducts
+      return { data: allProducts }
     } catch (err) {
       error.value = err.message
       products.value = []

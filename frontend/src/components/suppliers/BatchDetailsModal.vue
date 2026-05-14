@@ -31,7 +31,7 @@
               <div class="card-body">
                 <div class="row">
                   <div class="col-md-6">
-                    <h6 class="text-muted mb-3">Order Information</h6>
+                    <h6 class="text-secondary mb-3">Order Information</h6>
                     <div class="info-row">
                       <span class="label">Order ID:</span>
                       <strong>{{ receipt.id }}</strong>
@@ -46,10 +46,10 @@
                     </div>
                     <div class="info-row">
                       <span class="label">Date Received:</span>
-                      <span v-if="receipt.receivedDate" class="text-success">
+                      <span v-if="receipt.receivedDate" class="text-status-success">
                         {{ formatDate(receipt.receivedDate) }}
                       </span>
-                      <span v-else class="text-warning">
+                      <span v-else class="text-status-warning">
                         <em>Not yet received</em>
                       </span>
                     </div>
@@ -61,22 +61,22 @@
                     </div>
                   </div>
                   <div class="col-md-6">
-                    <h6 class="text-muted mb-3">Summary</h6>
+                    <h6 class="text-secondary mb-3">Summary</h6>
                     <div class="info-row">
                       <span class="label">Total Items:</span>
-                      <strong>{{ receipt.items?.length || 0 }}</strong>
+                      <strong>{{ loading ? '…' : totalItems }}</strong>
                     </div>
                     <div class="info-row">
                       <span class="label">Total Quantity:</span>
-                      <strong>{{ receipt.quantity }}</strong>
+                      <strong>{{ loading ? '…' : totalQuantity }}</strong>
                     </div>
                     <div class="info-row">
                       <span class="label">Subtotal:</span>
-                      <span>₱{{ formatCurrency(receipt.subtotal || receipt.total) }}</span>
+                      <span>₱{{ formatCurrency(totalCost) }}</span>
                     </div>
                     <div class="info-row">
                       <span class="label">Total Cost:</span>
-                      <strong class="text-primary fs-5">₱{{ formatCurrency(receipt.total) }}</strong>
+                      <strong class="text-accent fs-5">₱{{ formatCurrency(totalCost) }}</strong>
                     </div>
                   </div>
                 </div>
@@ -107,18 +107,27 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(item, index) in receipt.items" :key="index">
+                      <tr v-if="loading">
+                        <td colspan="8" class="text-center py-4">
+                          <div class="spinner-border spinner-border-sm text-accent me-2"></div>
+                          Loading items…
+                        </td>
+                      </tr>
+                      <tr v-else-if="batchItems.length === 0">
+                        <td colspan="8" class="text-center py-4 text-secondary">No items found for this order</td>
+                      </tr>
+                      <tr v-for="(item, index) in batchItems" :key="index" v-else>
                         <td>{{ index + 1 }}</td>
                         <td>
                           <strong>{{ item.name }}</strong>
                           <br>
-                          <small class="text-muted">{{ item.productId }}</small>
+                          <small class="text-secondary">{{ item.productId }}</small>
                         </td>
                         <td>
-                          <code class="text-primary">{{ item.batchNumber }}</code>
+                          <code class="text-accent">{{ item.batchNumber }}</code>
                         </td>
                         <td class="text-center">
-                          <span class="badge bg-secondary">{{ item.quantity }}</span>
+                          <span class="badge">{{ item.quantity }}</span>
                         </td>
                         <td>₱{{ formatCurrency(item.unitPrice) }}</td>
                         <td class="fw-bold">₱{{ formatCurrency(item.totalPrice) }}</td>
@@ -126,11 +135,11 @@
                           <span v-if="item.expiryDate">
                             {{ formatDate(item.expiryDate) }}
                             <br>
-                            <small :class="['text-muted', { 'text-danger': isExpiringSoon(item.expiryDate) }]">
+                            <small :class="['text-secondary', { 'text-status-error': isExpiringSoon(item.expiryDate) }]">
                               {{ getExpiryStatus(item.expiryDate) }}
                             </small>
                           </span>
-                          <span v-else class="text-muted">N/A</span>
+                          <span v-else class="text-secondary">N/A</span>
                         </td>
                         <td class="text-center">
                           <span class="badge" :class="getStockClass(item.quantityRemaining, item.quantity)">
@@ -143,10 +152,10 @@
                       <tr>
                         <td colspan="3" class="text-end"><strong>Total:</strong></td>
                         <td class="text-center">
-                          <strong>{{ getTotalQuantity() }}</strong>
+                          <strong>{{ totalQuantity }}</strong>
                         </td>
                         <td colspan="2" class="text-end">
-                          <strong class="text-primary">₱{{ formatCurrency(receipt.total) }}</strong>
+                          <strong class="text-accent">₱{{ formatCurrency(totalCost) }}</strong>
                         </td>
                         <td colspan="2"></td>
                       </tr>
@@ -173,7 +182,7 @@
 
         <!-- Modal Footer -->
         <div class="modal-footer border-0 pt-4">
-          <button type="button" class="btn btn-outline-secondary" @click="handleClose">
+          <button type="button" class="btn btn-cancel" @click="handleClose">
             Close
           </button>
           <!--<button type="button" class="btn btn-primary" @click="printReceipt">
@@ -186,119 +195,99 @@
   </Teleport>
 </template>
 
-<script>
+<script setup>
+import { ref, computed, watch } from 'vue'
 import { FileText, Package, Printer } from 'lucide-vue-next'
-import { useToast } from '@/composables/ui/useToast'
+import { useShipments } from '@/composables/api/useShipments'
 
-export default {
-  name: 'BatchDetailsModal',
-  components: {
-    FileText,
-    Package,
-    Printer
-  },
-  emits: ['close'],
-  props: {
-    show: {
-      type: Boolean,
-      default: false
-    },
-    receipt: {
-      type: Object,
-      default: null
-    }
-  },
-  setup(props, { emit }) {
-    const { success: showSuccess } = useToast()
-    
-    function handleClose() {
-      emit('close')
-    }
+const props = defineProps({
+  show:    { type: Boolean, default: false },
+  receipt: { type: Object,  default: null  }
+})
 
-    function handleOverlayClick(event) {
-      if (event.target === event.currentTarget) {
-        handleClose()
-      }
-    }
-    
-    function formatDate(dateString) {
-      if (!dateString) return 'N/A'
-      const date = new Date(dateString)
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      })
-    }
-    
-    function formatCurrency(amount) {
-      return new Intl.NumberFormat('en-PH', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      }).format(amount || 0)
-    }
-    
-    function getStatusClass(status) {
-      const classes = {
-        'Received': 'bg-success',
-        'Pending Delivery': 'bg-warning',
-        'Partially Received': 'bg-info',
-        'Depleted': 'bg-secondary'
-      }
-      return classes[status] || 'bg-secondary'
-    }
-    
-    function getStockClass(remaining, total) {
-      const percentage = (remaining / total) * 100
-      if (percentage === 0) return 'bg-secondary'
-      if (percentage < 25) return 'bg-danger'
-      if (percentage < 50) return 'bg-warning'
-      return 'bg-success'
-    }
-    
-    function isExpiringSoon(expiryDate) {
-      if (!expiryDate) return false
-      const expiry = new Date(expiryDate)
-      const today = new Date()
-      const daysUntilExpiry = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24))
-      return daysUntilExpiry <= 30 && daysUntilExpiry > 0
-    }
-    
-    function getExpiryStatus(expiryDate) {
-      if (!expiryDate) return ''
-      const expiry = new Date(expiryDate)
-      const today = new Date()
-      const daysUntilExpiry = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24))
-      
-      if (daysUntilExpiry < 0) return 'Expired'
-      if (daysUntilExpiry === 0) return 'Expires today'
-      if (daysUntilExpiry === 1) return 'Expires tomorrow'
-      if (daysUntilExpiry <= 30) return `Expires in ${daysUntilExpiry} days`
-      return `${daysUntilExpiry} days until expiry`
-    }
-    
-    function getTotalQuantity() {
-      return props.receipt?.items?.reduce((sum, item) => sum + (item.quantity || 0), 0) || 0
-    }
-    
-    function printReceipt() {
-      showSuccess('Print functionality coming soon')
-      // TODO: Implement print functionality
-    }
-    
-    return {
-      handleClose,
-      handleOverlayClick,
-      formatDate,
-      formatCurrency,
-      getStatusClass,
-      getStockClass,
-      isExpiringSoon,
-      getExpiryStatus,
-      getTotalQuantity,
-      printReceipt
-    }
+const emit = defineEmits(['close'])
+
+const { fetchShipmentWithBatches } = useShipments()
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const batchItems  = ref([])
+const loading     = ref(false)
+
+// ── Derived totals from live batch data ───────────────────────────────────────
+const totalItems    = computed(() => batchItems.value.length)
+const totalQuantity = computed(() => batchItems.value.reduce((s, i) => s + (i.quantity || 0), 0))
+const totalCost     = computed(() => batchItems.value.reduce((s, i) => s + (i.totalPrice || 0), 0))
+
+// ── Fetch batches when modal opens ────────────────────────────────────────────
+async function loadBatches() {
+  if (!props.receipt?.id) return
+  loading.value = true
+  batchItems.value = []
+  try {
+    const shipment = await fetchShipmentWithBatches(props.receipt.id, true)
+    batchItems.value = (shipment?.batches || []).map(b => ({
+      name:              b.product_name || 'Unknown Product',
+      productId:         b.product_id   || '',
+      batchNumber:       b.batch_number || '',
+      quantity:          Number(b.quantity_received) || 0,
+      unitPrice:         Number(b.cost_price)        || 0,
+      totalPrice:        (Number(b.cost_price) || 0) * (Number(b.quantity_received) || 0),
+      expiryDate:        b.expiry_date  || null,
+      quantityRemaining: Number(b.quantity_remaining) || 0,
+      status:            b.status       || ''
+    }))
+  } catch {
+    batchItems.value = []
+  } finally {
+    loading.value = false
   }
+}
+
+watch(() => props.show, newVal => { if (newVal) loadBatches() }, { immediate: true })
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function handleClose() { emit('close') }
+
+function handleOverlayClick(event) {
+  if (event.target === event.currentTarget) handleClose()
+}
+
+function formatDate(d) {
+  if (!d) return 'N/A'
+  return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function formatCurrency(amount) {
+  return new Intl.NumberFormat('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount || 0)
+}
+
+function getStatusClass(status) {
+  return { 'Received': 'status-success', 'Pending Delivery': 'status-warning',
+           'Partially Received': 'status-info', 'Depleted': '' }[status] ?? ''
+}
+
+function getStockClass(remaining, total) {
+  const pct = total > 0 ? (remaining / total) * 100 : 0
+  if (pct === 0) return ''
+  if (pct < 25)  return 'status-error'
+  if (pct < 50)  return 'status-warning'
+  return 'status-success'
+}
+
+function isExpiringSoon(expiryDate) {
+  if (!expiryDate) return false
+  const days = Math.ceil((new Date(expiryDate) - new Date()) / 86400000)
+  return days > 0 && days <= 30
+}
+
+function getExpiryStatus(expiryDate) {
+  if (!expiryDate) return ''
+  const days = Math.ceil((new Date(expiryDate) - new Date()) / 86400000)
+  if (days < 0)  return 'Expired'
+  if (days === 0) return 'Expires today'
+  if (days === 1) return 'Expires tomorrow'
+  if (days <= 30) return `Expires in ${days} days`
+  return `${days} days until expiry`
 }
 </script>
 
@@ -319,18 +308,18 @@ export default {
 .modal-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, var(--info-light), var(--info));
+  background-color: var(--status-info-bg);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--info-dark);
+  color: var(--status-info);
 }
 
 .modal-header {
   padding: 1.5rem 1.75rem 0.9rem 1.75rem;
-  background: linear-gradient(135deg, var(--surface-tertiary), var(--surface-secondary));
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .modal-body {
@@ -342,8 +331,8 @@ export default {
 
 .modal-footer {
   padding: 1.25rem 1.75rem 1.75rem 1.75rem;
-  background-color: var(--surface-tertiary);
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  background-color: var(--surface-secondary);
+  border-top: 1px solid var(--border-primary);
 }
 
 .modal-overlay {
@@ -369,7 +358,7 @@ export default {
 }
 
 .receipt-header {
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--border-primary);
   border-radius: 12px;
   background-color: var(--surface-primary);
   box-shadow: var(--shadow-sm);
@@ -402,11 +391,6 @@ export default {
   color: var(--text-primary) !important;
 }
 
-.card .text-muted,
-.card-header .text-muted {
-  color: var(--text-secondary) !important;
-}
-
 code {
   font-family: 'Monaco', 'Menlo', monospace;
   font-size: 0.875rem;
@@ -419,24 +403,10 @@ code {
   box-shadow: var(--shadow-sm);
 }
 
-.dark-theme .card {
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: var(--shadow-md);
-}
-
 .card-header {
-  background-color: var(--surface-tertiary) !important;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.15) !important;
+  background-color: var(--surface-secondary) !important;
+  border-bottom: 1px solid var(--border-primary) !important;
   color: var(--text-primary);
-}
-
-.dark-theme .card-header {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
-}
-
-.dark-theme .table thead th {
-  border-bottom: 2px solid rgba(255, 255, 255, 0.15);
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .card-body {
@@ -446,7 +416,7 @@ code {
 
 .bg-light,
 .table-light {
-  background-color: var(--surface-tertiary) !important;
+  background-color: var(--surface-secondary) !important;
   color: var(--text-primary) !important;
 }
 
@@ -457,10 +427,10 @@ code {
 .table thead th {
   font-weight: 600;
   font-size: 0.875rem;
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   color: var(--text-primary);
-  border-bottom: 2px solid rgba(0, 0, 0, 0.18);
-  border-top: 1px solid rgba(0, 0, 0, 0.18);
+  border-bottom: 2px solid var(--border-primary);
+  border-top: 1px solid var(--border-primary);
 }
 
 .table tbody td {
@@ -469,12 +439,8 @@ code {
   background-color: var(--surface-primary);
 }
 
-.dark-theme .table tbody tr {
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
 .table tfoot td {
-  background-color: var(--surface-tertiary);
+  background-color: var(--surface-secondary);
   color: var(--text-primary);
   border-top: 1px solid var(--border-primary);
 }
