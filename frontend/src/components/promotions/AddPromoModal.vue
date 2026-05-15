@@ -390,7 +390,7 @@ const validateForm = () => {
   if (!formData.value.affected_category) { setError('Please select a category'); return false }
   if (!formData.value.start_date) { setError('Please select a start date'); return false }
   if (!formData.value.end_date) { setError('Please select an end date'); return false }
-  if (new Date(formData.value.end_date) <= new Date(formData.value.start_date)) { setError('End date must be after start date'); return false }
+  if (formData.value.end_date < formData.value.start_date) { setError('End date cannot be before start date'); return false }
   return true
 }
 

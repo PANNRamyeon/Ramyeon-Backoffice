@@ -483,6 +483,18 @@ class OnlineTransactionService:
                 except Exception as e:
                     logger.warning(f"Batch deduction warning for {item['product_id']}: {e}")
 
+            try:
+                from app.services.core.audit_service import AuditLogService
+                get_singleton(AuditLogService).log_action(
+                    user_data={'user_id': customer_id, 'username': customer_id, 'source': 'website'},
+                    action='create',
+                    resource_id=order_id,
+                    resource_type='online_transaction',
+                    changes={'total_amount': round(total_amount, 2), 'items_count': len(items_with_prices)},
+                )
+            except Exception as ae:
+                logger.warning(f"Audit logging failed for online order {order_id}: {ae}")
+
             return {
                 'success': True,
                 'message': 'Order created successfully',
@@ -521,6 +533,19 @@ class OnlineTransactionService:
 
         txn.update_order_status(new_status, notes)
         txn.save()
+
+        try:
+            from app.services.core.audit_service import AuditLogService
+            get_singleton(AuditLogService).log_action(
+                user_data={'user_id': updated_by, 'username': updated_by, 'source': 'admin'},
+                action='update_status',
+                resource_id=order_id,
+                resource_type='online_transaction',
+                changes={'old_status': current, 'new_status': new_status, 'notes': notes},
+            )
+        except Exception as ae:
+            logger.warning(f"Audit logging failed for order status update {order_id}: {ae}")
+
         return _txn_to_dict(txn)
 
     def update_payment_status(self, order_id, payment_status, payment_reference=None, confirmed_by=None):
@@ -533,6 +558,19 @@ class OnlineTransactionService:
         if payment_reference:
             txn.payment_reference = payment_reference
         txn.save()
+
+        try:
+            from app.services.core.audit_service import AuditLogService
+            actor = confirmed_by or 'system'
+            get_singleton(AuditLogService).log_action(
+                user_data={'user_id': actor, 'username': actor, 'source': 'admin'},
+                action='update_payment',
+                resource_id=order_id,
+                resource_type='online_transaction',
+                changes={'payment_status': payment_status, 'payment_reference': payment_reference},
+            )
+        except Exception as ae:
+            logger.warning(f"Audit logging failed for payment update {order_id}: {ae}")
 
         if payment_status == 'paid' and txn.order_status == 'pending':
             self.update_order_status(order_id, 'confirmed', confirmed_by or 'system', 'Payment confirmed')
@@ -569,4 +607,17 @@ class OnlineTransactionService:
                 f"Cannot cancel order in '{txn.order_status}' status."
             )
         txn.cancel_order(reason=cancellation_reason, cancelled_by=cancelled_by)
+
+        try:
+            from app.services.core.audit_service import AuditLogService
+            get_singleton(AuditLogService).log_action(
+                user_data={'user_id': cancelled_by, 'username': cancelled_by, 'source': 'admin'},
+                action='cancel',
+                resource_id=order_id,
+                resource_type='online_transaction',
+                changes={'reason': cancellation_reason},
+            )
+        except Exception as ae:
+            logger.warning(f"Audit logging failed for order cancellation {order_id}: {ae}")
+
         return _txn_to_dict(OnlineTransaction.get_by_id(order_id))

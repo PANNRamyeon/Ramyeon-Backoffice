@@ -249,11 +249,36 @@ export function useSuppliers() {
   const reportsActiveOrdersCount = computed(() => 0)
   const reportsTopPerformersCount = computed(() => suppliers.value.filter(s => s.isFavorite).length)
   const activeOrders = computed(() => [])
-  const topPerformers = computed(() => suppliers.value.filter(s => s.isFavorite))
+  const topPerformers = computed(() => {
+    return suppliers.value
+      .filter(s => s.isFavorite)
+      .map(supplier => {
+        const shipments = allHistoryOrders.value.filter(o => o.supplier_id === supplier.supplier_id)
+        const totalOrders = shipments.length
+        const totalValue = shipments.reduce((sum, o) => sum + (o.total_cost ?? o.totalAmount ?? 0), 0)
+        const averageOrderValue = totalOrders > 0 ? totalValue / totalOrders : 0
+        const sorted = [...shipments].sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate))
+        const lastOrder = sorted[0]?.orderDate || null
+        return {
+          ...supplier,
+          totalOrders,
+          totalValue,
+          averageOrderValue,
+          lastOrder,
+        }
+      })
+  })
 
   const openActiveOrdersModal = () => { showActiveOrdersModal.value = true }
   const closeActiveOrdersModal = () => { showActiveOrdersModal.value = false }
-  const openTopPerformersModal = () => { showTopPerformersModal.value = true }
+  const openTopPerformersModal = async () => {
+    showTopPerformersModal.value = true
+    if (!allHistoryOrders.value.length) {
+      reportsLoading.value = true
+      await fetchOrders()
+      reportsLoading.value = false
+    }
+  }
   const closeTopPerformersModal = () => { showTopPerformersModal.value = false }
   const refreshReports = async () => {}
 
@@ -412,6 +437,7 @@ export function useSuppliers() {
           status: statusMap[s.status] || 'pending',
           orderDate: s.shipment_date,
           expectedDelivery: s.expected_delivery_date || s.shipment_date,
+          total_cost: s.total_cost ?? null,
           totalAmount: s.freight_cost || 0,
           items: [],
           batchNumber: s.batch_number,

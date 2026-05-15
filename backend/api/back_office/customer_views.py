@@ -247,7 +247,7 @@ class CustomerDetailView(APIView):
 
     def put(self, request, customer_id):
         try:
-            allowed_fields = {'email', 'full_name', 'phone_number', 'username', 'password'}
+            allowed_fields = {'email', 'full_name', 'phone_number', 'phone', 'username', 'password', 'delivery_address'}
             data_to_update = {k: v for k, v in request.data.items() if k in allowed_fields}
             updated_customer = self.customer_service.update_customer(
                 customer_id,
@@ -490,6 +490,15 @@ class CustomerExportView(APIView):
         try:
             include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'
             csv_output = self.customer_service.export_customers_to_csv(include_deleted=include_deleted)
+            try:
+                from app.services.core.audit_service import AuditLogService
+                from app.utils.singleton import get_singleton
+                _cu = _get_current_user(request) or {'user_id': 'system', 'username': 'system'}
+                get_singleton(AuditLogService).log_data_export(
+                    _cu, export_type='customers', record_count=0, filename='customers_export.csv'
+                )
+            except Exception as ae:
+                logger.warning(f"Audit logging failed for customer export: {ae}")
             response = HttpResponse(csv_output.getvalue(), content_type='text/csv')
             response['Content-Disposition'] = 'attachment; filename="customers_export.csv"'
             return response
@@ -530,6 +539,20 @@ class CustomerImportView(APIView):
                 )
             finally:
                 os.unlink(tmp_path)
+
+            try:
+                from app.services.core.audit_service import AuditLogService
+                from app.utils.singleton import get_singleton
+                _cu = _get_current_user(request) or {'user_id': 'system', 'username': 'system'}
+                get_singleton(AuditLogService).log_data_import(
+                    _cu,
+                    import_type='customers',
+                    success_count=results.get('created', 0),
+                    failure_count=results.get('skipped', 0),
+                    filename=uploaded_file.name,
+                )
+            except Exception as ae:
+                logger.warning(f"Audit logging failed for customer import: {ae}")
 
             return Response({
                 'message': (

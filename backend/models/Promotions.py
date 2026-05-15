@@ -166,8 +166,8 @@ class Promotion(Model):
             raise ValueError("Discount value is required")
         if not start_date or not end_date:
             raise ValueError("Start date and end date are required")
-        if start_date >= end_date:
-            raise ValueError("Start date must be before end date")
+        if start_date.date() > end_date.date():
+            raise ValueError("Start date cannot be after end date")
         if not created_by:
             raise ValueError("Created by user is required")
 
@@ -424,10 +424,10 @@ class Promotion(Model):
                     ptype = value if key == 'promotion_type' else self.promotion_type
                     self._validate_discount_value(disc, ptype)
                 if key in ['start_date', 'end_date'] and not self.recurrence_rule:
-                    if key == 'start_date' and value >= self.end_date:
-                        raise ValueError("Start date must be before end date")
-                    if key == 'end_date' and value <= self.start_date:
-                        raise ValueError("End date must be after start date")
+                    if key == 'start_date' and value.date() > self.end_date.date():
+                        raise ValueError("Start date cannot be after end date")
+                    if key == 'end_date' and value.date() < self.start_date.date():
+                        raise ValueError("End date cannot be before start date")
                 if old_value != value:
                     setattr(self, key, value)
                     updated_fields.append(key)
@@ -436,7 +436,10 @@ class Promotion(Model):
             self.updated_at = datetime.now(timezone.utc)
             self.pos_sync_status = "pending"
             self.save()
-            self._add_audit_log("modified", updated_by, json.dumps(changes))
+            def _serialize(v):
+                return v.isoformat() if isinstance(v, datetime) else v
+            safe_changes = {k: {"old": _serialize(v["old"]), "new": _serialize(v["new"])} for k, v in changes.items()}
+            self._add_audit_log("modified", updated_by, json.dumps(safe_changes))
             self.mark_pos_pending(f"Promotion updated: {', '.join(updated_fields)}")
         return self
 
@@ -630,8 +633,8 @@ def validate_promotion_data(name, description, discount_value, start_date, end_d
         return False, str(e)
     if not start_date or not end_date:
         return False, "Dates required"
-    if start_date >= end_date:
-        return False, "Start date must be before end date"
+    if start_date.date() > end_date.date():
+        return False, "Start date cannot be after end date"
     if not created_by:
         return False, "Created by required"
     return True, ""

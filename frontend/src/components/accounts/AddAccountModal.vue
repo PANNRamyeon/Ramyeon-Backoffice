@@ -89,7 +89,7 @@
             type="text"
             class="form-control"
             :class="{ 'is-invalid': validationErrors.username }"
-            :disabled="mode === 'edit' || isLoading"
+            :disabled="isLoading"
             placeholder="Enter username"
             required
             @blur="validateField('username')"

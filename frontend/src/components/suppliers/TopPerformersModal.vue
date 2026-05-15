@@ -33,37 +33,30 @@
                       <h6 class="mb-1 fw-bold text-accent">{{ supplier.supplier_name }}</h6>
                       <p class="text-tertiary-medium mb-0">{{ supplier.email }}</p>
                     </div>
-                    <div class="text-end">
-                      <div class="d-flex align-items-center mb-1">
-                        <Star :size="16" class="text-status-warning me-1" :fill="supplier.rating !== 'N/A' ? 'currentColor' : 'none'" />
-                        <span class="fw-bold text-accent">{{ supplier.rating }}</span>
-                      </div>
-                      <small class="text-secondary">{{ supplier.onTimeDelivery }}% on-time</small>
-                    </div>
                   </div>
                   
                   <div class="row g-3 mb-3">
                     <div class="col-6 col-md-3">
                       <div class="stat-card surface-tertiary border-theme text-center">
-                        <div class="stat-value text-accent">{{ supplier.totalOrders }}</div>
+                        <div class="stat-value text-accent">{{ supplier.totalOrders ?? 'N/A' }}</div>
                         <small class="text-secondary">Total Orders</small>
                       </div>
                     </div>
                     <div class="col-6 col-md-3">
                       <div class="stat-card surface-tertiary border-theme text-center">
-                        <div class="stat-value text-accent">₱{{ formatCurrency(supplier.totalValue) }}</div>
+                        <div class="stat-value text-accent">{{ supplier.totalValue != null ? '₱' + formatCurrency(supplier.totalValue) : 'N/A' }}</div>
                         <small class="text-secondary">Total Value</small>
                       </div>
                     </div>
                     <div class="col-6 col-md-3">
                       <div class="stat-card surface-tertiary border-theme text-center">
-                        <div class="stat-value text-accent">₱{{ formatCurrency(supplier.averageOrderValue, 2) }}</div>
+                        <div class="stat-value text-accent">{{ supplier.averageOrderValue != null ? '₱' + formatCurrency(supplier.averageOrderValue, 2) : 'N/A' }}</div>
                         <small class="text-secondary">Avg Order</small>
                       </div>
                     </div>
                     <div class="col-6 col-md-3">
                       <div class="stat-card surface-tertiary border-theme text-center">
-                        <div class="stat-value text-accent">{{ formatDate(supplier.lastOrder) }}</div>
+                        <div class="stat-value text-accent">{{ formatDate(supplier.lastOrder || supplier.updated_at) }}</div>
                         <small class="text-secondary">Last Order</small>
                       </div>
                     </div>
@@ -98,13 +91,12 @@
 </template>
 
 <script>
-import { TrendingUp, Star } from 'lucide-vue-next'
+import { TrendingUp } from 'lucide-vue-next'
 
 export default {
   name: 'TopPerformersModal',
   components: {
-    TrendingUp,
-    Star
+    TrendingUp
   },
   props: {
     show: {
@@ -123,11 +115,13 @@ export default {
   emits: ['close'],
   methods: {
     formatDate(dateString) {
+      if (!dateString) return 'N/A'
       const date = new Date(dateString)
-      return date.toLocaleDateString('en-US', { 
-        year: 'numeric', 
-        month: 'short', 
-        day: 'numeric' 
+      if (isNaN(date.getTime())) return 'N/A'
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
       })
     },
 

@@ -145,8 +145,8 @@
       <template #header>
         <tr>
           <th style="width: 10%;">Log ID</th>
-          <th style="width: 12%;">User ID</th>
-          <th style="width: 12%;">Ref. ID</th>
+          <th style="width: 12%;">Username</th>
+          <th style="width: 12%;">Source</th>
           <th style="width: 15%;">Event Type</th>
           <th style="width: 10%; text-align: center;">Action</th>
           <th style="width: 10%; text-align: center;">Status</th>
@@ -166,8 +166,8 @@
               {{ sessionLog.formattedLogId }}
             </span>
           </td>
-          <td class="text-secondary">{{ sessionLog.user_id }}</td>
-          <td class="text-secondary">{{ sessionLog.ref_id }}</td>
+          <td class="text-secondary">{{ sessionLog.username }}</td>
+          <td class="text-secondary">{{ sessionLog.target_type || sessionLog.log_source || '-' }}</td>
           <td class="text-secondary">{{ sessionLog.event_type }}</td>
           <td class="text-center text-tertiary">{{ getAmountQty(sessionLog) }}</td>
           <td class="text-center">
@@ -283,7 +283,7 @@ export default {
       if (this.searchFilter.trim()) {
         const search = this.searchFilter.toLowerCase()
         filtered = filtered.filter(log => 
-          (log.user_id || '').toLowerCase().includes(search)
+          (log.username || '').toLowerCase().includes(search)
         )
       }
       
@@ -315,7 +315,7 @@ export default {
           ...log,
           positionNumber: position,
           logType: logType,
-          formattedLogId: this.getFormattedLogId(log, position)
+          formattedLogId: this.getFormattedLogId(log)
         }
       })
     },
@@ -620,30 +620,8 @@ export default {
       return 'audit'
     },
 
-    getFormattedLogId(log, position) {
-      const logType = this.getLogType(log)
-      const prefix = logType === 'session' ? 'SES' : 'AUD'
-      const typeCounter = this.getTypeCounter(position, logType)
-      return `${prefix}-${typeCounter}`
-    },
-
-    getTypeCounter(currentPosition, logType) {
-      // Count how many logs of this type come AFTER this position
-      let counter = 0
-      const totalOfType = this.filteredLogs.filter(log => this.getLogType(log) === logType).length
-      
-      // Count items of the same type that appear before this position
-      for (let i = 0; i < currentPosition; i++) {
-        if (i < this.filteredLogs.length) {
-          const log = this.filteredLogs[i]
-          if (this.getLogType(log) === logType) {
-            counter++
-          }
-        }
-      }
-      
-      // Return the reverse count
-      return totalOfType - counter + 1
+    getFormattedLogId(log) {
+      return log.log_id || '-'
     },
 
     getLogTypeBadgeClass(logType) {
@@ -663,10 +641,7 @@ export default {
     },
 
     getAmountQty(sessionLog) {
-      const eventType = (sessionLog.event_type || '').toLowerCase()
-      return (eventType === 'session' || eventType === 'session complete') 
-        ? 'None' 
-        : sessionLog.amount_qty || '-'
+      return sessionLog.amount_qty || '-'
     },
 
     formatTimestamp(timestamp) {

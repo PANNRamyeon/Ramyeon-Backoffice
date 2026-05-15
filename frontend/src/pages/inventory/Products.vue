@@ -335,7 +335,7 @@
             </td>
             <td v-if="isColumnVisible('sku')" class="text-left">
               <code class="text-primary surface-tertiary px-2 py-1 rounded">
-                {{ product.SKU || '—' }}
+                {{ product.sku || product.SKU || '—' }}
               </code>
             </td>
             <td v-if="isColumnVisible('category')">
@@ -582,8 +582,8 @@ export default {
           aVal = (a.product_name || '').toLowerCase()
           bVal = (b.product_name || '').toLowerCase()
         } else if (col === 'sku') {
-          aVal = (a.SKU || '').toLowerCase()
-          bVal = (b.SKU || '').toLowerCase()
+          aVal = (a.sku || a.SKU || '').toLowerCase()
+          bVal = (b.sku || b.SKU || '').toLowerCase()
         } else if (col === 'category') {
           aVal = getCategoryName(a.category_id).toLowerCase()
           bVal = getCategoryName(b.category_id).toLowerCase()

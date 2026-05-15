@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from botocore.exceptions import ClientError
 from pynamodb.exceptions import UpdateError
-from models.Batches import Batch, BatchManager
+from models.Batches import Batch, BatchManager, _parse_datetime
 from models.Product import Product
 from models.Shipment import Shipment
 from notifications.services import notification_service
@@ -632,11 +632,14 @@ class BatchService:
 
             old_dict = batch.to_dict()
 
+            _DATETIME_FIELDS = {'expiry_date', 'date_received', 'created_at', 'updated_at'}
             read_only = {'pk', 'sk'}
             for key, value in update_data.items():
                 if key in read_only:
                     continue
                 if hasattr(batch, key):
+                    if key in _DATETIME_FIELDS and isinstance(value, str):
+                        value = _parse_datetime(value) or value
                     setattr(batch, key, value)
             batch.updated_at = datetime.utcnow()
             batch.save()

@@ -31,7 +31,7 @@ class SessionLogsAPI {
         if (params.limit) queryParams.append('limit', params.limit);
         if (params.type) queryParams.append('type', params.type);
 
-        const url = `/session-logs/combined/${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+        const url = `/sessions/combined-logs/${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
 
         const response = await api.get(url);
 
@@ -48,7 +48,7 @@ class SessionLogsAPI {
    */
   async DisplayLogs(params = {}) {
     try {
-        const response = await api.get('/session-logs/display/');
+        const response = await api.get('/sessions/display/');
         return this.handleResponse(response);
     } catch (error) {
         console.error("Error fetching session logs:", error);

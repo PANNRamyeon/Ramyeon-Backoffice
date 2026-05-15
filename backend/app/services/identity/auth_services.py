@@ -101,11 +101,17 @@ class AuthService:
                     )
                 except Exception:
                     pass
+                try:
+                    from app.services.core.audit_service import AuditLogService
+                    from app.utils.singleton import get_singleton
+                    get_singleton(AuditLogService).log_login_failed(email, reason="unknown_email")
+                except Exception:
+                    pass
                 raise Exception("Invalid email or password")
-            
+
             # Password verification
             password_valid = self.verify_password(password, user.password)
-            
+
             if not password_valid:
                 logger.warning(f"Invalid password for user: {email}")
                 try:
@@ -116,6 +122,12 @@ class AuthService:
                         notification_type="security",
                         metadata={"event_type": "invalid_password", "email": email}
                     )
+                except Exception:
+                    pass
+                try:
+                    from app.services.core.audit_service import AuditLogService
+                    from app.utils.singleton import get_singleton
+                    get_singleton(AuditLogService).log_login_failed(email, reason="invalid_password")
                 except Exception:
                     pass
                 raise Exception("Invalid email or password")
@@ -215,6 +227,12 @@ class AuthService:
                     )
                 except Exception:
                     pass
+                try:
+                    from app.services.core.audit_service import AuditLogService
+                    from app.utils.singleton import get_singleton
+                    get_singleton(AuditLogService).log_login_failed(email, reason="unknown_email")
+                except Exception:
+                    pass
                 raise Exception("Invalid email or password")
 
             if not self.verify_password(password, user.password):
@@ -227,6 +245,12 @@ class AuthService:
                         notification_type="security",
                         metadata={"event_type": "invalid_password", "email": email, "source": "pos"}
                     )
+                except Exception:
+                    pass
+                try:
+                    from app.services.core.audit_service import AuditLogService
+                    from app.utils.singleton import get_singleton
+                    get_singleton(AuditLogService).log_login_failed(email, reason="invalid_password")
                 except Exception:
                     pass
                 raise Exception("Invalid email or password")
@@ -357,6 +381,7 @@ class AuthService:
                 response_data = {
                     "user_id": user.sk,  # USER-###
                     "email": user.email,
+                    "username": user.username or user.email,
                     "role": user.role,
                     "email_verified": email_verified_bool,
                     "user_data": user_data

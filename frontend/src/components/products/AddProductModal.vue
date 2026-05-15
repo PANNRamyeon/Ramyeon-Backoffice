@@ -790,8 +790,10 @@ export default {
 
       const reader = new FileReader()
       reader.onload = e => {
+        // imagePreview holds the data URL for local display only.
+        // image_url is intentionally NOT set here — S3 upload is not yet implemented
+        // and a base64 data URL would exceed DynamoDB's 400 KB item size limit.
         imagePreview.value = e.target.result
-        productForm.value.image_url = e.target.result
       }
       reader.readAsDataURL(file)
 
@@ -868,7 +870,8 @@ export default {
           action: isEditMode.value ? 'updated' : 'created',
           withBatch: !isEditMode.value && createWithStock.value
         })
-        closeModal()
+        hide()
+        resetForm()
 
       } catch (err) {
         console.error('[AddProductModal] handleSubmit error:', err)
@@ -940,6 +943,8 @@ export default {
             productForm.value[key] = product[key]
           }
         })
+        // API returns lowercase "sku"; form field is uppercase "SKU"
+        productForm.value.SKU = product.SKU || product.sku || ''
         if (product.image_url) imagePreview.value = product.image_url
         show()
       }

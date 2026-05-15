@@ -250,6 +250,16 @@ class ProductRestoreView(APIView):
 
             product.restore()
             Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
+            try:
+                from app.services.core.audit_service import AuditLogService
+                from app.utils.singleton import get_singleton
+                current_user = getattr(request, 'current_user', None)
+                get_singleton(AuditLogService).log_product_restore(
+                    current_user or {'user_id': 'system', 'username': 'system'},
+                    product.to_dict(),
+                )
+            except Exception as ae:
+                logger.warning(f"Audit logging failed for product restore {product_id}: {ae}")
             return Response(
                 {"message": "Product restored successfully"},
                 status=status.HTTP_200_OK
@@ -399,6 +409,7 @@ class ProductStockUpdateView(APIView):
                     reason=reason,
                     adjusted_by=getattr(request, "user_id", None) or None,
                     notes=reason,
+                    current_user=getattr(request, "current_user", None),
                 )
                 updated_product = ProductService.get_product_by_id(effective_product_id)
                 return Response(
@@ -449,6 +460,7 @@ class ProductStockUpdateView(APIView):
                 reason=f"Stock set / correction: {reason}",
                 adjusted_by=getattr(request, "user_id", None) or None,
                 notes=reason,
+                current_user=getattr(request, "current_user", None),
             )
             updated_product = ProductService.get_product_by_id(effective_product_id)
             return Response(
@@ -496,6 +508,7 @@ class StockAdjustmentView(APIView):
                 reason="sale",
                 adjusted_by=getattr(request, "user_id", None) or None,
                 notes="Sale adjustment",
+                current_user=getattr(request, "current_user", None),
             )
             updated_product = ProductService.get_product_by_id(product_id)
 
@@ -868,16 +881,31 @@ class ProductImportView(APIView):
             
             try:
                 results = product_service.import_products_from_file(
-                    temp_file_path, 
-                    file_type, 
+                    temp_file_path,
+                    file_type,
                     validate_only
                 )
-                
+
+                if not validate_only:
+                    try:
+                        from app.services.core.audit_service import AuditLogService
+                        from app.utils.singleton import get_singleton
+                        _cu = getattr(request, 'current_user', None) or {'user_id': 'system', 'username': 'system'}
+                        get_singleton(AuditLogService).log_data_import(
+                            _cu,
+                            import_type='products',
+                            success_count=results.get('success_count', results.get('imported_count', 0)),
+                            failure_count=results.get('failed_count', results.get('failure_count', 0)),
+                            filename=uploaded_file.name,
+                        )
+                    except Exception as ae:
+                        logger.warning(f"Audit logging failed for product import: {ae}")
+
                 return Response({
                     'message': 'Import completed successfully' if not validate_only else 'Validation completed',
                     'results': results
                 }, status=status.HTTP_200_OK)
-                
+
             finally:
                 os.unlink(temp_file_path)
             
@@ -984,6 +1012,16 @@ class ProductExportView(APIView):
                 }
 
             rows = [make_row(p) for p in all_products]
+
+            try:
+                from app.services.core.audit_service import AuditLogService
+                from app.utils.singleton import get_singleton
+                _cu = getattr(request, 'current_user', None) or {'user_id': 'system', 'username': 'system'}
+                get_singleton(AuditLogService).log_data_export(
+                    _cu, export_type='products', record_count=len(rows), filename=filename
+                )
+            except Exception as ae:
+                logger.warning(f"Audit logging failed for product export: {ae}")
 
             # --- CSV ---
             if file_type == 'csv':

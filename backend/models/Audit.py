@@ -57,7 +57,7 @@ class AuditLog(Model):
         write_capacity_units = 10  # Higher for frequent writes
 
     # ============= PRIMARY KEYS =============
-    pk = UnicodeAttribute(hash_key=True)   # Partition Key: "audit_logs"
+    pk = UnicodeAttribute(hash_key=True, attr_name="PK")   # Partition Key: "audit_logs"
     sk = UnicodeAttribute(range_key=True, attr_name="SK")  # Sort Key: "AUD-00001" (generated)
 
     # ============= GSI DEFINITION =============
@@ -86,7 +86,7 @@ class AuditLog(Model):
         """
         try:
             # Generate SK using utils.py function
-            sk = generate_sk('AUD-', 'audit_seq')
+            sk = generate_sk('AUD', 'audit_logs')
 
             # Set required fields
             kwargs['pk'] = 'audit_logs'

@@ -1,5 +1,6 @@
 import csv
 import os
+import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import logging
@@ -10,6 +11,29 @@ from models.Sessions import SessionLog
 from notifications.services import notification_service
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_query(query_iter):
+    """Drain a PynamoDB query iterator, skipping records that fail deserialization.
+
+    Query-level AWS errors (missing index, wrong key schema) abort immediately
+    so the caller gets an empty list instead of an infinite retry loop.
+    Per-record deserialization errors are skipped individually.
+    """
+    results = []
+    while True:
+        try:
+            results.append(next(query_iter))
+        except StopIteration:
+            break
+        except Exception as exc:
+            err = str(exc)
+            logger.warning(f"Skipping malformed DynamoDB record: {exc}")
+            # "Failed to query items" wraps AWS ValidationException / ResourceNotFoundException;
+            # these are query-level failures that repeat on every next() call — break immediately.
+            if "Failed to query items" in err or "does not have the specified index" in err:
+                break
+    return results
 
 
 class SessionLogService:
@@ -220,14 +244,14 @@ class SessionLogService:
             active_sessions = SessionLog.get_active_sessions()
             active_count = len(active_sessions)
 
-            today_sessions = list(SessionLog.date_index.query(
+            today_sessions = _safe_query(SessionLog.date_index.query(
                 "session_logs",
                 SessionLog.login_time.between(today_start, today_end)
             ))
             today_count = len(today_sessions)
 
             thirty_days_ago = now - timedelta(days=30)
-            recent_ended = list(SessionLog.date_index.query(
+            recent_ended = _safe_query(SessionLog.date_index.query(
                 "session_logs",
                 SessionLog.login_time >= thirty_days_ago,
                 filter_condition=SessionLog.session_duration_seconds.exists()
@@ -568,13 +592,13 @@ class SessionDisplayService:
         """Get formatted session logs from DynamoDB."""
         try:
             if user_filter:
-                sessions = list(SessionLog.username_index.query(
+                sessions = _safe_query(SessionLog.username_index.query(
                     "session_logs",
                     SessionLog.username == user_filter
                 ))
             else:
                 filter_cond = (SessionLog.status == status_filter) if status_filter else None
-                sessions = list(SessionLog.query("session_logs", filter_condition=filter_cond))
+                sessions = _safe_query(SessionLog.query("session_logs", filter_condition=filter_cond))
 
             sessions.sort(key=lambda s: s.login_time or datetime.min, reverse=True)
 
@@ -623,10 +647,13 @@ class SessionDisplayService:
                 try:
                     audit_limit = limit // 2 if log_type == "all" else limit
                     from models.Audit import AuditLog
-                    audit_logs = list(AuditLog.query("audit_logs"))[:audit_limit]
+                    audit_logs = _safe_query(AuditLog.query("audit_logs"))[:audit_limit]
                     for audit in audit_logs:
+                        # Normalize legacy double-hyphen SKs: 'AUD--00076' → 'AUD-00076'
+                        raw_sk = audit.sk or ''
+                        normalized_sk = re.sub(r'-{2,}', '-', raw_sk)
                         all_logs.append({
-                            "log_id": audit.sk,
+                            "log_id": normalized_sk,
                             "username": getattr(audit, "username", "Unknown"),
                             "branch_id": getattr(audit, "branch_id", "N/A"),
                             "event_type": (getattr(audit, "action", "") or "").replace("_", " ").title(),
@@ -640,10 +667,15 @@ class SessionDisplayService:
                 except Exception as audit_error:
                     logger.warning(f"Could not fetch audit logs: {audit_error}")
 
-            try:
-                all_logs.sort(key=lambda x: x.get("timestamp") or datetime.min, reverse=True)
-            except Exception:
-                pass
+            def _ts_key(entry):
+                ts = entry.get("timestamp")
+                if ts is None:
+                    return ""
+                if isinstance(ts, datetime):
+                    return ts.isoformat()
+                return str(ts)
+
+            all_logs.sort(key=_ts_key, reverse=True)
 
             return {"success": True, "data": all_logs[:limit], "total_count": len(all_logs)}
 

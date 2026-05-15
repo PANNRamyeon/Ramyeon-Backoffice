@@ -96,6 +96,22 @@ class ProductService:
             # - image_uploaded_at: never a model attribute
             for key in ('stock', 'expiry_date', 'date_received', 'supplier_id', 'batch_number', 'image_uploaded_at'):
                 normalized.pop(key, None)
+
+            # Guard: strip base64 data URIs from image_url.
+            # Storing a base64 image directly in DynamoDB exceeds the 400 KB item limit.
+            # Real image storage will go through S3; only a URL string is acceptable here.
+            image_url = normalized.get('image_url', '')
+            if isinstance(image_url, str) and image_url.startswith('data:'):
+                normalized['image_url'] = ''
+                logger.warning("Stripped base64 data URI from image_url on product create — use S3 upload instead")
+
+            # Validate required fields before hitting the model so missing args
+            # surface as 400 Bad Request rather than an unhandled 500.
+            required = ('product_name', 'sku', 'category_id', 'cost_price', 'selling_price', 'unit')
+            missing = [f for f in required if not normalized.get(f)]
+            if missing:
+                raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
             product = Product.create_product(**normalized)
             logger.info(f"Successfully created product {product.sk}")
             Category.adjust_subcategory_count(product.category_id, product.subcategory_name, +1)
@@ -107,6 +123,9 @@ class ProductService:
             return product
         except (PutError, ValueError) as e:
             logger.error(f"Error creating product: {str(e)}")
+            raise ValueError(f"Could not create product: {str(e)}") from e
+        except TypeError as e:
+            logger.error(f"Error creating product (bad arguments): {str(e)}")
             raise ValueError(f"Could not create product: {str(e)}") from e
 
     @staticmethod
@@ -414,7 +433,7 @@ class ProductService:
         Raises:
             ValueError: If the product is not found.
         """
-        product = ProductService.get_product_by_id(product_id)
+        product = ProductService.get_product_by_id(product_id, include_deleted=True)
         if not product:
             raise ValueError(f"Product with ID {product_id} not found.")
 
@@ -433,7 +452,10 @@ class ProductService:
                 _send_product_notification('soft_deleted', product.product_name, product_id)
             Category.adjust_subcategory_count(category_id, subcategory_name, -1)
             try:
-                _audit().log_product_delete(current_user or _SYSTEM_USER, product_dict)
+                if hard_delete:
+                    _audit().log_product_hard_delete(current_user or _SYSTEM_USER, product_dict)
+                else:
+                    _audit().log_product_delete(current_user or _SYSTEM_USER, product_dict)
             except Exception as ae:
                 logger.error(f"Audit logging failed for product delete: {ae}")
             return True
@@ -480,7 +502,7 @@ class ProductService:
     @staticmethod
     def update_stock_by_id(product_id: str, quantity_change: int, source: str = "manual",
                            terminal_id: str | None = None, transaction_id: str | None = None,
-                           reason: str | None = None):
+                           reason: str | None = None, current_user=None):
         """
         Update stock for a product identified by product_id.
         """
@@ -489,6 +511,7 @@ class ProductService:
             raise ValueError(f"Product with ID {product_id} not found.")
 
         prior_status = getattr(product, 'status', None)
+        old_stock = float(getattr(product, 'total_stock', 0) or 0)
         try:
             result = product.update_stock(
                 quantity_change=quantity_change,
@@ -504,6 +527,17 @@ class ProductService:
                     _send_product_notification(action, product.product_name, product_id)
             except Exception:
                 pass
+            try:
+                _audit().log_product_stock_update(
+                    current_user or _SYSTEM_USER,
+                    product_id,
+                    product.product_name,
+                    old_stock=old_stock,
+                    new_stock=old_stock + quantity_change,
+                    reason=reason or source,
+                )
+            except Exception as ae:
+                logger.warning(f"Audit logging failed for stock update {product_id}: {ae}")
             return result
         except Exception as e:
             logger.error(f"Error updating stock for product {product_id}: {str(e)}")
@@ -512,7 +546,7 @@ class ProductService:
     @staticmethod
     def update_stock_by_sku(sku: str, quantity_change: int, source: str = "manual",
                             terminal_id: str | None = None, transaction_id: str | None = None,
-                            reason: str | None = None):
+                            reason: str | None = None, current_user=None):
         """
         Update stock for a product identified by SKU.
         """
@@ -521,6 +555,7 @@ class ProductService:
             raise ValueError(f"Product with SKU {sku} not found.")
 
         prior_status = getattr(product, 'status', None)
+        old_stock = float(getattr(product, 'total_stock', 0) or 0)
         try:
             result = product.update_stock(
                 quantity_change=quantity_change,
@@ -536,6 +571,17 @@ class ProductService:
                     _send_product_notification(action, product.product_name, product.sk)
             except Exception:
                 pass
+            try:
+                _audit().log_product_stock_update(
+                    current_user or _SYSTEM_USER,
+                    product.sk,
+                    product.product_name,
+                    old_stock=old_stock,
+                    new_stock=old_stock + quantity_change,
+                    reason=reason or source,
+                )
+            except Exception as ae:
+                logger.warning(f"Audit logging failed for stock update (SKU {sku}): {ae}")
             return result
         except Exception as e:
             logger.error(f"Error updating stock for product with SKU {sku}: {str(e)}")

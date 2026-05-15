@@ -108,9 +108,10 @@ class CustomerService:
             'email': email,
             'password_hash': password_hash,
             'full_name': data.get('full_name'),
-            'phone_number': data.get('phone_number'),
+            'phone_number': data.get('phone_number') or data.get('phone'),
             'username': data.get('username'),
             'source': data.get('source', 'web'),
+            'delivery_address': data.get('delivery_address') or None,
         }
         customer = Customer.create_with_password(**model_kwargs)
         result = customer.to_dict()
@@ -246,7 +247,11 @@ class CustomerService:
             old_data = customer.to_dict()
             actions = []
 
-            allowed_fields = {'email', 'full_name', 'phone_number', 'username', 'password'}
+            # Normalize phone → phone_number
+            if 'phone' in customer_data and 'phone_number' not in customer_data:
+                customer_data['phone_number'] = customer_data.pop('phone')
+
+            allowed_fields = {'email', 'full_name', 'phone_number', 'username', 'password', 'delivery_address'}
             for field, value in customer_data.items():
                 if field not in allowed_fields:
                     continue
@@ -259,6 +264,10 @@ class CustomerService:
                             raise ValueError(f"Email {value} already in use")
                         actions.append(Customer.email.set(value.lower().strip()))
                         actions.append(Customer.email_verified.set(False))
+                elif field == 'delivery_address':
+                    from models.Customers import DeliveryAddress
+                    addr = DeliveryAddress(**{k: v for k, v in value.items() if v}) if value else None
+                    actions.append(Customer.delivery_address.set(addr))
                 elif hasattr(Customer, field):
                     actions.append(getattr(Customer, field).set(value))
 

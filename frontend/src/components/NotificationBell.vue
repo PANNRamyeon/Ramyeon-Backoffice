@@ -178,15 +178,15 @@ async function markAsRead(notification) {
 }
 
 async function markAllAsRead() {
-  if (unreadCount.value === 0) return
+  const unread = notifications.value.filter(n => !n.is_read)
+  if (unread.length === 0) return
   markingAllAsRead.value = true
   try {
-    await apiNotifications.MarkAllAsRead()
-    notifications.value.forEach(n => { n.is_read = true })
-    unreadCount.value = 0
+    await Promise.all(unread.map(n => apiNotifications.MarkAsRead(n.notification_id)))
+    unread.forEach(n => { n.is_read = true })
+    unreadCount.value = Math.max(0, unreadCount.value - unread.length)
   } catch {
-    const unread = notifications.value.filter(n => !n.is_read)
-    for (const n of unread) await markAsRead(n)
+    await fetchUnreadCount()
   } finally {
     markingAllAsRead.value = false
   }

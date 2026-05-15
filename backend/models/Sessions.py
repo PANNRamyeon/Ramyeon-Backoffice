@@ -49,7 +49,7 @@ class SessionLog(Model):
     sk = UnicodeAttribute(range_key=True, attr_name="SK")  # "SESS-00001" (5-digit)
     
     # ============= SESSION LOG DATA =============
-    branch_id = UnicodeAttribute()  # Required for employee tracking
+    branch_id = UnicodeAttribute(null=True)  # null=True tolerates legacy records with missing/mistyped branch_id
     username = UnicodeAttribute()  # Employee username (required)
     
     # ============= TIMESTAMPS =============

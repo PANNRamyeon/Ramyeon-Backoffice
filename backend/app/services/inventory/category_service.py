@@ -855,7 +855,19 @@ class CategoryService:
                 "subcategory_name": subcategory_data.get('name', 'Unknown'),
                 "action_type": "subcategory_added"
             })
-            
+
+            if current_user and self.audit_service:
+                try:
+                    self.audit_service.log_action(
+                        current_user,
+                        action="add_subcategory",
+                        resource_id=category_id,
+                        resource_type="category",
+                        changes={"subcategory_name": subcategory_data.get('name')},
+                    )
+                except Exception as ae:
+                    logger.error(f"Audit logging failed for subcategory add: {ae}")
+
             return True
             
         except ValueError as ve:
@@ -884,6 +896,17 @@ class CategoryService:
                         "subcategory_name": subcategory_name,
                         "action_type": "subcategory_removed"
                     })
+                    if current_user and self.audit_service:
+                        try:
+                            self.audit_service.log_action(
+                                current_user,
+                                action="remove_subcategory",
+                                resource_id=category_id,
+                                resource_type="category",
+                                changes={"subcategory_name": subcategory_name},
+                            )
+                        except Exception as ae:
+                            logger.error(f"Audit logging failed for subcategory remove: {ae}")
                     return True
             
             logger.warning(f"Subcategory '{subcategory_name}' not found in category '{category.category_name}'.")

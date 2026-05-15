@@ -87,3 +87,16 @@ class FixedUTCDateTimeAttribute(BaseUTCDateTimeAttribute):
         except Exception as e:
             logger.debug("Datetime parsing fallback for %r: %s", s[:50] if isinstance(value, str) else value, e)
             return datetime.utcnow()
+
+    def serialize(self, value):
+        """
+        Serialize to DynamoDB string.
+        PynamoDB 6.x MapAttribute.serialize() copies dict values via setattr, bypassing
+        deserialize — so a string can reach serialize(). Parse it here before handing
+        off to the parent (which calls value.tzinfo and crashes on strings).
+        """
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = self.deserialize(value) or datetime.utcnow()
+        return super().serialize(value)

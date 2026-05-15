@@ -177,6 +177,19 @@ class ShiftService:
         )
         shift.save()
 
+        try:
+            from app.services.core.audit_service import AuditLogService
+            from app.utils.singleton import get_singleton
+            get_singleton(AuditLogService).log_action(
+                user_data={"user_id": cashier_id, "username": cashier_id, "source": "pos"},
+                action="start",
+                resource_id=shift_id,
+                resource_type="shift",
+                changes={"opening_cash": opening_cash, "cashier_id": cashier_id},
+            )
+        except Exception as ae:
+            logger.warning(f"Audit logging failed for shift start {shift_id}: {ae}")
+
         logger.info(f"Shift started: {shift_id} — cashier: {cashier_id}")
         return shift.to_dict()
 
@@ -221,6 +234,24 @@ class ShiftService:
         logger.info(
             f"Shift closed: {shift_id} — variance: {shift.cash_variance:.2f}"
         )
+
+        try:
+            from app.services.core.audit_service import AuditLogService
+            from app.utils.singleton import get_singleton
+            get_singleton(AuditLogService).log_action(
+                user_data={"user_id": shift.cashier_id, "username": shift.cashier_id, "source": "pos"},
+                action="end",
+                resource_id=shift_id,
+                resource_type="shift",
+                changes={
+                    "closing_cash": float(closing_cash),
+                    "cash_variance": shift.cash_variance,
+                    "total_sales": float(shift.total_sales or 0),
+                    "total_transactions": int(shift.total_transactions or 0),
+                },
+            )
+        except Exception as ae:
+            logger.warning(f"Audit logging failed for shift end {shift_id}: {ae}")
 
         _send_shift_close_notification(shift)
 

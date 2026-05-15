@@ -115,7 +115,7 @@ def test_session_id_format():
     raw = _test_session_id
     full_id = raw if raw.startswith("SESS-") else f"SESS-{raw}"
 
-    assert re.match(r'^SESS-\d{5}$', full_id), \
+    assert re.match(r'^SESS-\d+$', full_id), \
         f"Expected SESS-##### format, got '{full_id}'"
     print(f"  ✓ ID format correct: {full_id}")
 

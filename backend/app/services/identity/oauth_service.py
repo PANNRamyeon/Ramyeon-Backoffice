@@ -324,6 +324,26 @@ class OAuthService:
             "auth_providers": customer.get("auth_providers", []),
         }
 
+        try:
+            from app.services.identity.session_services import SessionLogService
+            providers_list = customer.get("auth_providers") or []
+            provider_name = "oauth"
+            if providers_list and isinstance(providers_list, list):
+                first = providers_list[0]
+                if isinstance(first, dict):
+                    provider_name = first.get("provider", "oauth")
+            SessionLogService().log_login({
+                "user_id": user_id,
+                "username": customer.get("email") or customer.get("username") or user_id,
+                "email": customer.get("email", ""),
+                "employee_name": customer.get("full_name", ""),
+                "role": "customer",
+                "branch_id": "N/A",
+                "source": provider_name,
+            })
+        except Exception as _session_err:
+            self.logger.debug(f"OAuth session logging failed (non-fatal): {_session_err}")
+
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,

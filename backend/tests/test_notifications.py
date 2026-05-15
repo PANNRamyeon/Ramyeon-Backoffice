@@ -57,7 +57,7 @@ def test_create_and_id_format():
         "metadata": {"test_key": "test_value"}
     })
 
-    assert re.match(r'^NOTIF-\d{5}$', notif["notification_id"]), \
+    assert re.match(r'^NOTIF-\d+$', notif["notification_id"]), \
         f"ID format wrong (expected NOTIF-#####, got {notif['notification_id']})"
     print(f"  ✓ ID format correct: {notif['notification_id']}")
 

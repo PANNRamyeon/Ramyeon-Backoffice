@@ -31,6 +31,8 @@ class AuditLogService:
             "product_create": self._template_product_create,
             "product_update": self._template_product_update,
             "product_delete": self._template_product_delete,
+            "product_hard_delete": self._template_product_hard_delete,
+            "product_restore": self._template_product_restore,
             "product_stock_update": self._template_product_stock_update,
 
             # ========== USER ==========
@@ -162,6 +164,12 @@ class AuditLogService:
 
     def log_product_delete(self, user_data, product_data):
         return self._log_event("product_delete", user_data, product_data=product_data)
+
+    def log_product_hard_delete(self, user_data, product_data):
+        return self._log_event("product_hard_delete", user_data, product_data=product_data)
+
+    def log_product_restore(self, user_data, product_data):
+        return self._log_event("product_restore", user_data, product_data=product_data)
 
     def log_product_stock_update(self, user_data, product_id, product_name, old_stock, new_stock, reason="manual"):
         return self._log_event("product_stock_update", user_data,
@@ -412,6 +420,28 @@ class AuditLogService:
             },
             "old_values": product_data,
             "metadata": {"action": "delete"}
+        }
+
+    def _template_product_hard_delete(self, product_data):
+        return {
+            "target_data": {
+                "type": "product",
+                "id": product_data.get("_id", product_data.get("product_id", "")),
+                "name": product_data.get("product_name", product_data.get("name", "Unknown"))
+            },
+            "old_values": product_data,
+            "metadata": {"action": "hard_delete", "permanent": True}
+        }
+
+    def _template_product_restore(self, product_data):
+        return {
+            "target_data": {
+                "type": "product",
+                "id": product_data.get("_id", product_data.get("product_id", "")),
+                "name": product_data.get("product_name", product_data.get("name", "Unknown"))
+            },
+            "new_values": {"isDeleted": False, "status": "active"},
+            "metadata": {"action": "restore"}
         }
 
     def _template_product_stock_update(self, product_id, product_name, old_stock, new_stock, reason):

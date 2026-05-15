@@ -427,7 +427,7 @@ const populateForm = () => {
     username: props.customer.username || '',
     full_name: props.customer.full_name || '',
     email: props.customer.email || '',
-    phone: props.customer.phone || '',
+    phone: props.customer.phone_number || props.customer.phone || '',
     password: '',
     new_password: '',
     confirm_password: '',

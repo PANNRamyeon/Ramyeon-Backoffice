@@ -57,6 +57,13 @@ class AuthProvider(MapAttribute):
     last_login = LenientUTCDateTimeAttribute(null=True)  # Changed to LenientUTCDateTimeAttribute
 
 
+class DeliveryAddress(MapAttribute):
+    street = UnicodeAttribute(null=True)
+    city = UnicodeAttribute(null=True)
+    barangay = UnicodeAttribute(null=True)
+    postal_code = UnicodeAttribute(null=True)
+
+
 # ============= GLOBAL SECONDARY INDEXES =============
 class EmailIndex(GlobalSecondaryIndex):
     """
@@ -156,6 +163,7 @@ class Customer(Model):
     
     # ============= CONTACT =============
     phone_number = UnicodeAttribute(null=True)
+    delivery_address = DeliveryAddress(null=True)
     
     # ============= LOYALTY =============
     loyalty_points = LenientNumberAttribute(default=0.0)
@@ -216,7 +224,8 @@ class Customer(Model):
     @classmethod
     def create_with_password(cls, email: str, password_hash: str,
                            full_name: str = None, phone_number: str = None,
-                           username: str = None, source: str = "web") -> 'Customer':
+                           username: str = None, source: str = "web",
+                           delivery_address: dict = None) -> 'Customer':
         """
         Create customer with email/password authentication
         
@@ -257,6 +266,7 @@ class Customer(Model):
                 email=email.lower().strip(),
                 full_name=full_name.strip() if full_name else None,
                 phone_number=phone_number.strip() if phone_number else None,
+                delivery_address=DeliveryAddress(**{k: v for k, v in delivery_address.items() if v}) if delivery_address else None,
                 username=username.strip() if username else None,
                 source=source,
                 status="active",
@@ -655,7 +665,7 @@ class Customer(Model):
             raise
     
     def update_profile(self, full_name: str = None, phone_number: str = None,
-                      username: str = None) -> 'Customer':
+                      username: str = None, delivery_address: dict = None) -> 'Customer':
         """
         Update customer profile information
         
@@ -683,7 +693,11 @@ class Customer(Model):
             if username is not None:
                 self.username = username.strip()
                 updated = True
-            
+
+            if delivery_address is not None:
+                self.delivery_address = DeliveryAddress(**{k: v for k, v in delivery_address.items() if v}) if delivery_address else None
+                updated = True
+
             if updated:
                 self.updated_at = datetime.utcnow()
                 self.save()
@@ -860,6 +874,12 @@ class Customer(Model):
                 "password_set": self.password_set,
                 "auth_mode": self.auth_mode,
                 "phone_number": self.phone_number,
+                "delivery_address": {
+                    "street": self.delivery_address.street if self.delivery_address else None,
+                    "city": self.delivery_address.city if self.delivery_address else None,
+                    "barangay": self.delivery_address.barangay if self.delivery_address else None,
+                    "postal_code": self.delivery_address.postal_code if self.delivery_address else None,
+                } if self.delivery_address else None,
                 "loyalty_points": float(self.loyalty_points) if self.loyalty_points else 0.0,
                 "status": self.status,
                 "isDeleted": self.isDeleted,
