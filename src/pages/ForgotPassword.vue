@@ -87,7 +87,7 @@ const loading = ref(false)
 const submitted = ref(false)
 const error = ref('')
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin'
 
 const handleSubmit = async () => {
   if (!email.value) return

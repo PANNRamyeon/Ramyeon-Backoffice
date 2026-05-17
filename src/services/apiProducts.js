@@ -427,7 +427,7 @@ class ApiProductsService {
   async downloadImportTemplate(format = 'csv') {
     try {
       // Use raw axios WITHOUT interceptors
-      const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+      const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin'
       const url = `${baseURL}/products/import/template/`
 
       const response = await axios.get(url, {

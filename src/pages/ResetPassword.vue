@@ -168,7 +168,7 @@ const tokenError = ref('')
 const resetSuccess = ref(false)
 const error = ref('')
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin'
 
 onMounted(async () => {
   // Get token from URL query parameter
