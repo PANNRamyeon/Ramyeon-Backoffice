@@ -1,8 +1,5 @@
 # Netlify build configuration for PANN Frontend
 [build]
-  # Since your frontend is in a subfolder, set base directory
-  base = "frontend/"
-  
   # Build command
   command = "npm run build"
   
