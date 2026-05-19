@@ -423,7 +423,8 @@ export default {
       topProductsLoading: false,
       topProductsError: null,
       topProductsStartDate: null,
-      topProductsEndDate: null
+      topProductsEndDate: null,
+      topProductsDateError: null
     }
   },
   computed: {
@@ -522,12 +523,6 @@ export default {
         }
       },
 
-      resetTopProductsDateRange() {
-        this.topProductsStartDate = null
-        this.topProductsEndDate = null
-        this.topProductsDateError = null
-        this.loadTopProducts()
-      },
     formatCurrency(value) {
       // Use the imported formatCurrencyHelper function
       return formatCurrencyHelper(value)

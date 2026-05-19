@@ -771,7 +771,7 @@ export default {
 
 /* Card content text hierarchy */
 .card-body {
-  @apply text-secondary;
+  color: var(--secondary);
 }
 
 /* Enhanced loading spinner */
