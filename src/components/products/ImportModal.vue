@@ -31,12 +31,12 @@
             <h6 class="mb-3" style="color: var(--tertiary-dark);">
               Step 1: Download Template
             </h6>
-            <div class="alert alert-info border-0" style="background-color: var(--info-light); color: var(--info-dark);">
+            <div class="alert alert-info border-0 guidelines-alert" style="background-color: var(--info-light);">
               <AlertTriangle :size="16" class="me-2" />
               <div>
                 <strong>Important Guidelines:</strong>
                 <ul class="mb-0 mt-2" style="font-size: 0.875rem;">
-                  <li><strong>Required columns:</strong> product_name, selling_price, category_id</li>
+                  <li><strong>Required columns:</strong> product_name, selling_price, category_name</li>
                   <li><strong>Optional columns:</strong> subcategory_name, SKU, supplier_id, stock, cost_price, low_stock_threshold, unit, status, barcode, description, </li>
                   <li><strong>Stock is optional</strong> - Leave blank or set to 0 if not adding initial inventory</li>
                   <li><strong>When adding stock (stock > 0):</strong>
@@ -614,6 +614,10 @@ export default {
               totalFailed: processedResult.totalFailed,
               batchesCreated: processedResult.batchesCreated
             })
+            setTimeout(() => {
+              const modal = bootstrap.Modal.getInstance(document.getElementById('importModal'))
+              if (modal) modal.hide()
+            }, 800)
           }
 
         } else {
@@ -871,6 +875,7 @@ export default {
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
   font-size: 0.875em;
+  color: var(--primary);
 }
 
 .form-control[type="file"] {
@@ -950,6 +955,14 @@ export default {
 
 .error-row:hover {
   background-color: var(--neutral-light);
+}
+
+.guidelines-alert {
+  color: var(--neutral-light);
+}
+
+:global(.dark-theme) .guidelines-alert {
+  color: var(--text-dark-tertiary);
 }
 
 .card {
