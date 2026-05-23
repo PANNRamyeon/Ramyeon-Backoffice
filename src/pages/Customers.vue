@@ -56,9 +56,9 @@
     <TableTemplate
         v-if="hasCustomers || isLoading"
         :items-per-page="itemsPerPage"
-        :total-items="totalCustomers"
+        :total-items="totalItemsForPagination"
         :current-page="currentPage"
-        :show-pagination="totalCustomers > itemsPerPage"
+        :show-pagination="totalItemsForPagination > itemsPerPage"
         @page-changed="handlePageChange"
         class="shadow-md"
       >
@@ -162,46 +162,6 @@
       </button>
     </div>
 
-    <!-- Delete Confirmation Modal -->
-    <div class="modal fade" ref="deleteModalElement" tabindex="-1">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header border-theme">
-            <h5 class="modal-title text-error">Confirm Delete</h5>
-            <button type="button" class="btn-close" @click="closeDeleteModal"></button>
-          </div>
-          <div class="modal-body">
-            <div v-if="customerToDelete" class="text-center">
-              <div class="text-5xl mb-3">⚠️</div>
-              <h6 class="text-primary mb-3">Delete Customer</h6>
-              <p class="text-secondary mb-3">
-                Are you sure you want to delete customer 
-                <strong>{{ customerToDelete.full_name }}</strong>?
-              </p>
-              <div class="alert alert-warning" role="alert">
-                <small>
-                  This will hide the customer from the active list, but they can be restored later if needed.
-                </small>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer border-theme">
-            <button type="button" class="btn btn-secondary" @click="closeDeleteModal">
-              Cancel
-            </button>
-            <button 
-              type="button" 
-              class="btn btn-danger" 
-              @click="confirmDelete"
-              :disabled="isLoading"
-            >
-              <span v-if="isLoading">Deleting...</span>
-              <span v-else>Delete Customer</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- Customer Modal -->
@@ -226,13 +186,15 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { Modal } from 'bootstrap'
 import { Eye, Edit, Trash2 } from 'lucide-vue-next'
 import { useCustomers } from '@/composables/api/useCustomers.js'
+import { useToast } from '@/composables/ui/useToast.js'
 import TableTemplate from '@/components/common/TableTemplate.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
 import AddCustomerModal from '@/components/customers/AddCustomerModal.vue'
 import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
+
+const toast = useToast()
 
 const addOptions = [
   { key: 'single', icon: 'Plus', title: 'Add Customer', description: 'Add manually' },
@@ -250,6 +212,8 @@ const {
   error,
   statistics,
   totalCustomers,
+  hasMore,
+  nextKey,
   hasCustomers,
   fetchCustomers,
   fetchStatistics,
@@ -264,11 +228,11 @@ const {
 // =====================
 const currentPage = ref(1)
 const itemsPerPage = ref(10)
+const pageKeys = ref({ 1: null }) // cursor map: page number → start_key
 const exporting = ref(false)
 const searchValue = ref('')
 const customerModal = ref(null)
-const deleteModalElement = ref(null)
-const deleteModalInstance = ref(null)
+const searchDebounce = ref(null)
 const modalMode = ref('create')
 const selectedCustomer = ref(null)
 const customerToDelete = ref(null)
@@ -308,10 +272,8 @@ const filters = ref([
 // =====================
 const buildQueryParams = () => {
   const params = {}
-  // status filter
   const statusFilter = filters.value.find(f => f.key === 'status')?.value
   if (statusFilter && statusFilter !== 'all') params.status = statusFilter
-  // points filter
   const pointsFilter = filters.value.find(f => f.key === 'points')?.value
   if (pointsFilter && pointsFilter !== 'all') {
     if (pointsFilter === 'high') params.min_loyalty_points = 100
@@ -323,16 +285,31 @@ const buildQueryParams = () => {
       params.max_loyalty_points = 49
     }
   }
-  // search
-  if (searchValue.value && searchValue.value.trim()) params.search = searchValue.value.trim()
+  if (searchValue.value?.trim()) params.search = searchValue.value.trim()
   params.limit = itemsPerPage.value
+  const startKey = pageKeys.value[currentPage.value]
+  if (startKey) params.start_key = startKey
   return params
+}
+
+const resetPageKeys = () => {
+  pageKeys.value = { 1: null }
 }
 
 // =====================
 // TABLE DATA
 // =====================
-const paginatedCustomers = computed(() => customers.value) // backend returns correct page right away
+const paginatedCustomers = computed(() => customers.value)
+
+// Derives total item count for TableTemplate without a true total from the backend.
+// When has_more is true: signal at least (currentPage + 1) pages worth of items.
+// When on the last page: compute exact total from pages seen so far.
+const totalItemsForPagination = computed(() => {
+  if (hasMore.value) {
+    return currentPage.value * itemsPerPage.value + 1
+  }
+  return (currentPage.value - 1) * itemsPerPage.value + customers.value.length
+})
 
 const formatDate = (dateString) => {
   if (!dateString) return 'N/A'
@@ -342,37 +319,56 @@ const formatDate = (dateString) => {
 }
 
 // =====================
-// CORE HANDLERS -- modified
+// FETCH WITH CURSOR TRACKING
+// =====================
+const fetchAndTrackCursor = async () => {
+  const response = await fetchCustomers(buildQueryParams())
+  if (hasMore.value && nextKey.value) {
+    pageKeys.value[currentPage.value + 1] = nextKey.value
+  }
+  return response
+}
+
+// =====================
+// CORE HANDLERS
 // =====================
 const handleRetry = async () => {
   clearError()
-  await fetchCustomers(buildQueryParams())
+  resetPageKeys()
+  currentPage.value = 1
+  await fetchAndTrackCursor()
 }
 
-// page change triggers new fetch
 const handlePageChange = async (page) => {
   currentPage.value = page
-  await fetchCustomers(buildQueryParams())
+  await fetchAndTrackCursor()
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 const handleFilterChange = async (filterKey, value) => {
   const filter = filters.value.find(f => f.key === filterKey)
   if (filter) filter.value = value
+  resetPageKeys()
   currentPage.value = 1
-  await fetchCustomers(buildQueryParams())
+  await fetchAndTrackCursor()
 }
 
-const handleSearchInput = async (value) => {
+const handleSearchInput = (value) => {
   searchValue.value = value
-  currentPage.value = 1
-  await fetchCustomers(buildQueryParams())
+  if (searchDebounce.value) clearTimeout(searchDebounce.value)
+  searchDebounce.value = setTimeout(async () => {
+    resetPageKeys()
+    currentPage.value = 1
+    await fetchAndTrackCursor()
+  }, 400)
 }
 
 const handleSearchClear = async () => {
   searchValue.value = ''
+  if (searchDebounce.value) clearTimeout(searchDebounce.value)
+  resetPageKeys()
   currentPage.value = 1
-  await fetchCustomers(buildQueryParams())
+  await fetchAndTrackCursor()
 }
 
 const handleImport = async (event) => {
@@ -381,10 +377,12 @@ const handleImport = async (event) => {
   if (!file) return
   try {
     const result = await importCustomers(file)
-    alert(result?.message || 'Import completed.')
-    await fetchCustomers(buildQueryParams())
+    toast.success(result?.message || 'Import completed.')
+    resetPageKeys()
+    currentPage.value = 1
+    await fetchAndTrackCursor()
   } catch (err) {
-    alert(`Import failed: ${err.message}`)
+    toast.error(`Import failed: ${err.message}`)
   }
 }
 
@@ -396,7 +394,7 @@ const handleExport = async () => {
     if (statusFilter && statusFilter !== 'all') params.status = statusFilter
     await exportCustomers(params)
   } catch (err) {
-    alert(`Export failed: ${err.message}`)
+    toast.error(`Export failed: ${err.message}`)
   } finally {
     exporting.value = false
   }
@@ -448,8 +446,9 @@ const handleModalClose = () => {
 }
 const handleModalSuccess = async () => {
   try {
-    await fetchCustomers(buildQueryParams())
-    if (modalMode.value === 'create') currentPage.value = 1
+    resetPageKeys()
+    currentPage.value = 1
+    await fetchAndTrackCursor()
   } catch (error) {
     console.error('Failed to refresh customer list:', error)
   }
@@ -458,11 +457,15 @@ const handleModalSuccess = async () => {
 // delete
 const openDeleteModal = (customer) => {
   customerToDelete.value = customer
-  deleteModalInstance.value?.show()
+  deleteModal.value?.openModal({
+    title: 'Delete Customer',
+    message: `Are you sure you want to delete customer <strong>${customer.full_name}</strong>?<br><br><small>This will hide the customer from the active list, but they can be restored later if needed.</small>`,
+    confirmText: 'Delete Customer'
+  })
 }
 const closeDeleteModal = () => {
   customerToDelete.value = null
-  deleteModalInstance.value?.hide()
+  deleteModal.value?.closeModal()
 }
 const cancelDelete = closeDeleteModal
 const handleModeChanged = (mode) => { modalMode.value = mode }
@@ -473,7 +476,9 @@ const confirmDelete = async () => {
     await deleteCustomerAPI(deletingCustomerId.value)
     closeDeleteModal()
     deletingCustomerId.value = null
-    await fetchCustomers(buildQueryParams())
+    resetPageKeys()
+    currentPage.value = 1
+    await fetchAndTrackCursor()
   } catch (error) {
     console.error('Failed to delete customer:', error)
   }
@@ -485,13 +490,7 @@ const deleteCustomer = (customer) => {
 // INIT
 onMounted(async () => {
   try {
-    await Promise.all([fetchCustomers(buildQueryParams()), fetchStatistics()])
-    if (deleteModalElement.value) {
-      deleteModalInstance.value = new Modal(deleteModalElement.value)
-      deleteModalElement.value.addEventListener('hidden.bs.modal', () => {
-        customerToDelete.value = null
-      })
-    }
+    await Promise.all([fetchAndTrackCursor(), fetchStatistics()])
   } catch (err) {
     console.error('Failed to initialize customers page:', err)
   }

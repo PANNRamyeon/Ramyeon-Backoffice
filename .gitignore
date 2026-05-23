@@ -35,3 +35,6 @@ coverage
 .claude/
 CLAUDE.md
 claude.md
+
+# Local reports
+report.md

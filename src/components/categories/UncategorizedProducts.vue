@@ -294,12 +294,15 @@ import { ref, computed, onMounted } from 'vue'
 import DataTable from '@/components/common/TableTemplate.vue'
 import { useProducts } from '@/composables/api/useProducts'
 import { useCategories } from '@/composables/api/useCategories'
+import { useToast } from '@/composables/ui/useToast.js'
 
 export default {
   name: 'UncategorizedProducts',
   components: { DataTable },
 
   setup() {
+    const toast = useToast()
+
     // Composables
     const {
       products: allProducts,
@@ -392,7 +395,7 @@ export default {
         selectedProducts.value = selectedProducts.value.filter(pid => pid !== id)
       } catch (err) {
         console.error('Error moving product:', err)
-        alert(`Failed to move product: ${err.message}`)
+        toast.error(`Failed to move product: ${err.message}`)
       }
     }
 
@@ -405,7 +408,7 @@ export default {
         bulkTargetSubcategory.value = ''
       } catch (err) {
         console.error('Bulk move error:', err)
-        alert(`Bulk move failed: ${err.message}`)
+        toast.error(`Bulk move failed: ${err.message}`)
       }
     }
 
@@ -431,7 +434,7 @@ export default {
         isExporting.value = true
         const data = uncategorizedProducts.value
         if (!data.length) {
-          alert('No uncategorized products to export.')
+          toast.info('No uncategorized products to export.')
           return
         }
 
@@ -469,7 +472,7 @@ export default {
         URL.revokeObjectURL(url)
       } catch (err) {
         console.error('Export failed:', err)
-        alert(`Export failed: ${err.message}`)
+        toast.error(`Export failed: ${err.message}`)
       } finally {
         isExporting.value = false
       }

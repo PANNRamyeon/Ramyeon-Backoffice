@@ -62,7 +62,6 @@ export function useCustomers() {
       return response
     } catch (err) {
       error.value = err.message || 'Failed to fetch customers'
-      if (!append) customers.value = []
       throw err
     } finally {
       isLoading.value = false

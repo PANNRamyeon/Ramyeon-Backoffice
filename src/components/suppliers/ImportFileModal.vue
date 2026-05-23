@@ -238,10 +238,10 @@
 </template>
 
 <script>
-import { 
-  FileText, 
-  Download, 
-  Upload, 
+import {
+  FileText,
+  Download,
+  Upload,
   Users,
   CheckCircle,
   Archive,
@@ -249,9 +249,14 @@ import {
   X,
   AlertTriangle
 } from 'lucide-vue-next'
+import { useToast } from '@/composables/ui/useToast.js'
 
 export default {
   name: 'ImportFileModal',
+  setup() {
+    const toast = useToast()
+    return { toast }
+  },
   components: {
     FileText,
     Download,
@@ -358,7 +363,7 @@ export default {
     processUploadedFile(file) {
       // Validate file size (10MB max)
       if (file.size > 10 * 1024 * 1024) {
-        alert('File size is too large. Maximum size is 10MB.')
+        this.toast.warning('File size is too large. Maximum size is 10MB.')
         return
       }
       
@@ -367,7 +372,7 @@ export default {
       const allowedExtensions = ['.csv', '.xlsx', '.xls']
       
       if (!allowedTypes.includes(file.type) && !allowedExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
-        alert('Invalid file type. Please upload a CSV or Excel file.')
+        this.toast.warning('Invalid file type. Please upload a CSV or Excel file.')
         return
       }
       
@@ -380,7 +385,7 @@ export default {
             const lines = text.split('\n').filter(line => line.trim())
             
             if (lines.length < 2) {
-              alert('File appears to be empty or invalid.')
+              this.toast.warning('File appears to be empty or invalid.')
               return
             }
             
@@ -412,12 +417,12 @@ export default {
             
           } catch (error) {
             console.error('Error parsing file:', error)
-            alert('Error parsing file. Please check the format and try again.')
+            this.toast.error('Error parsing file. Please check the format and try again.')
           }
         }
         reader.readAsText(file)
       } else {
-        alert('Excel file support is not implemented yet. Please use CSV format.')
+        this.toast.info('Excel file support is not implemented yet. Please use CSV format.')
       }
     },
     
@@ -484,7 +489,7 @@ export default {
         this.$emit('close')
       } catch (error) {
         console.error('Error importing suppliers:', error)
-        alert('Failed to import suppliers. Please try again.')
+        this.toast.error('Failed to import suppliers. Please try again.')
       } finally {
         this.importing = false
       }

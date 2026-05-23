@@ -442,14 +442,14 @@
 </template>
 
 <script>
-import { 
-  Building, 
-  Edit, 
-  Download, 
+import {
+  Building,
+  Edit,
+  Download,
   Upload,
-  Plus, 
-  Trash2, 
-  ChevronRight, 
+  Plus,
+  Trash2,
+  ChevronRight,
   ChevronLeft,
   Info,
   Lightbulb,
@@ -461,9 +461,14 @@ import {
   RefreshCw,
   Save
 } from 'lucide-vue-next'
+import { useToast } from '@/composables/ui/useToast.js'
 
 export default {
   name: 'BulkSuppliersModal',
+  setup() {
+    const toast = useToast()
+    return { toast }
+  },
   components: {
     Building,
     Edit,
@@ -754,7 +759,7 @@ export default {
         }
         reader.readAsText(file)
       } else {
-        alert('Please upload a CSV file')
+        this.toast.warning('Please upload a CSV file.')
       }
     },
     
@@ -794,7 +799,7 @@ export default {
         this.$emit('close')
       } catch (error) {
         console.error('Error saving suppliers:', error)
-        alert('Failed to save suppliers. Please try again.')
+        this.toast.error('Failed to save suppliers. Please try again.')
       } finally {
         this.saving = false
       }

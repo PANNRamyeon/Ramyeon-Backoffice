@@ -1036,12 +1036,12 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
     if (!file) return
 
     if (!file.type.startsWith('image/')) {
-      alert('Please select a valid image file (PNG, JPG, JPEG)')
+      toast.error('Please select a valid image file (PNG, JPG, JPEG).')
       return
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      alert('Image size should be less than 5MB')
+      toast.error('Image size should be less than 5MB.')
       return
     }
 

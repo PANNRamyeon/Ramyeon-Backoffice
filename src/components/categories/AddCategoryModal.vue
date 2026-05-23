@@ -220,6 +220,7 @@
 
 <script>
 import { useCategories } from '@/composables/api/useCategories'
+import { useToast } from '@/composables/ui/useToast.js'
 
 export default {
   name: 'AddCategoryModal',
@@ -253,6 +254,7 @@ export default {
   },
 
   setup() {
+    const toast = useToast()
     const {
       createCategory,
       updateCategory,
@@ -261,6 +263,7 @@ export default {
     } = useCategories()
 
     return {
+      toast,
       createCategory,
       updateCategory,
       loading,
@@ -318,7 +321,7 @@ export default {
       // Validate file size (max 5MB)
       if (file.size > 5 * 1024 * 1024) {
         console.error('File too large:', file.size)
-        alert('Image size should be less than 5MB')
+        this.toast.warning('Image size should be less than 5MB.')
         this.clearImageData()
         return
       }
@@ -327,7 +330,7 @@ export default {
       const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
       if (!validTypes.includes(file.type)) {
         console.error('Invalid file type:', file.type)
-        alert('Please select a valid image file (JPEG, PNG, GIF, WebP)')
+        this.toast.warning('Please select a valid image file (JPEG, PNG, GIF, WebP).')
         this.clearImageData()
         return
       }
@@ -341,7 +344,7 @@ export default {
 
       reader.onerror = (e) => {
         console.error('FileReader error:', e)
-        alert('Error reading the image file')
+        this.toast.error('Error reading the image file.')
         this.clearImageData()
       }
 
@@ -367,7 +370,7 @@ export default {
         // Validate form data using composable
         const validation = this.validateCategoryData(this.formData)
         if (!validation.isValid) {
-          alert('Please fix the following errors:\n' + validation.errors.join('\n'))
+          this.toast.error('Please fix the following errors: ' + validation.errors.join(', '))
           return
         }
 
@@ -423,7 +426,7 @@ export default {
       } catch (error) {
         console.error('Error in handleSubmit:', error)
         const action = this.isEditMode ? 'update' : 'create'
-        alert(`Failed to ${action} category. Please try again.\n\nError: ${error.message || 'Unknown error'}`)
+        this.toast.error(`Failed to ${action} category: ${error.message || 'Unknown error'}`)
       } finally {
         this.isLoading = false
       }

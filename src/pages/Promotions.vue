@@ -83,8 +83,8 @@
           <td class="text-tertiary-medium">{{ formatDate(promotion.start_date) }}</td>
           <td class="text-tertiary-medium">{{ formatDate(promotion.end_date) }}</td>
           <td>
-            <span class="badge" :class="getStatusBadgeClass(promotion.status)">
-              {{ formatStatus(promotion.status) }}
+            <span class="badge" :class="getStatusBadgeClass(getEffectiveStatus(promotion))">
+              {{ formatStatus(getEffectiveStatus(promotion)) }}
             </span>
           </td>
           <td class="text-tertiary-medium">₱{{ promotion.min_purchase_amount ?? 100 }}</td>
@@ -293,11 +293,32 @@ const formatDiscountValue = (value, type) => {
   if (type === 'fixed_amount') return `₱${value}`
   return value
 }
-const formatStatus = (status) => ({ active: 'Active', inactive: 'Inactive', expired: 'Expired', draft: 'Draft', scheduled: 'Draft' }[status] || status)
+
+// Returns the display status based on dates, overriding the stored status when needed.
+// A stored 'active' is shown as 'scheduled' if the start date is in the future,
+// or 'expired' if the end date has already passed.
+const getEffectiveStatus = (promotion) => {
+  const now = new Date()
+  const start = promotion.start_date ? new Date(promotion.start_date) : null
+  const end = promotion.end_date ? new Date(promotion.end_date) : null
+  if (promotion.status === 'active') {
+    if (start && now < start) return 'scheduled'
+    if (end && now > end) return 'expired'
+  }
+  return promotion.status
+}
+
+const formatStatus = (status) => ({
+  active: 'Active', inactive: 'Inactive', expired: 'Expired',
+  draft: 'Draft', scheduled: 'Scheduled'
+}[status] || status)
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
 const formatDateTime = (d) => d ? new Date(d).toLocaleString() : '—'
 const getDiscountTypeBadgeClass = (type) => ({ percentage: 'bg-primary', fixed_amount: 'bg-success' }[type] || 'bg-secondary')
-const getStatusBadgeClass = (status) => ({ active: 'bg-success', inactive: 'bg-secondary', expired: 'bg-danger', draft: 'bg-warning' }[status] || 'bg-secondary')
+const getStatusBadgeClass = (status) => ({
+  active: 'bg-success', inactive: 'bg-secondary',
+  expired: 'bg-danger', draft: 'bg-warning', scheduled: 'bg-info'
+}[status] || 'bg-secondary')
 
 onMounted(async () => { await fetchPromotions() })
 </script>
@@ -328,6 +349,7 @@ onMounted(async () => { await fetchPromotions() })
 .badge.bg-info { background: var(--status-info-bg); color: var(--status-info); }
 .badge.bg-success { background: var(--status-success-bg); color: var(--status-success); }
 .badge.bg-secondary { background: var(--surface-tertiary); color: var(--text-tertiary); }
+.badge.bg-info { background: var(--status-info-bg); color: var(--status-info); }
 .badge.bg-danger { background: var(--status-error-bg); color: var(--status-error); }
 .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

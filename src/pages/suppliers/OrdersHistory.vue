@@ -528,6 +528,7 @@ import {
 
 // Composables
 import { useSuppliers } from '@/composables/api/useSuppliers'
+import { useToast } from '@/composables/ui/useToast.js'
 
 export default {
   name: 'OrdersHistory',
@@ -548,6 +549,7 @@ export default {
   },
   setup() {
     const router = useRouter()
+    const toast = useToast()
     const ordersComposable = useSuppliers() // All orders history methods are in useSuppliers
     
     // Use composable's loading and error states
@@ -694,14 +696,14 @@ export default {
         editingOrder.value = JSON.parse(JSON.stringify(order))
         showEditModal.value = true
       } else if (canEditLimited(order)) {
-        alert(`Limited edit for order ${order.id} - Only delivery date and contact details can be edited`)
+        toast.info(`Limited edit for order ${order.id}: only delivery date and contact details can be edited.`)
       } else {
-        alert(`Order ${order.id} cannot be edited due to its current status: ${order.status}`)
+        toast.warning(`Order ${order.id} cannot be edited due to its current status: ${order.status}.`)
       }
     }
 
     const saveOrderChanges = () => {
-      alert(`Order ${editingOrder.value.id} saved successfully!`)
+      toast.success(`Order ${editingOrder.value.id} saved successfully.`)
       closeEditModal()
     }
 
@@ -717,7 +719,7 @@ export default {
       if (editingOrder.value.items.length > 1) {
         editingOrder.value.items.splice(index, 1)
       } else {
-        alert('Order must have at least one item')
+        toast.warning('Order must have at least one item.')
       }
     }
 
@@ -994,20 +996,20 @@ export default {
           doc.save(filename)
         }).catch((error) => {
           console.error('Error generating PDF:', error)
-          alert('Failed to generate PDF. Please install jsPDF library: npm install jspdf')
+          toast.error('Failed to generate PDF. Please try again.')
         })
       } catch (error) {
         console.error('Error downloading order:', error)
-        alert('Error downloading order PDF')
+        toast.error('Error downloading order PDF.')
       }
     }
 
     const exportOrders = () => {
       if (ordersComposable?.exportOrdersData) {
         ordersComposable.exportOrdersData?.('csv')
-        alert('Orders exported to CSV successfully!')
+        toast.success('Orders exported to CSV successfully.')
       } else {
-        alert('Export functionality not available')
+        toast.warning('Export functionality not available.')
       }
     }
 

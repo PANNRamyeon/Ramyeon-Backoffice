@@ -217,6 +217,7 @@ import CardTemplate from '@/components/common/CardTemplate.vue'
 import AddCategoryModal from '@/components/categories/AddCategoryModal.vue'
 import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 import { useCategories } from '@/composables/api/useCategories'
+import { useToast } from '@/composables/ui/useToast.js'
 
 export default {
   name: 'Categories',
@@ -227,6 +228,7 @@ export default {
   },
 
   setup() {
+    const toast = useToast()
     const searchInput = ref(null)
     const searchMode = ref(false)
     const uncategorizedCount = ref(0)
@@ -394,7 +396,8 @@ export default {
       applyFilters,
       handleClearFilters,
       refreshCategories,
-      fetchUncategorizedCount
+      fetchUncategorizedCount,
+      toast
     }
   },
 
@@ -429,7 +432,7 @@ export default {
     viewCategory(categoryId) {
       if (!categoryId || !categoryId.startsWith('CTGY-')) {
         console.error('Invalid category ID format:', categoryId)
-        alert(`Invalid category ID format: ${categoryId}. Expected CTGY-XXX format.`)
+        this.toast.error(`Invalid category ID format: ${categoryId}. Expected CTGY-XXX format.`)
         return
       }
       
@@ -469,7 +472,7 @@ export default {
         await this.exportCategories(this.displayedCategories)
       } catch (error) {
         console.error('Export failed:', error)
-        alert('Export failed. Please try again.')
+        this.toast.error('Export failed. Please try again.')
       }
     }
   }

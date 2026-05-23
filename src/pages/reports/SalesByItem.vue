@@ -413,9 +413,14 @@
 <script>
 import BarChart from '@/components/BarChart.vue';
 import salesDisplayService from '@/services/apiSalesByItem';
+import { useToast } from '@/composables/ui/useToast.js';
 
 export default {
   name: 'SalesByItem',
+  setup() {
+    const toast = useToast()
+    return { toast }
+  },
   components: {
     BarChart
   },
@@ -973,12 +978,12 @@ export default {
     // ================================================================
     
     showSuccess(message) {
-      alert(message);
+      this.toast.success(message);
     },
 
     showError(message) {
       console.error('Error:', message);
-      alert(message);
+      this.toast.error(message);
     },
 
     async refreshData() {

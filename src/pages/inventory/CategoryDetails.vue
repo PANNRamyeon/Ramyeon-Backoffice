@@ -297,6 +297,7 @@ import MoveFromUncategorizedModal from '@/components/categories/MoveFromUncatego
 import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 import { useCategories } from '@/composables/api/useCategories'
 import { useProducts } from '@/composables/api/useProducts'
+import { useToast } from '@/composables/ui/useToast.js'
 
 export default {
   name: 'CategoryDetails',
@@ -310,7 +311,8 @@ export default {
   
   setup() {
     const route = useRoute()
-    
+    const toast = useToast()
+
     // Composables
     const {
       currentCategory,
@@ -578,8 +580,8 @@ export default {
         const productsToExport = filteredProducts.value;
 
         if (productsToExport.length === 0) {
-          alert("No products to export.");
-          return;
+          toast.info('No products to export.')
+          return
         }
 
         // CSV Columns
