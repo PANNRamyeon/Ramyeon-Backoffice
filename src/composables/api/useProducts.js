@@ -1750,9 +1750,6 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
   const deleteSelected = async () => {
     if (selectedProducts.value.length === 0) return
     
-    const confirmed = confirm(`Are you sure you want to delete ${selectedProducts.value.length} product(s)?`)
-    if (!confirmed) return
-    
     loading.value = true
     
     try {
@@ -1781,9 +1778,6 @@ const bulkDeleteProducts = async (productIds, hardDelete = false) => {
   const toggleProductStatus = async (product) => {
     const newStatus = product.status === 'active' ? 'inactive' : 'active'
     const action = newStatus === 'active' ? 'activate' : 'deactivate'
-    
-    const confirmed = confirm(`Are you sure you want to ${action} "${product.product_name}"?`)
-    if (!confirmed) return
     
     try {
       await apiProductsService.updateProduct(product.product_id, { status: newStatus })

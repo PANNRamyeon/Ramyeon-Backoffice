@@ -117,6 +117,8 @@
       ref="stockUpdateModal"
       @success="handleModalSuccess"
     />
+
+    <DeleteConfirmationModal ref="confirmModal" @confirm="handleConfirm" />
   </div>
 </template>
 
@@ -128,6 +130,7 @@ import { useProducts } from '@/composables/api/useProducts'
 import { useCategories } from '@/composables/api/useCategories'
 import AddProductModal from '@/components/products/AddProductModal.vue'
 import StockUpdateModal from '@/components/products/StockUpdateModal.vue'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 import ProductOverview from '@/components/products/ProductOverview.vue'
 import ProductPurchases from '@/components/products/ProductPurchases.vue'
 import ProductAdjustments from '@/components/products/ProductAdjustments.vue'
@@ -141,6 +144,19 @@ const router = useRouter()
 const addProductModal = ref(null)
 const stockUpdateModal = ref(null)
 const overviewRef = ref(null)
+const confirmModal = ref(null)
+const pendingAction = ref(null)
+
+const openConfirm = (options, action) => {
+  pendingAction.value = action
+  confirmModal.value?.openModal(options)
+}
+
+const handleConfirm = async () => {
+  await pendingAction.value?.()
+  pendingAction.value = null
+  confirmModal.value?.closeModal()
+}
 
 const { currentProduct, loading, error, fetchProductById, deleteProduct } = useProducts()
 const { activeCategories, initializeCategories } = useCategories()
@@ -174,17 +190,21 @@ const handleReorder = () => {
   // TODO: implement reorder
 }
 
-const handleDelete = async () => {
+const handleDelete = () => {
   if (!currentProduct.value?.product_name) return
-  const confirmed = confirm(`Are you sure you want to delete "${currentProduct.value.product_name}"?`)
-  if (confirmed) {
+  openConfirm({
+    title: 'Delete Product',
+    message: `Are you sure you want to delete <strong>${currentProduct.value.product_name}</strong>? This action cannot be undone.`,
+    confirmText: 'Delete',
+    confirmClass: 'btn-delete'
+  }, async () => {
     try {
       await deleteProduct(currentProduct.value.product_id)
       router.push('/products')
     } catch (err) {
       console.error('Error deleting product:', err)
     }
-  }
+  })
 }
 
 

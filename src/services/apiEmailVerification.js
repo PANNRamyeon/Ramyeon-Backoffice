@@ -6,7 +6,7 @@
 class EmailVerificationService {
   constructor() {
     // Email verification endpoints are at /api/v1/notifications/email/
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin'
+    const baseUrl = import.meta.env.VITE_API_URL
     this.baseURL = `${baseUrl}/notifications/email`
   }
 

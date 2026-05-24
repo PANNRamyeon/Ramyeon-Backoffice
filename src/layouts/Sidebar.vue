@@ -285,11 +285,14 @@
       </button>
     </div>
   </div>
+
+  <DeleteConfirmationModal ref="confirmModal" @confirm="handleConfirm" />
 </template>
 
 <script>
 import apiService from '../services/api.js'
 import { useAuth } from '@/composables/auth/useAuth.js'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 import { 
   LayoutDashboard,
   Package,
@@ -334,7 +337,8 @@ export default {
     LogOut,
     Box,
     FolderOpen,
-    FileText
+    FileText,
+    DeleteConfirmationModal
   },
   setup() {
     const { user } = useAuth()
@@ -347,7 +351,8 @@ export default {
       showReportsSubmenu: false,
       inventoryHover: false,
       reportsHover: false,
-      isLoggingOut: false
+      isLoggingOut: false,
+      pendingAction: null
     }
   },
   computed: {
@@ -389,6 +394,17 @@ export default {
     }
   },
   methods: {
+    openConfirm(options, action) {
+      this.pendingAction = action
+      this.$refs.confirmModal?.openModal(options)
+    },
+
+    async handleConfirm() {
+      await this.pendingAction?.()
+      this.pendingAction = null
+      this.$refs.confirmModal?.closeModal()
+    },
+
     toggleSidebar() {
       this.isCollapsed = !this.isCollapsed
       // Emit event to parent component
@@ -434,20 +450,22 @@ export default {
       this.showReportsSubmenu = this.isReportsRoute()
     },
     
-    async handleLogout() {
-      const confirmed = confirm('Are you sure you want to logout?')
-      if (confirmed) {
+    handleLogout() {
+      this.openConfirm({
+        title: 'Confirm Logout',
+        message: 'Are you sure you want to logout?',
+        confirmText: 'Logout',
+        confirmClass: 'btn-delete'
+      }, async () => {
         this.isLoggingOut = true
-        
         try {
           await this.callLogoutAPI()
         } catch (error) {
           console.error('Logout API error:', error)
-          // Continue with local logout even if API fails
         } finally {
           this.performLocalLogout()
         }
-      }
+      })
     },
     
     async callLogoutAPI() {

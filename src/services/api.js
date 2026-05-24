@@ -1,9 +1,15 @@
 // services/api.js
 import axios from 'axios';
+import { tokenStore } from './tokenStore.js';
+
+const baseURL = import.meta.env.VITE_API_URL
+if (!baseURL) {
+  throw new Error('VITE_API_URL is not defined. Copy .env.example to .env.local and set the value.')
+}
 
 // Create axios instance with default config
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin',
+  baseURL,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -14,7 +20,7 @@ const api = axios.create({
 // Request interceptor for authentication
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token');
+    const token = tokenStore.get();
 
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -50,19 +56,18 @@ api.interceptors.response.use(
           );
           
           const { access_token } = response.data;
-          localStorage.setItem('access_token', access_token);
-          
+          tokenStore.set(access_token);
+
           // Retry original request with new token
           originalRequest.headers.Authorization = `Bearer ${access_token}`;
           return api(originalRequest);
         }
       } catch (refreshError) {
         // Refresh failed, clear tokens and redirect
-        localStorage.removeItem('access_token');
+        tokenStore.clear();
         localStorage.removeItem('refresh_token');
-        
-        // Redirect to login page
-        window.location.href = '/login';
+
+        import('@/router/index.js').then(({ default: router }) => router.push('/login'));
         return Promise.reject(refreshError);
       }
     }
@@ -108,9 +113,9 @@ class ApiService {
       const response = await api.post('/auth/login/', { email, password });
       const data = this.handleResponse(response);
 
-      // Store tokens using your backend's format
+      // Store tokens — access_token in memory only, refresh_token persisted
       if (data.access_token) {
-        localStorage.setItem('access_token', data.access_token);
+        tokenStore.set(data.access_token);
       }
 
       if (data.refresh_token) {
@@ -127,9 +132,7 @@ class ApiService {
   // NEW: Get current user - matches your backend's get_current_user method
   async getCurrentUser() {
     try {
-      const token = localStorage.getItem('access_token');
-
-      if (!token) {
+      if (!tokenStore.get()) {
         throw new Error('No access token available');
       }
 
@@ -156,24 +159,16 @@ class ApiService {
   // Updated logout method
   async logout() {
     try {
-      const token = localStorage.getItem('access_token');
-
-      if (token) {
-        await api.post('/auth/logout/', {}, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
+      if (tokenStore.get()) {
+        await api.post('/auth/logout/');
       }
 
-      // Clear local storage regardless of API response
-      localStorage.removeItem('access_token');
+      tokenStore.clear();
       localStorage.removeItem('refresh_token');
 
       return { message: 'Logged out successfully' };
     } catch (error) {
-      // Clear tokens even if logout API fails
-      localStorage.removeItem('access_token');
+      tokenStore.clear();
       localStorage.removeItem('refresh_token');
       console.error('API: Logout error (tokens cleared anyway):', error)
 
@@ -198,7 +193,7 @@ class ApiService {
       const data = this.handleResponse(response);
 
       if (data.access_token) {
-        localStorage.setItem('access_token', data.access_token);
+        tokenStore.set(data.access_token);
       }
 
       return data;

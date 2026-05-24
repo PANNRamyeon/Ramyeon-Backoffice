@@ -16,7 +16,7 @@
       
       <!-- Main Content -->
       <slot name="content">
-        <div v-if="content" v-html="content"></div>
+        <div v-if="content" v-html="safeContent"></div>
       </slot>
       
       <!-- Value Display -->
@@ -43,6 +43,8 @@
 </template>
 
 <script>
+import DOMPurify from 'dompurify'
+
 export default {
   name: 'CardTemplate',
   props: {
@@ -307,6 +309,10 @@ export default {
       return ['card-subtitle', 'text-tertiary']
     },
     
+    safeContent() {
+      return DOMPurify.sanitize(this.content || '')
+    },
+
     formattedValue() {
       if (this.value === null || this.value === undefined) return ''
       

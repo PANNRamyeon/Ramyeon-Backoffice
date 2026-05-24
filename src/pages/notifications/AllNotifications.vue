@@ -194,6 +194,8 @@
       </div>
     </div>
   </div>
+
+  <DeleteConfirmationModal ref="confirmModal" @confirm="handleConfirm" />
 </template>
 
 <script setup>
@@ -203,6 +205,7 @@ import {
   ArchiveIcon, ArchiveRestoreIcon, Trash2Icon
 } from 'lucide-vue-next'
 import apiNotifications from '@/services/apiNotifications'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 
 // ── State ─────────────────────────────────────────────────────────
 
@@ -210,6 +213,19 @@ const allNotifications = ref([])
 const filtered = ref([])
 const loading = ref(false)
 const markingAllAsRead = ref(false)
+const confirmModal = ref(null)
+const pendingAction = ref(null)
+
+const openConfirm = (options, action) => {
+  pendingAction.value = action
+  confirmModal.value?.openModal(options)
+}
+
+const handleConfirm = async () => {
+  await pendingAction.value?.()
+  pendingAction.value = null
+  confirmModal.value?.closeModal()
+}
 
 const modalFilter = ref('all')
 const priorityFilter = ref('')
@@ -331,21 +347,27 @@ async function unarchiveNotification(notification) {
   }
 }
 
-async function deleteNotification(notification) {
-  if (!confirm('Permanently delete this notification? This cannot be undone.')) return
+function deleteNotification(notification) {
   if (notification._busy) return
-  notification._busy = true
-  try {
-    await apiNotifications.Delete(notification.notification_id)
-    allNotifications.value = allNotifications.value.filter(
-      n => n.notification_id !== notification.notification_id
-    )
-    applyFilters()
-  } catch (error) {
-    console.error('Error deleting:', error)
-  } finally {
-    notification._busy = false
-  }
+  openConfirm({
+    title: 'Delete Notification',
+    message: 'Permanently delete this notification? This action cannot be undone.',
+    confirmText: 'Delete',
+    confirmClass: 'btn-delete'
+  }, async () => {
+    notification._busy = true
+    try {
+      await apiNotifications.Delete(notification.notification_id)
+      allNotifications.value = allNotifications.value.filter(
+        n => n.notification_id !== notification.notification_id
+      )
+      applyFilters()
+    } catch (error) {
+      console.error('Error deleting:', error)
+    } finally {
+      notification._busy = false
+    }
+  })
 }
 
 // ── Formatters ────────────────────────────────────────────────────

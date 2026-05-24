@@ -20,7 +20,7 @@
 
       <!-- Modal Body -->
       <div class="modal-body">
-        <p class="text-secondary mb-4" v-html="config.message"></p>
+        <p class="text-secondary mb-4" v-html="safeMessage"></p>
       </div>
 
       <!-- Modal Footer -->
@@ -51,7 +51,8 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import DOMPurify from 'dompurify'
 import { useModal } from '@/composables/ui/useModal.js'
 
 // Props
@@ -75,6 +76,8 @@ const config = ref({
   confirmText: 'Delete',
   confirmClass: 'btn-delete'
 })
+
+const safeMessage = computed(() => DOMPurify.sanitize(config.value.message || ''))
 
 // Methods
 const openModal = (options = {}) => {

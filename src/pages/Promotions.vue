@@ -135,6 +135,7 @@
     </div>
 
     <AddPromoModal ref="addPromoModal" @promotion-saved="handlePromotionSaved" />
+    <DeleteConfirmationModal ref="confirmModal" @confirm="handleConfirm" />
   </div>
 </template>
 
@@ -146,6 +147,7 @@ import TableTemplate from '@/components/common/TableTemplate.vue'
 import AddPromoModal from '@/components/promotions/AddPromoModal.vue'
 import { usePromotions } from '@/composables/api/usePromotions'
 import { useToast } from '@/composables/ui/useToast'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 
 const {
   promotions, loading, error, pagination, filters, searchQuery,
@@ -160,8 +162,21 @@ const {
 const { success: showSuccess, error: showError } = useToast()
 const searchDebounce = ref(null)
 const addPromoModal = ref(null)
+const confirmModal = ref(null)
+const pendingAction = ref(null)
 const exporting = ref(false)
 const togglingStatus = ref({})
+
+const openConfirm = (options, action) => {
+  pendingAction.value = action
+  confirmModal.value?.openModal(options)
+}
+
+const handleConfirm = async () => {
+  await pendingAction.value?.()
+  pendingAction.value = null
+  confirmModal.value?.closeModal()
+}
 
 const isAllSelected = computed(() =>
   promotions.value.length > 0 && selectedPromotions.value.length === promotions.value.length
@@ -241,44 +256,68 @@ const exportData = async () => {
   finally { exporting.value = false }
 }
 
-const deleteSelected = async () => {
+const deleteSelected = () => {
   if (selectedPromotions.value.length === 0) return
-  if (!confirm(`Delete ${selectedPromotions.value.length} promotion(s)?`)) return
-  const result = await deleteMultiplePromotions(selectedPromotions.value)
-  if (result.success) {
-    showSuccess(`✅ Deleted ${result.results.filter(r => r.success).length} promotion(s)`)
-    clearSelection()
-    await fetchPromotions()
-  } else showError('❌ Some promotions could not be deleted')
+  openConfirm({
+    title: `Delete ${selectedPromotions.value.length} Promotion${selectedPromotions.value.length === 1 ? '' : 's'}`,
+    message: `Are you sure you want to delete <strong>${selectedPromotions.value.length} promotion${selectedPromotions.value.length === 1 ? '' : 's'}</strong>? This action cannot be undone.`,
+    confirmText: 'Delete',
+    confirmClass: 'btn-delete'
+  }, async () => {
+    const result = await deleteMultiplePromotions(selectedPromotions.value)
+    if (result.success) {
+      showSuccess(`✅ Deleted ${result.results.filter(r => r.success).length} promotion(s)`)
+      clearSelection()
+      await fetchPromotions()
+    } else showError('❌ Some promotions could not be deleted')
+  })
 }
 
-const handleDeletePromotion = async (promotion) => {
-  if (!confirm(`Delete "${promotion.promotion_name}"?`)) return
-  const result = await deletePromotionAction(promotion.promotion_id)
-  result.success ? showSuccess('✅ Deleted successfully') : showError('❌ ' + (result.message || 'Delete failed'))
-  await fetchPromotions()
+const handleDeletePromotion = (promotion) => {
+  openConfirm({
+    title: 'Delete Promotion',
+    message: `Are you sure you want to delete <strong>${promotion.promotion_name}</strong>? This action cannot be undone.`,
+    confirmText: 'Delete',
+    confirmClass: 'btn-delete'
+  }, async () => {
+    const result = await deletePromotionAction(promotion.promotion_id)
+    result.success ? showSuccess('✅ Deleted successfully') : showError('❌ ' + (result.message || 'Delete failed'))
+    await fetchPromotions()
+  })
 }
 
-const handleActivatePromotion = async (promotion) => {
-  if (!confirm(`Activate "${promotion.promotion_name}"?`)) return
-  togglingStatus.value[promotion.promotion_id] = true
-  const result = await activatePromotionAction(promotion.promotion_id)
-  if (result?.success) {
-    showSuccess(`✅ Activated "${promotion.promotion_name}"`)
-    await fetchPromotions()
-  } else showError('❌ ' + (result?.message || 'Activation failed'))
-  togglingStatus.value[promotion.promotion_id] = false
+const handleActivatePromotion = (promotion) => {
+  openConfirm({
+    title: 'Activate Promotion',
+    message: `Are you sure you want to activate <strong>${promotion.promotion_name}</strong>?`,
+    confirmText: 'Activate',
+    confirmClass: 'btn-primary'
+  }, async () => {
+    togglingStatus.value[promotion.promotion_id] = true
+    const result = await activatePromotionAction(promotion.promotion_id)
+    if (result?.success) {
+      showSuccess(`✅ Activated "${promotion.promotion_name}"`)
+      await fetchPromotions()
+    } else showError('❌ ' + (result?.message || 'Activation failed'))
+    togglingStatus.value[promotion.promotion_id] = false
+  })
 }
 
-const handleDeactivatePromotion = async (promotion) => {
-  if (!confirm(`Deactivate "${promotion.promotion_name}"?`)) return
-  togglingStatus.value[promotion.promotion_id] = true
-  const result = await deactivatePromotionAction(promotion.promotion_id)
-  if (result?.success) {
-    showSuccess(`✅ Deactivated "${promotion.promotion_name}"`)
-    await fetchPromotions()
-  } else showError('❌ ' + (result?.message || 'Deactivation failed'))
-  togglingStatus.value[promotion.promotion_id] = false
+const handleDeactivatePromotion = (promotion) => {
+  openConfirm({
+    title: 'Deactivate Promotion',
+    message: `Are you sure you want to deactivate <strong>${promotion.promotion_name}</strong>?`,
+    confirmText: 'Deactivate',
+    confirmClass: 'btn-warning'
+  }, async () => {
+    togglingStatus.value[promotion.promotion_id] = true
+    const result = await deactivatePromotionAction(promotion.promotion_id)
+    if (result?.success) {
+      showSuccess(`✅ Deactivated "${promotion.promotion_name}"`)
+      await fetchPromotions()
+    } else showError('❌ ' + (result?.message || 'Deactivation failed'))
+    togglingStatus.value[promotion.promotion_id] = false
+  })
 }
 
 const handlePromotionSaved = async () => { await refreshPromotions() }

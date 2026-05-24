@@ -12,28 +12,23 @@ A modern Point of Sale system built with Vue.js frontend and Django backend, usi
 ## Project Structure
 
 ```
-PANN_POS/
-├── frontend/              # Vue.js application
-│   ├── src/
-│   ├── public/
-│   ├── package.json
-│   └── vite.config.js
-├── backend/               # Django application
-│   ├── posbackend/        # Django project
-│   ├── app/               # Main application
-│   │   ├── services/      # Business logic services
-│   │   ├── database.py    # Database connection manager
-│   │   └── views.py       # API endpoints
-│   ├── settings/          # Organized settings
-│   │   ├── base.py        # Common settings
-│   │   ├── local.py       # Development settings
-│   │   └── production.py  # Production settings
-│   ├── requirements.txt   # Python dependencies
-│   ├── .env              # Environment variables
-│   ├── venv/             # Virtual environment
-│   └── manage.py
-├── .gitignore
-└── README.md
+Ramyeon-Backoffice/
+├── src/
+│   ├── pages/             # Top-level route views
+│   ├── components/        # Reusable UI components (by domain)
+│   ├── composables/       # Business logic (api/, auth/, data/, ui/)
+│   ├── services/          # Axios API layer (one file per domain)
+│   ├── layouts/           # AppLayout, MainLayout, Sidebar
+│   ├── router/            # Route definitions + auth guard
+│   ├── assets/styles/     # Global CSS, color tokens
+│   └── main.js
+├── public/
+├── index.html
+├── vite.config.js
+├── netlify.toml
+├── .env                   # Not committed — copy from .env.example
+├── .env.example
+└── package.json
 ```
 
 ## Prerequisites
@@ -144,8 +139,8 @@ After joining the Atlas project and getting credentials, create a `.env` file in
 
 ```env
 # Cloud Database (MongoDB Atlas) - Primary
-# Contact team lead for these credentials:
-MONGODB_URI=mongodb+srv://admin:QmPmu3TJfyVZxjPc@cluster0.qumhbyz.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
+# Ask the team lead for the actual connection string. Never commit real credentials.
+MONGODB_URI=mongodb+srv://<username>:<password>@cluster0.qumhbyz.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
 MONGODB_DATABASE=pos_system
 
 # Local Database (Optional Fallback)

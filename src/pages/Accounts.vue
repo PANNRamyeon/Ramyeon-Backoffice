@@ -165,6 +165,8 @@
       @submit="handleModalSubmit"
       @close="handleModalClose"
     />
+
+    <DeleteConfirmationModal ref="confirmModal" @confirm="handleConfirm" />
   </div>
 </template>
 
@@ -174,6 +176,7 @@ import { useUsers } from '@/composables/api/useUsers'
 import ActionBar from '@/components/common/ActionBar.vue'
 import TableTemplate from '@/components/common/TableTemplate.vue'
 import AddAccountModal from '@/components/accounts/AddAccountModal.vue'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 
 /* -------------------------------------------
    COMPOSABLES
@@ -193,12 +196,25 @@ const {
    CORE REFS
 ------------------------------------------- */
 const accountModal = ref(null)
+const confirmModal = ref(null)
+const pendingAction = ref(null)
 const selectedUsers = ref([])
 const searchQuery = ref('')
 const roleFilter = ref('all')
 const statusFilter = ref('all')
 const successMessage = ref(null)
 const exporting = ref(false)
+
+const openConfirm = (options, action) => {
+  pendingAction.value = action
+  confirmModal.value?.openModal(options)
+}
+
+const handleConfirm = async () => {
+  await pendingAction.value?.()
+  pendingAction.value = null
+  confirmModal.value?.closeModal()
+}
 
 /* -------------------------------------------
    ACTION BAR CONFIG
@@ -358,31 +374,41 @@ const handleModalSubmit = async (userData, mode) => {
 /* -------------------------------------------
    DELETE METHODS
 ------------------------------------------- */
-const deleteMultipleUsers = async () => {
-  if (!confirm(`Delete ${selectedUsers.value.length} users?`)) return
-
-  try {
-    for (const id of selectedUsers.value) {
-      await deleteUserService(id)
+const deleteMultipleUsers = () => {
+  openConfirm({
+    title: `Delete ${selectedUsers.value.length} Users`,
+    message: `Are you sure you want to delete <strong>${selectedUsers.value.length} user${selectedUsers.value.length === 1 ? '' : 's'}</strong>? This action cannot be undone.`,
+    confirmText: 'Delete',
+    confirmClass: 'btn-delete'
+  }, async () => {
+    try {
+      for (const id of selectedUsers.value) {
+        await deleteUserService(id)
+      }
+      showSuccess(`Deleted ${selectedUsers.value.length} users`)
+      selectedUsers.value = []
+      await applyFilters()
+    } catch (err) {
+      error.value = err.message
     }
-    showSuccess(`Deleted ${selectedUsers.value.length} users`)
-    selectedUsers.value = []
-    await applyFilters()
-  } catch (err) {
-    error.value = err.message
-  }
+  })
 }
 
-const confirmDeleteUser = async (user) => {
-  if (!confirm(`Delete user "${user.username}"?`)) return
-
-  try {
-    await deleteUserService(user.user_id)
-    showSuccess(`User "${user.username}" deleted`)
-    await applyFilters()
-  } catch (err) {
-    error.value = err.message
-  }
+const confirmDeleteUser = (user) => {
+  openConfirm({
+    title: 'Delete User',
+    message: `Are you sure you want to delete <strong>${user.username}</strong>? This action cannot be undone.`,
+    confirmText: 'Delete',
+    confirmClass: 'btn-delete'
+  }, async () => {
+    try {
+      await deleteUserService(user.user_id)
+      showSuccess(`User "${user.username}" deleted`)
+      await applyFilters()
+    } catch (err) {
+      error.value = err.message
+    }
+  })
 }
 
 /* -------------------------------------------

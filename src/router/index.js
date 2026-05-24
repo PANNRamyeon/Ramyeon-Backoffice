@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '@/views/HomeView.vue'
+import { tokenStore } from '@/services/tokenStore.js'
+import apiService from '@/services/api.js'
 
 import Login from '../pages/Login.vue'
 import ForgotPassword from '../pages/ForgotPassword.vue'
@@ -28,20 +30,21 @@ import OrdersHistory from '@/pages/suppliers/OrdersHistory.vue'
 // Debug components (only for development)
 import ToastDebug from '@/pages/ToastDebug.vue'
 
-// Simple token check for immediate evaluation
-function hasValidToken() {
-  const token = localStorage.getItem('access_token')
-  return !!token
-}
+// Auth guard — checks in-memory token, falls back to silent refresh on page load
+async function requireAuth() {
+  if (tokenStore.get()) return true
 
-// Auth guard function
-function requireAuth(to, from, next) {
-  const token = localStorage.getItem('access_token')
-  if (token) {
-    next()
-  } else {
-    next('/login')
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (refreshToken) {
+    try {
+      await apiService.refreshToken()
+      return true
+    } catch {
+      localStorage.removeItem('refresh_token')
+    }
   }
+
+  return '/login'
 }
 
 const router = createRouter({

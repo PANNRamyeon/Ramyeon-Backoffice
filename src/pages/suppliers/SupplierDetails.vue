@@ -758,6 +758,8 @@
         </div>
       </div>
     </Teleport>
+
+    <DeleteConfirmationModal ref="confirmModal" @confirm="handleConfirm" />
   </div>
 </template>
 
@@ -799,12 +801,13 @@ import BatchDetailsModal from '@/components/suppliers/BatchDetailsModal.vue'
 import EditBatchDetailsModal from '@/components/suppliers/EditBatchDetailsModal.vue'
 import OrderDetailsModal from '@/components/suppliers/OrderDetailsModal.vue'
 import ActiveOrdersModal from '@/components/suppliers/ActiveOrdersModal.vue'
+import DeleteConfirmationModal from '@/components/common/DeleteConfirmationModal.vue'
 import { useToast } from '@/composables/ui/useToast'
 import { useAuth } from '@/composables/auth/useAuth'
 import { useShipments } from '@/composables/api/useShipments'
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1/admin'
+const API_BASE_URL = import.meta.env.VITE_API_URL
 
 export default {
   name: 'SupplierDetails',
@@ -843,7 +846,8 @@ export default {
     BatchDetailsModal,
     EditBatchDetailsModal,
     OrderDetailsModal,
-    ActiveOrdersModal
+    ActiveOrdersModal,
+    DeleteConfirmationModal
   },
   props: {
     supplierId: {
@@ -910,7 +914,8 @@ export default {
       },
       
       editingNotes: false,
-      editableNotes: ''
+      editableNotes: '',
+      pendingAction: null
     }
   },
   async mounted() {
@@ -933,6 +938,17 @@ export default {
     }
   },
   methods: {
+    openConfirm(options, action) {
+      this.pendingAction = action
+      this.$refs.confirmModal?.openModal(options)
+    },
+
+    async handleConfirm() {
+      await this.pendingAction?.()
+      this.pendingAction = null
+      this.$refs.confirmModal?.closeModal()
+    },
+
     async fetchSupplierDetails() {
       this.loading = true
       this.error = null
@@ -1613,13 +1629,16 @@ export default {
     },
 
     deleteOrder(order) {
-      if (confirm(`Are you sure you want to delete order ${order.id}?`)) {
+      this.openConfirm({
+        title: 'Delete Order',
+        message: `Are you sure you want to delete order <strong>${order.id}</strong>? This action cannot be undone.`,
+        confirmText: 'Delete',
+        confirmClass: 'btn-delete'
+      }, () => {
         this.orders = this.orders.filter(o => o.id !== order.id)
         this.filterOrders()
-        
-        // Show success toast instead of setting successMessage
         this.success(`Order ${order.id} deleted successfully`)
-      }
+      })
     },
 
     duplicateOrder(order) {
@@ -1656,15 +1675,18 @@ export default {
     },
 
     bulkDeleteOrders() {
-      if (confirm(`Are you sure you want to delete ${this.selectedOrders.length} selected orders?`)) {
+      this.openConfirm({
+        title: `Delete ${this.selectedOrders.length} Orders`,
+        message: `Are you sure you want to delete <strong>${this.selectedOrders.length} selected order${this.selectedOrders.length === 1 ? '' : 's'}</strong>? This action cannot be undone.`,
+        confirmText: 'Delete',
+        confirmClass: 'btn-delete'
+      }, () => {
         this.orders = this.orders.filter(o => !this.selectedOrders.includes(o.id))
         this.selectedOrders = []
         this.selectAllOrders = false
         this.filterOrders()
-        
-        // Show success toast instead of setting successMessage
         this.success('Selected orders deleted successfully')
-      }
+      })
     },
 
     toggleNotesEdit() {
@@ -2029,12 +2051,12 @@ export default {
         return
       }
 
-      const confirmed = window.confirm(`Cancel order ${order.id}? This will mark the order as cancelled and cannot be undone.`)
-      if (!confirmed) {
-        return
-      }
-
-      await this.performOrderCancellation(order)
+      this.openConfirm({
+        title: 'Cancel Order',
+        message: `Cancel order <strong>${order.id}</strong>? This will mark the order as cancelled and cannot be undone.`,
+        confirmText: 'Cancel Order',
+        confirmClass: 'btn-warning'
+      }, () => this.performOrderCancellation(order))
     },
 
     async performOrderCancellation(order) {

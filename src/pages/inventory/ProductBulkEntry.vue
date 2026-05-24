@@ -333,6 +333,8 @@
       @cancel="handleCancelDraft"
       @close="handleModalClose"
     />
+
+    <DeleteConfirmationModal ref="confirmModal" @confirm="handleConfirm" />
   </div>
 </template>
 
@@ -341,6 +343,7 @@ import productsApiService from '../../services/apiProducts.js'
 import BarcodeScanner from '../../components/products/BarcodeScanner.vue'
 import NotificationModal from '../../components/common/NotificationModal.vue'
 import SaveAsDraftModal from '../../components/common/SaveAsDraftModal.vue'
+import DeleteConfirmationModal from '../../components/common/DeleteConfirmationModal.vue'
 import { useSaveAsDraftModal } from '../../composables/ui/useSaveAsDraftModal.js'
 import { useProducts } from '../../composables/api/useProducts.js'
 
@@ -349,7 +352,8 @@ export default {
   components: {
     BarcodeScanner,
     NotificationModal,
-    SaveAsDraftModal
+    SaveAsDraftModal,
+    DeleteConfirmationModal
   },
 
   setup() {
@@ -421,7 +425,8 @@ export default {
       hasConfirmedLeave: false,
       pendingNavigation: null,
       cleanupBeforeUnload: null,
-      showDraftModal: false
+      showDraftModal: false,
+      pendingAction: null
     }
   },
   
@@ -520,8 +525,19 @@ export default {
   },
   
   methods: {
+    openConfirm(options, action) {
+      this.pendingAction = action
+      this.$refs.confirmModal?.openModal(options)
+    },
+
+    async handleConfirm() {
+      await this.pendingAction?.()
+      this.pendingAction = null
+      this.$refs.confirmModal?.closeModal()
+    },
+
     // OPTIMIZATION: Remove redundant fetchCategories method since we use useProducts
-    
+
     addNewRow() {
       const newProduct = {
         id: this.nextId++,
@@ -564,12 +580,16 @@ export default {
     },
     
     clearAll() {
-      const confirmed = confirm('Are you sure you want to clear all products? This action cannot be undone.')
-      if (confirmed) {
+      this.openConfirm({
+        title: 'Clear All Products',
+        message: 'Are you sure you want to clear all products? This action cannot be undone.',
+        confirmText: 'Clear All',
+        confirmClass: 'btn-delete'
+      }, () => {
         this.bulkProducts = []
         this.addNewRow()
         this.clearMessages()
-      }
+      })
     },
 
     // OPTIMIZATION: Enhanced validation using consistent logic
